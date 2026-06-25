@@ -36,8 +36,9 @@ KB_TOP_K = 4                # lessons retrieved into Billy's prompt
 MAX_ATTEMPT_FRAMES = int(os.environ.get("BILLY_MAX_FRAMES", 60 * 60 * 10))
 
 # Continuous playthrough: keep going past each level clear, checkpointing the new level.
-MAX_LEVELS_PER_ATTEMPT = 8  # stop an attempt after clearing this many levels
-RESPAWNS_PER_ATTEMPT = 3    # on death, retry from the current level's checkpoint this many times
+# Env-overridable so a "full clear" run can let one attempt blaze through many levels.
+MAX_LEVELS_PER_ATTEMPT = int(os.environ.get("BILLY_MAX_LEVELS", 8))   # stop an attempt after this many clears
+RESPAWNS_PER_ATTEMPT = int(os.environ.get("BILLY_RESPAWNS", 3))       # retries from checkpoint per attempt
 
 # --- Micro-search + solution cache (the compounding-learning core) ----------------------
 MICRO_SEARCH = True
@@ -46,7 +47,7 @@ SEARCH_HORIZON_FRAMES = 50  # frames to simulate each candidate at a live danger
 LEARN_HORIZON_FRAMES = 150  # longer rollout for learn-from-death (must traverse the death zone)
 MIN_RUNWAY_PX = 24          # learn-from-death needs at least this much room before a hazard
 CACHE_BUCKET_PX = 16        # solution-cache key granularity (one NES tile)
-MAX_BUCKET_VISITS = 8       # arrive at the same hazard this many times w/o passing -> give up run
+MAX_BUCKET_VISITS = int(os.environ.get("BILLY_MAX_BUCKET_VISITS", 8))  # same hazard N times w/o passing -> give up
 
 
 def ensure_dirs() -> None:

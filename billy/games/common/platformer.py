@@ -170,6 +170,20 @@ class PlatformerReflex(ReflexPolicy):
     def _jump_candidates(self, base: int, width: int) -> list[Plan]:
         return gap_jumper(width, self.p)
 
+    def expanded_candidates(self, obs: Observation) -> list[Plan]:
+        """A DENSE brute-force grid for hard walls the focused spread can't crack — a thorough
+        sweep of run-up × jump-hold (and a couple of back-up variants for flush obstacles). Tried
+        when the normal search fails, before bothering the (slow, weak-on-this) LLM."""
+        c = controller
+        runs = (0, 6, 10, 14, 18, 24, 30)
+        holds = (16, 20, 24, 28, 31, 34)
+        cands: list[Plan] = [c.jump_right(run_frames=r, jump_frames=h) for r in runs for h in holds]
+        # a few patience + back-up options for enemy timing / flush pipes
+        cands += [c.idle(d) + c.jump_right(jump_frames=h) for d in (10, 24, 40) for h in (14, 24)]
+        cands += [[Step(b, controller.LEFT)] + c.jump_right(run_frames=18, jump_frames=30)
+                  for b in (8, 16)]
+        return cands
+
     # --- the per-exchange decision (ported verbatim from the SMB reflex) ------------------
     def step(self, obs: Observation) -> Decision:
         scene = obs.raw

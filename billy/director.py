@@ -133,6 +133,16 @@ class Director:
         self._observe()
         return lived
 
+    def _evaluate(self, plan: Plan, settle: int = config.LEARN_HORIZON_FRAMES) -> tuple[bool, int]:
+        """Run a plan on a clone of the CURRENT live state and report (survived, reach) — for
+        scoring an LLM-improvised plan before trusting/caching it. Invisible; leaves live untouched."""
+        snap = self.session.clone_state()
+        with self.session.search_mode():
+            survived, reach = self._rollout(plan, settle)
+        self.session.restore(snap)
+        self._observe()
+        return survived, reach
+
     def _candidates(self, obs: Observation) -> list[Plan]:
         """Search candidate set on a cache MISS: the reflex's hand-picked spread, PLUS the
         instantiated plans of the situationally-relevant transferable Skills. Skills only widen the
@@ -314,6 +324,11 @@ class Director:
                 # enemies are where they actually are now) for a surviving, FORWARD-PROGRESSING
                 # sequence and REMEMBER it. A non-progress escape is a stall — never cached.
                 best_plan, progressed, reach = self._micro_search(self._candidates(obs), obs.progress)
+                # Hard wall: the focused spread couldn't progress -> try a DENSE brute-force grid
+                # before the (slow, inconsistent) LLM. Deterministic and model-free.
+                expand = getattr(self.reflex, "expanded_candidates", None)
+                if not progressed and expand is not None:
+                    best_plan, progressed, reach = self._micro_search(expand(obs), obs.progress)
                 plan = best_plan
                 search_calls += 1
                 if progressed:
@@ -324,13 +339,23 @@ class Director:
                     action_note = f"{tag} {self._label(plan)}"
                     print(f'  [attempt {n}] {obs.progress} 🔍 solved (reach {reach}) — remembered')
                 elif self.use_llm:
-                    # Genuinely hard: let Billy improvise (out of the routine path).
+                    # Genuinely hard: let Billy improvise. Then VERIFY his plan on a clone and, if it
+                    # survives AND progresses, BANK it like a search win — so the next pass replays
+                    # it instead of re-asking the (slow, inconsistent) LLM. This is what lets an
+                    # LLM-cracked wall (e.g. early 1-2) actually compound.
                     bd = billy.decide(obs, self.kb.retrieve(obs.summary),
                                       list(self.recent), self.controller)
                     plan = bd.plan
                     billy_calls += 1
-                    action_note = f"BILLY {self._label(plan)}"
-                    print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
+                    survived, reach = self._evaluate(plan)
+                    if survived and reach > obs.progress + self._MIN_PROGRESS_PX:
+                        self.cache.put(lk, obs.progress, plan, reach, force=cached is not None)
+                        action_note = f"BILLY✓ {self._label(plan)}"
+                        print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}" — '
+                              f'cracked it (reach {reach}), remembered')
+                    else:
+                        action_note = f"BILLY {self._label(plan)}"
+                        print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
                 else:
                     action_note = f"search✗ {self._label(plan)}"   # best-effort, not cached
             elif decision.needs_billy and self.use_llm:
