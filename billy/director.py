@@ -171,25 +171,25 @@ class Director:
             decision = self.reflex.step(obs)
             self.recent.append(decision.note)
             danger = decision.needs_billy and ("enemy" in decision.note or "pit" in decision.note)
-            world, stage = obs.level_key
+            lk = obs.level_key   # game-agnostic level identity; the cache key needs nothing else
 
             if danger:
                 # CACHE-FIRST: if we've solved this exact spot before, replay it verbatim —
                 # deterministic, no search, no LLM. This is the compounding fast-path.
-                cached = self.cache.get(world, stage, obs.progress)
+                cached = self.cache.get(lk, obs.progress)
                 if cached is not None:
                     plan = cached.plan
                     replay_calls += 1
-                    self.cache.record_hit(world, stage, obs.progress)
+                    self.cache.record_hit(lk, obs.progress)
                     action_note = f"replay {self._label(plan)}"
-                    print(f'  [attempt {n}] {obs.progress} ⚡ replay (solved x{world+1}-{stage+1}@{obs.progress})')
+                    print(f'  [attempt {n}] {obs.progress} ⚡ replay (solved {obs.level_label}@{obs.progress})')
                 else:
                     # MISS: search (invisibly, on a clone) for a surviving sequence and REMEMBER it.
                     best_plan, survived, reach = self._micro_search(self._candidates(obs))
                     plan = best_plan
                     search_calls += 1
                     if survived:
-                        self.cache.put(world, stage, obs.progress, plan, reach)
+                        self.cache.put(lk, obs.progress, plan, reach)
                         action_note = f"search✓ {self._label(plan)}"
                         print(f'  [attempt {n}] {obs.progress} 🔍 solved (reach {reach}) — remembered')
                     elif self.use_llm:
@@ -219,7 +219,7 @@ class Director:
             self.session.send_plan(plan)
             # If a replayed solution didn't survive (context drifted), drop it so search refreshes it.
             if danger and "replay" in action_note and self._observe().dead:
-                self.cache.record_fail(world, stage, obs.progress)
+                self.cache.record_fail(lk, obs.progress)
             trajectory.append(coach.TrajectoryStep(
                 x=obs.progress, summary=obs.summary, action=action_note, event=decision.note))
             frames += plan_frames(plan)
@@ -246,13 +246,12 @@ class Director:
             hi = " 🏆 NEW HIGH SCORE!"
 
         self._prev_best_x = max(self._prev_best_x, seg_best)
-        w0, s0 = obs.level_key
         result = metrics.AttemptResult(
             attempt=n, outcome=outcome, max_x=seg_best, frames=frames, billy_calls=billy_calls,
             world_stage=furthest, levels_cleared=levels_cleared, score=final_score,
             fastest_clear_frames=fastest_in_attempt, duration_s=round(time.monotonic() - t0, 2),
             search_calls=search_calls, replay_calls=replay_calls,
-            frontier_x=self.cache.solved_frontier(w0, s0), frames_to_frontier=frames_to_frontier)
+            frontier_x=self.cache.solved_frontier(obs.level_key), frames_to_frontier=frames_to_frontier)
         metrics.record(result)
         print(f"  [attempt {n}] {outcome.upper()} — reached {furthest}, "
               f"cleared {levels_cleared} level(s), score {final_score}{hi}")
