@@ -24,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--attempts", type=int, default=10, help="number of attempts to play")
     p.add_argument("--continuous", action="store_true",
                    help="continuous game with no resets (play until game over)")
+    p.add_argument("--hardcore", action="store_true",
+                   help="ultimate test: 3 lives total, no micro-searches, pure learning")
     p.add_argument("--no-llm", action="store_true",
                    help="pure reflex run (no Billy/Coach LLM calls)")
     p.add_argument("--fresh", action="store_true", help="wipe learned lessons before starting")
@@ -42,7 +44,9 @@ def main(argv: list[str] | None = None) -> int:
     director = Director(game, KnowledgeBase(), use_llm=use_llm)
     print(f"[run] {game.name} on {game.system.name}. Launch the bridge: ./emulator/run_fceux.sh")
     try:
-        if args.continuous:
+        if args.hardcore:
+            director.run_hardcore_game()
+        elif args.continuous:
             director.run_continuous_game()
         else:
             director.run_session(args.attempts)
