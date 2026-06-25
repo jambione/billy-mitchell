@@ -10,9 +10,10 @@ from .reflexes import SmbReflex
 
 class SmbGame(Game):
     name = "Super Mario Bros"
+    RETRO_GAME = "SuperMarioBros-Nes-v0"   # stable-retro integration id (subclasses override)
 
     def __init__(self) -> None:
-        self.system = NesSystem()
+        self.system = NesSystem(self.RETRO_GAME)
         # Last in-play (progress, level_label, level_key) — reused on death/transition frames
         # so the engine never sees the 0xFFFF overflow (x=65535 / "256-256" garbage).
         self._last_good: tuple[int, str, tuple] = (0, "1-1", (0, 0))
@@ -53,6 +54,8 @@ class SmbGame(Game):
         before = obs()
         session.send_plan(controller.run_right(6, sprint=False))  # control test: nudge right
         after = obs()
-        if not (after.raw.time > 0 and after.raw.mario_x >= before.raw.mario_x):
-            raise BootError("could not gain control after reset — is the SMB integration loaded?")
+        # Liveness via in_play (plausible level + sane world-x), not the timer: SMB2-Japan reads
+        # time=0 in its start state, so a time>0 check would wrongly reject it.
+        if not (after.raw.in_play and after.raw.mario_x >= before.raw.mario_x):
+            raise BootError("could not gain control after reset — is the integration loaded?")
         return after

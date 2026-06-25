@@ -67,13 +67,14 @@ class State:
 class RetroSession:
     """A stable-retro env presented through the engine's lock-step Session contract."""
 
-    def __init__(self, render: bool | None = None) -> None:
+    def __init__(self, render: bool | None = None, game: str | None = None) -> None:
         # Watchable by default; set BILLY_HEADLESS=1 for fast benchmarks (no window).
         if render is None:
             render = os.environ.get("BILLY_HEADLESS", "0") != "1"
+        game = game or _GAME   # integration id: arg > BILLY_RETRO_GAME env > SMB default
         # Always render to an offscreen array; WE decide which frames reach the screen, so
         # micro-search frames stay hidden (the live run never visibly rewinds).
-        self.env = retro.make(_GAME, render_mode="rgb_array")
+        self.env = retro.make(game, render_mode="rgb_array")
         self._viewer = _Viewer() if render else None
         self._show = render          # True only while executing committed (live) play
         self._realtime = render and os.environ.get("BILLY_TURBO", "0") != "1"
