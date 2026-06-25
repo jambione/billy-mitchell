@@ -1,4 +1,4 @@
-# Billy Mitchell — runtime deps (Python 3.11+ recommended; 3.14 works for this route)
-requests>=2.31      # LM Studio OpenAI-compatible HTTP client
-# numpy is optional; only used to speed up KB cosine search if present.
-# Everything else (IPC, perception, controller) is pure stdlib.
+# Billy Mitchell — runtime deps (Python 3.10–3.14; a venv is recommended).
+stable-retro>=1.0.1   # in-process libretro NES emulator (RAM access + state cloning)
+requests>=2.31        # LM Studio OpenAI-compatible HTTP client
+numpy>=1.24           # action vectors + fast cosine (pulled in by stable-retro anyway)

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Billy Mitchell learns to play games.
 
-Launch the emulator + bridge first (in another terminal):
-    ./emulator/run_fceux.sh
-Then start the brain:
+The emulator now runs in-process via stable-retro (one-time setup: ./emulator/setup_retro.sh).
     python run.py --attempts 20
     python run.py --attempts 5 --no-llm     # pure reflex run (no Billy/Coach)
+    BILLY_HEADLESS=1 python run.py ...       # no window (fast benchmarks)
 """
 from __future__ import annotations
 
@@ -42,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
 
     game = SmbGame()
     director = Director(game, KnowledgeBase(), use_llm=use_llm)
-    print(f"[run] {game.name} on {game.system.name}. Launch the bridge: ./emulator/run_fceux.sh")
+    print(f"[run] {game.name} on {game.system.name} (in-process stable-retro).")
     try:
         if args.hardcore:
             director.run_hardcore_game()
