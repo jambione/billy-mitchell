@@ -1,6 +1,9 @@
-"""Billy's learned knowledge: the position-keyed solution cache (the compounding policy) plus
-the optional prose lessons used only for LLM narration/strategy."""
+"""Billy's learned knowledge: the position-keyed solution cache (the compounding policy), the
+embedding-based Skill layer (cross-game transferable tactics), plus prose lessons for LLM
+narration/strategy."""
 from .cache import CacheEntry, SolutionCache, bucket_of
+from .skills import Skill, SkillLibrary
 from .store import KnowledgeBase, Lesson
 
-__all__ = ["KnowledgeBase", "Lesson", "SolutionCache", "CacheEntry", "bucket_of"]
+__all__ = ["KnowledgeBase", "Lesson", "SolutionCache", "CacheEntry", "bucket_of",
+           "Skill", "SkillLibrary"]

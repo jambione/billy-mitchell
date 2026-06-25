@@ -15,6 +15,7 @@ ROMS_DIR = REPO_ROOT / "roms"
 DATA_DIR = REPO_ROOT / "data"              # lessons.jsonl, solutions.jsonl, metrics
 LESSONS_FILE = DATA_DIR / "lessons.jsonl"
 SOLUTIONS_FILE = DATA_DIR / "solutions.jsonl"   # position-keyed solution cache (the policy)
+SKILLS_FILE = DATA_DIR / "skills.jsonl"         # transferable abstract tactics (cross-game)
 METRICS_FILE = DATA_DIR / "metrics.jsonl"
 
 RAM_SIZE = 0x800            # NES work RAM 0x0000-0x07FF (first 2KB of env.get_ram())

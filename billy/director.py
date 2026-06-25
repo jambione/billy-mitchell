@@ -17,7 +17,7 @@ from . import config, metrics
 from .abstractions import Game, Observation, Plan, Step, plan_frames
 from .agents import billy, coach
 from .commentary import Commentator
-from .knowledge import KnowledgeBase, SolutionCache
+from .knowledge import KnowledgeBase, SolutionCache, SkillLibrary
 from .knowledge.cache import bucket_of
 
 _IDLE: Plan = [Step(2, 0)]   # neutral input — to consume a pending frame or coast a cutscene
@@ -25,13 +25,14 @@ _IDLE: Plan = [Step(2, 0)]   # neutral input — to consume a pending frame or c
 
 class Director:
     def __init__(self, game: Game, kb: KnowledgeBase, use_llm: bool = True,
-                 cache: SolutionCache | None = None) -> None:
+                 cache: SolutionCache | None = None, skills: SkillLibrary | None = None) -> None:
         self.game = game
         self.session = game.system.connect()
         self.controller = game.system.controller
         self.reflex = game.make_reflex()
         self.kb = kb
         self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
+        self.skills = skills if skills is not None else SkillLibrary()  # cross-game transferable tactics
         self.use_llm = use_llm
         # Eval mode: end each attempt at the FIRST level clear so every attempt is a fresh run of
         # the same starting level. This exposes the compounding curve (search-per-clear falls and
@@ -133,9 +134,15 @@ class Director:
         return lived
 
     def _candidates(self, obs: Observation) -> list[Plan]:
-        """Diverse escape sequences for search: the reflex's hand-picked spread, plus — when the
-        spot is genuinely hard — a few LLM-proposed sequences from Billy."""
+        """Search candidate set on a cache MISS: the reflex's hand-picked spread, PLUS the
+        instantiated plans of the situationally-relevant transferable Skills. Skills only widen the
+        *search* set (never blind-replay), so on a new game with an empty cache Billy starts from
+        sensible carried-forward tactics instead of a cold search. Requires a PhysicsProfile-bearing
+        reflex (the shared platformer policy); otherwise just the reflex spread."""
         cands = list(self.reflex.danger_candidates(obs))
+        profile = getattr(self.reflex, "p", None)
+        if profile is not None and len(self.skills):
+            cands.extend(self.skills.candidates(obs.raw, profile, obs.summary))
         return cands
 
     def _learn_from_death(self, safe_history, death_x: int) -> int | None:
