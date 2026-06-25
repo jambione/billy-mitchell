@@ -30,3 +30,17 @@ STOMP_HOLD_FRAMES = 16
 # Bonking ? blocks / bricks for coins & power-ups
 BONK_TRIGGER_PX = 14
 BONK_HOLD_FRAMES = 22
+
+# SMB's physics profile for the shared platformer reflex (games/common/platformer.py).
+from ..common.platformer import PhysicsProfile  # noqa: E402
+
+PROFILE = PhysicsProfile(
+    reflex_step_frames=REFLEX_STEP_FRAMES, bump_frames=BUMP_FRAMES, stuck_frames=STUCK_FRAMES,
+    jump_trigger_px=JUMP_TRIGGER_PX, jump_base_frames=JUMP_BASE_FRAMES,
+    jump_per_tile_frames=JUMP_PER_TILE_FRAMES, jump_min_frames=JUMP_MIN_FRAMES,
+    jump_max_frames=JUMP_MAX_FRAMES, airborne_step_frames=AIRBORNE_STEP_FRAMES,
+    air_steer_frames=AIR_STEER_FRAMES, obstacle_trigger_px=OBSTACLE_TRIGGER_PX,
+    obstacle_base_frames=OBSTACLE_BASE_FRAMES, obstacle_per_height_frames=OBSTACLE_PER_HEIGHT_FRAMES,
+    stomp_range=STOMP_RANGE, stomp_hold_frames=STOMP_HOLD_FRAMES,
+    bonk_trigger_px=BONK_TRIGGER_PX, bonk_hold_frames=BONK_HOLD_FRAMES,
+)
