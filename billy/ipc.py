@@ -94,9 +94,21 @@ class Bridge:
         req = self._pending_req
         body = req.to_bytes(4, "little") + bytes([command]) + payload
         tmp = self.action_file.with_suffix(self.action_file.suffix + ".tmp")
-        tmp.write_bytes(body)
-        os.replace(tmp, self.action_file)  # atomic publish
-        self._pending_req = None
+
+        # Write the temp file with retries (in case the filesystem is under contention)
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                tmp.write_bytes(body)
+                time.sleep(0.001)  # small pause to ensure disk flush
+                os.replace(tmp, self.action_file)  # atomic publish
+                self._pending_req = None
+                return
+            except (FileNotFoundError, OSError) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(0.01 * (2 ** attempt))  # exponential backoff: 10ms, 20ms, 40ms, 80ms
+                else:
+                    raise RuntimeError(f"IPC send failed after {max_retries} retries: {e}") from e
 
     def send_plan(self, plan: Plan) -> None:
         """Acknowledge the current frame with a button plan for the bridge to execute."""
