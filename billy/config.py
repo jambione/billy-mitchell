@@ -48,6 +48,11 @@ LEARN_HORIZON_FRAMES = 150  # longer rollout for learn-from-death (must traverse
 MIN_RUNWAY_PX = 24          # learn-from-death needs at least this much room before a hazard
 CACHE_BUCKET_PX = 16        # solution-cache key granularity (one NES tile)
 MAX_BUCKET_VISITS = int(os.environ.get("BILLY_MAX_BUCKET_VISITS", 8))  # same hazard N times w/o passing -> give up
+# Trust-replay (default): replay cached plans verbatim; a deterministic emulator reproduces them.
+# Set BILLY_VERIFY_REPLAY=1 to instead clone-check each replay (re-searches on mismatch — can drift).
+VERIFY_REPLAY = os.environ.get("BILLY_VERIFY_REPLAY", "0") == "1"
+# Dense brute-force grid at hard walls (thorough but ~40 candidates -> slow). Off by default.
+EXPANDED_SEARCH = os.environ.get("BILLY_EXPANDED_SEARCH", "0") == "1"
 
 
 def ensure_dirs() -> None:

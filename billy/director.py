@@ -299,6 +299,10 @@ class Director:
             # replay it verbatim. This is what advances the frontier: a solution learned at a death
             # spot gets used on the next pass even though the reflex sees no danger flag there. We
             # only replay on-ground (where solutions are keyed) so the deterministic state matches.
+            # Replay only ON-GROUND: a cached plan keyed by (level, x) reproduces only if the full
+            # state matches, and airborne states at the same x vary with the approach (velocity/
+            # height), so replaying them diverges into deaths. On-ground spots are reproducible.
+            # (This caps how much compounds — airborne hazards re-search — but keeps replays safe.)
             on_ground = getattr(obs.raw, "on_ground", True)
             cached = self.cache.get(lk, obs.progress) if on_ground else None
             if cached is not None or danger:
@@ -310,11 +314,18 @@ class Director:
                     outcome = "stuck"
                     break
 
-            # A cached solution exists here AND it still survives from the current state -> replay
-            # it (deterministic, no search). If it's gone stale (moving enemy shifted), fall through
-            # to a fresh live-search below.
-            if cached is not None and self._verify(
-                    cached.plan, max(plan_frames(cached.plan) + 24, config.SEARCH_HORIZON_FRAMES)):
+            # Cached solution here -> REPLAY IT VERBATIM (deterministic, no search). We deliberately
+            # do NOT verify-then-research by default: the emulator is deterministic, so replaying the
+            # same plans from the same checkpoint reproduces the exact trajectory (every enemy in the
+            # same phase) — verify→research is what INJECTS timing drift (a re-search can pick a
+            # different-duration plan, shifting everything downstream and snowballing). If a replay
+            # genuinely dies, record_fail (below) drops it and it re-searches once: self-healing.
+            # Set BILLY_VERIFY_REPLAY=1 to gate replays on a clone-check instead.
+            do_replay = cached is not None and (
+                not config.VERIFY_REPLAY
+                or self._verify(cached.plan,
+                                max(plan_frames(cached.plan) + 24, config.SEARCH_HORIZON_FRAMES)))
+            if do_replay:
                 plan = cached.plan
                 replay_calls += 1
                 self.cache.record_hit(lk, obs.progress)
@@ -324,10 +335,11 @@ class Director:
                 # enemies are where they actually are now) for a surviving, FORWARD-PROGRESSING
                 # sequence and REMEMBER it. A non-progress escape is a stall — never cached.
                 best_plan, progressed, reach = self._micro_search(self._candidates(obs), obs.progress)
-                # Hard wall: the focused spread couldn't progress -> try a DENSE brute-force grid
-                # before the (slow, inconsistent) LLM. Deterministic and model-free.
+                # Hard wall: the focused spread couldn't progress -> optionally try a DENSE
+                # brute-force grid before the LLM (deterministic, model-free, but ~40 candidates so
+                # it's slow — opt in with BILLY_EXPANDED_SEARCH=1).
                 expand = getattr(self.reflex, "expanded_candidates", None)
-                if not progressed and expand is not None:
+                if not progressed and expand is not None and config.EXPANDED_SEARCH:
                     best_plan, progressed, reach = self._micro_search(expand(obs), obs.progress)
                 plan = best_plan
                 search_calls += 1
