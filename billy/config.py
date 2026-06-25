@@ -31,7 +31,8 @@ LLM_TIMEOUT_S = float(os.environ.get("BILLY_LLM_TIMEOUT", "120"))
 # Game-specific reflex/physics constants live with each game (e.g. games/smb/tuning.py).
 BILLY_PLAN_MAX_FRAMES = 90  # cap on a single Billy LLM macro before re-observing
 KB_TOP_K = 4                # lessons retrieved into Billy's prompt
-MAX_ATTEMPT_FRAMES = 60 * 60 * 10  # safety cap (~10 game-minutes) per attempt
+# Safety cap (~10 game-minutes) per attempt; override with BILLY_MAX_FRAMES for quick benchmarks.
+MAX_ATTEMPT_FRAMES = int(os.environ.get("BILLY_MAX_FRAMES", 60 * 60 * 10))
 
 # Continuous playthrough: keep going past each level clear, checkpointing the new level.
 MAX_LEVELS_PER_ATTEMPT = 8  # stop an attempt after clearing this many levels
@@ -40,8 +41,11 @@ RESPAWNS_PER_ATTEMPT = 3    # on death, retry from the current level's checkpoin
 # --- Micro-search + solution cache (the compounding-learning core) ----------------------
 MICRO_SEARCH = True
 SEARCH_SLOT = 1             # savestate slot reserved for search checkpoints (0 = level start)
-SEARCH_HORIZON_FRAMES = 50  # frames to simulate each candidate (balance: quick sim vs coverage)
+SEARCH_HORIZON_FRAMES = 50  # frames to simulate each candidate at a live danger (quick sim)
+LEARN_HORIZON_FRAMES = 150  # longer rollout for learn-from-death (must traverse the death zone)
+MIN_RUNWAY_PX = 24          # learn-from-death needs at least this much room before a hazard
 CACHE_BUCKET_PX = 16        # solution-cache key granularity (one NES tile)
+MAX_BUCKET_VISITS = 8       # arrive at the same hazard this many times w/o passing -> give up run
 
 
 def ensure_dirs() -> None:

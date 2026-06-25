@@ -48,9 +48,10 @@ class SmbReflex(ReflexPolicy):
             change = "appeared" if len(scene.enemies) > len(last.enemies) else "left"
             return f"enemy_{change}"
 
-        # Close enemy arrived (within 32px)
-        near_now = scene.nearest_enemy(within=48)
-        near_before = last.nearest_enemy(within=48)
+        # Enemy entered reaction range — fire EARLY (72px, ~1s of runway) so micro-search has room
+        # to find a stomp/dodge BEFORE contact, instead of reacting once it's already touching.
+        near_now = scene.nearest_enemy(within=72)
+        near_before = last.nearest_enemy(within=72)
         if (near_now is not None) != (near_before is not None):
             return "enemy_close" if near_now is not None else "enemy_far"
 
@@ -83,15 +84,26 @@ class SmbReflex(ReflexPolicy):
             return [Step(f, controller.LEFT)]
         return [Step(f, controller.NEUTRAL)]                                    # drop on it
 
+    def advance_plan(self, obs: Observation) -> Plan:
+        """Forward coast for micro-search rollouts: keep running right (no jump) so a candidate is
+        scored while Mario keeps moving through the hazard zone, not standing on neutral."""
+        return controller.run_right(tuning.REFLEX_STEP_FRAMES, sprint=True)
+
     def danger_candidates(self, obs: Observation) -> list[Plan]:
-        """A focused spread of escapes — covers pits AND enemies without exhaustive search.
-        Includes PATIENCE: stand still and let an approaching Koopa come into range, THEN stomp."""
+        """A focused spread of escapes — covers pits, enemies AND tall obstacles (pipes).
+        Includes PATIENCE (let a Koopa come into range, then stomp) and a RUNNING START + a
+        BACK-UP-and-run-jump so a flush-against-a-pipe spot can actually be cleared (otherwise a
+        standing jump stalls there forever)."""
         c = controller
+        L = controller.LEFT
         return [
-            c.jump_right(jump_frames=28),                 # higher jump (clear a pit)
-            c.jump_right(jump_frames=34),                 # max jump
-            c.idle(16) + c.jump_right(jump_frames=14),    # wait a beat, then stomp
-            c.idle(42) + c.jump_right(jump_frames=14),    # let the Koopa come all the way to you
+            c.jump_right(jump_frames=28),                       # higher jump (clear a pit)
+            c.jump_right(jump_frames=34),                       # max jump
+            c.idle(16) + c.jump_right(jump_frames=14),          # wait a beat, then stomp
+            c.idle(42) + c.jump_right(jump_frames=14),          # let the Koopa come to you
+            c.jump_right(run_frames=14, jump_frames=24),        # running jump (clear a pipe)
+            c.jump_right(run_frames=24, jump_frames=30),        # long running jump (wide pit)
+            [Step(10, L)] + c.jump_right(run_frames=18, jump_frames=30),  # back up, then run-jump
         ]
 
     def _jump_candidates(self, base: int, width: int) -> list[Plan]:

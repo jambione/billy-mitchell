@@ -124,6 +124,13 @@ class ReflexPolicy(ABC):
     @abstractmethod
     def step(self, obs: Observation) -> Decision: ...
 
+    def advance_plan(self, obs: Observation) -> Plan:
+        """A short 'keep making forward progress' input the engine uses to COAST during a
+        micro-search rollout — so a candidate is evaluated while the agent keeps moving through
+        the hazard, not standing still. Default is a no-op; games that have a clear 'forward'
+        (e.g. run right) should override so learn-from-death can actually traverse a death zone."""
+        return [Step(2, 0)]
+
 
 class Game(ABC):
     """A specific title on a System, using that System's Controller."""
