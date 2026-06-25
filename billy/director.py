@@ -273,8 +273,8 @@ class Director:
         print(f'🎤 Billy: "{self.commentator.event_line("start")}"')
 
         while frames <= config.MAX_ATTEMPT_FRAMES:
-            # Game over: out of lives
-            if obs.is_dying or (hasattr(obs.raw, 'lives') and obs.raw.lives <= 0):
+            # Game over: dead and out of lives
+            if obs.dead and hasattr(obs.raw, 'lives') and obs.raw.lives <= 0:
                 print(f"\n💀 GAME OVER at {furthest} (score {final_score})")
                 print(f"   Total playtime: {(time.monotonic() - t0)/60:.1f} minutes")
                 print(f"   Levels cleared: {levels_cleared}")
