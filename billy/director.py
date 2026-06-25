@@ -244,3 +244,94 @@ class Director:
         results = [self.run_attempt(n) for n in range(1, attempts + 1)]
         metrics.print_curve(results)
         return results
+
+    def run_continuous_game(self) -> None:
+        """Play a single continuous game with no resets. Billy learns as he plays through levels."""
+        self.session.reset()
+        print("[director] waiting for the emulator bridge…")
+        self.session.wait_until_live()
+        self.boot()
+
+        print("\n" + "="*70)
+        print("🎮 BILLY MITCHELL - CONTINUOUS SUPER MARIO BROS GAME")
+        print("   No resets. No rewinding. Play until game over.")
+        print("="*70 + "\n")
+
+        t0 = time.monotonic()
+        obs = self._observe()
+        self.reflex.reset(obs)
+        self.commentator.reset(obs.raw)
+        self.recent.clear()
+        self.cur_level = obs.level_key
+
+        trajectory: list[coach.TrajectoryStep] = []
+        frames = levels_cleared = 0
+        final_score = obs.score
+        furthest = obs.level_label
+        lesson_progress: dict = {}
+
+        print(f'🎤 Billy: "{self.commentator.event_line("start")}"')
+
+        while frames <= config.MAX_ATTEMPT_FRAMES:
+            # Game over: out of lives
+            if obs.is_dying or (hasattr(obs.raw, 'lives') and obs.raw.lives <= 0):
+                print(f"\n💀 GAME OVER at {furthest} (score {final_score})")
+                print(f"   Total playtime: {(time.monotonic() - t0)/60:.1f} minutes")
+                print(f"   Levels cleared: {levels_cleared}")
+                print(f"   Max reach: {furthest}")
+                self._reflect(trajectory, "death", obs.level_label)
+                break
+
+            # Level clear: progress to next
+            if obs.level_key > self.cur_level:
+                levels_cleared += 1
+                furthest = obs.level_label
+                print(f'\n🏁 CLEARED! Now entering {obs.level_label} (score {obs.score})')
+                self._reflect(trajectory, "clear", obs.level_label)
+                trajectory = []
+                self.reflex.note_level_advance(obs)
+                self.commentator.reset(obs.raw)
+                self.cur_level = obs.level_key
+                self.session.send_plan(_IDLE)
+                frames += 2
+                obs = self._observe()
+                continue
+
+            # Normal play
+            decision = self.reflex.step(obs)
+            self.recent.append(decision.note)
+
+            if decision.needs_billy and self.use_llm:
+                # Scene-change danger: use micro-search
+                if "enemy" in decision.note or "pit" in decision.note:
+                    best_plan, tried, survived = self._micro_search(self.reflex.danger_candidates(obs))
+                    plan = best_plan
+                    action_note = f"micro-search({tried}) {self._label(plan)}"
+                    print(f'  x={obs.progress} 🔍 Escape (tried {tried})')
+                else:
+                    # Other scene changes: consult Billy
+                    lessons_used = self.kb.retrieve(obs.summary)
+                    bd = billy.decide(obs, lessons_used, list(self.recent), self.controller)
+                    plan = bd.plan
+                    action_note = f"BILLY {self._label(plan)}"
+                    for les in lessons_used:
+                        if les not in lesson_progress:
+                            lesson_progress[les] = obs.progress
+                    print(f'  x={obs.progress} 🎮 Billy: "{bd.trash_talk}"')
+            elif decision.needs_billy:
+                plan = list(decision.plan)
+                action_note = f"reflex {decision.note}"
+            else:
+                plan = list(decision.plan)
+                action_note = f"{decision.note} {self._label(plan)}"
+
+            self.session.send_plan(plan)
+            trajectory.append(coach.TrajectoryStep(
+                x=obs.progress, summary=obs.summary, action=action_note, event=decision.note))
+            frames += plan_frames(plan)
+            obs = self._observe()
+            final_score = max(final_score, obs.score)
+
+            quip = self.commentator.observe(obs.raw)
+            if quip:
+                print(f'  🎤 Billy: "{quip}"')
