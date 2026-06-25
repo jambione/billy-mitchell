@@ -46,9 +46,7 @@ if speed and emu.speedmode then emu.speedmode(speed) end
 if emu.setrewind then
   emu.setrewind(false)  -- Disable FCEUX rewind feature
 end
-if movie.stop then
-  movie.stop()  -- Stop any active movie recording
-end
+-- Note: Don't call movie.stop() if no movie is active; just ensure we don't record
 
 local function u32(n)
   return string.char(n % 256, math.floor(n / 256) % 256,
