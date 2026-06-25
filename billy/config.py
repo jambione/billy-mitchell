@@ -18,10 +18,9 @@ RUNTIME_DIR = Path(os.environ.get("BILLY_RUNTIME", str(REPO_ROOT / ".runtime")))
 STATE_FILE = RUNTIME_DIR / "state.bin"     # Lua -> Python  (req_id, frame, 2KB RAM)
 ACTION_FILE = RUNTIME_DIR / "action.bin"   # Python -> Lua  (req_id echo, command, plan)
 ROMS_DIR = REPO_ROOT / "roms"
-DATA_DIR = REPO_ROOT / "data"              # lessons.jsonl, metrics, savestates metadata
+DATA_DIR = REPO_ROOT / "data"              # lessons.jsonl, metrics
 LESSONS_FILE = DATA_DIR / "lessons.jsonl"
 METRICS_FILE = DATA_DIR / "metrics.jsonl"
-ESCAPES_FILE = DATA_DIR / "zone_escapes.json"  # persisted danger-zone survival plans
 
 # --- LM Studio (OpenAI-compatible) ------------------------------------------------------
 LMSTUDIO_BASE_URL = os.environ.get("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
@@ -42,18 +41,9 @@ CMD_SAVESTATE = 1           # snapshot current state into a slot (byte after cmd
 CMD_LOADSTATE = 2           # restore a slot's snapshot (instant rewind/reset)
 CMD_SOFT_RESET = 3          # NES soft reset
 
-# Savestate micro-search: at a risky pit, snapshot, try a few jump variants, and commit the
-# one that survives and gets furthest — rewinding the rest. The instant-loadstate
-# architecture makes this nearly free, and it's how SMB bots "never miss" a pit.
-MICRO_SEARCH = True
-SEARCH_SLOT = 1             # savestate slot reserved for search checkpoints (0 = level start)
-SEARCH_HORIZON_FRAMES = 80  # frames to simulate each candidate (long enough to clear a hazard)
-
 # --- Engine loop tunables (game-agnostic) -----------------------------------------------
 # Game-specific reflex/physics constants live with each game (e.g. games/smb/tuning.py).
 BILLY_PLAN_MAX_FRAMES = 90  # cap on a single Billy LLM macro before re-observing
-DANGER_RADIUS = 80          # consult Billy this many progress-units before a death spot
-DANGER_BUCKET = 24          # quantize death positions into zones of this width
 KB_TOP_K = 4                # lessons retrieved into Billy's prompt
 MAX_ATTEMPT_FRAMES = 60 * 60 * 10  # safety cap (~10 game-minutes) per attempt
 

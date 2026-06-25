@@ -7,7 +7,6 @@ and record tracking (score + fastest clear). It never references a specific game
 """
 from __future__ import annotations
 
-import json
 import time
 from collections import deque
 
@@ -30,34 +29,9 @@ class Director:
         self.use_llm = use_llm
         self.recent: deque[str] = deque(maxlen=12)
         self.commentator = Commentator()
-        self.danger_zones: set[int] = set()
-        self.zone_escapes: dict[int, Plan] = self._load_escapes()  # persisted across sessions
         self.best_score = 0
         self.fastest_clear_frames: int | None = None
         self.cur_level: tuple = ()
-
-    # --- zone-escape persistence --------------------------------------------------------
-    def _load_escapes(self) -> dict[int, Plan]:
-        try:
-            raw = json.loads(config.ESCAPES_FILE.read_text())
-            escapes = {int(z): [Step(s[0], s[1]) for s in steps] for z, steps in raw.items()}
-            if escapes:
-                print(f"[director] loaded {len(escapes)} remembered escape(s) from disk 🧠")
-            return escapes
-        except FileNotFoundError:
-            return {}
-        except Exception as exc:
-            print(f"[director] could not load escapes: {exc}")
-            return {}
-
-    def _save_escapes(self) -> None:
-        try:
-            config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-            payload = {str(z): [[s.frames, s.buttons] for s in steps]
-                       for z, steps in self.zone_escapes.items()}
-            config.ESCAPES_FILE.write_text(json.dumps(payload, indent=2))
-        except Exception as exc:
-            print(f"[director] could not save escapes: {exc}")
 
     # --- lock-step helper ---------------------------------------------------------------
     def _observe(self) -> Observation:
@@ -70,10 +44,8 @@ class Director:
         self.session.save_state(0)             # checkpoint the level start
         self._observe()                        # consume the post-save republished frame
         self.cur_level = start.level_key
-        n_mem = len(self.zone_escapes)
-        mem_note = f" ({n_mem} escape(s) remembered)" if n_mem else ""
         print(f"[director] in play at {start.level_label}, progress={start.progress}. "
-              f"Billy has taken the controller.{mem_note}")
+              f"Billy has taken the controller.")
         print(f'  🎤 Billy: "{self.commentator.event_line("start")}"')
         return start
 
@@ -93,16 +65,15 @@ class Director:
         seg_best = obs.progress
         final_score = obs.score
         level_start_frame = 0
-        consulted_zone: int | None = None
         need_checkpoint = False
         outcome = "timeout"
         furthest = obs.level_label
+        lesson_progress: dict = {}  # track progress gains from lessons applied
 
         while frames <= config.MAX_ATTEMPT_FRAMES:
             # --- death: reflect, then respawn at the checkpoint (or end) ------------------
             if obs.dead:
                 death_at = max(seg_best, obs.progress)
-                self.danger_zones.add(round(death_at / config.DANGER_BUCKET) * config.DANGER_BUCKET)
                 self._reflect(trajectory, "death", obs.level_label)
                 trajectory = []
                 self.session.send_plan(_IDLE)   # consume the pending frame
@@ -118,7 +89,7 @@ class Director:
                 self.reflex.reset(obs)
                 self.commentator.reset(obs.raw)
                 self.recent.clear()
-                seg_best, consulted_zone, need_checkpoint = obs.progress, None, False
+                seg_best, need_checkpoint = obs.progress, False
                 continue
 
             # --- level clear: keep going into the next level, then checkpoint it ----------
@@ -138,10 +109,9 @@ class Director:
                 self._reflect(trajectory, "clear", obs.level_label)
                 trajectory = []
                 self.reflex.note_level_advance(obs)
-                self.danger_zones.clear()
                 self.commentator.reset(obs.raw)
                 self.cur_level = obs.level_key
-                seg_best, consulted_zone, need_checkpoint = obs.progress, None, True
+                seg_best, need_checkpoint = obs.progress, True
                 if levels_cleared >= config.MAX_LEVELS_PER_ATTEMPT:
                     outcome = "clear"
                     self.session.send_plan(_IDLE)
@@ -155,45 +125,18 @@ class Director:
             # --- normal play -------------------------------------------------------------
             decision = self.reflex.step(obs)
             self.recent.append(decision.note)
-            zone = self._danger_zone_near(obs.progress)
 
-            # Learn-from-death: at a spot Mario has died before, SEARCH for a survivor (try a
-            # spread of escapes, keep the one that lives) and REMEMBER it so the next attempt
-            # skips straight to it. Reliable and fast — no dependence on the flaky local LLM.
-            if zone is not None and zone != consulted_zone and config.MICRO_SEARCH:
-                consulted_zone = zone
-                plan = self.zone_escapes.get(zone)
-                if plan is not None:
-                    action_note = "learned-escape"
-                    print(f"  [attempt {n}] {obs.progress} 🧠 Billy remembers the escape here")
-                else:
-                    best, tried, survived = self._micro_search(self.reflex.danger_candidates(obs))
-                    plan = best if survived else None
-                    if survived:
-                        self.zone_escapes[zone] = best
-                        self._save_escapes()
-                        action_note = f"danger-search/{tried}"
-                        print(f"  [attempt {n}] {obs.progress} 🔎 died here before — tried "
-                              f"{tried} escapes and LEARNED the one that survives")
-                if plan is not None:
-                    self.session.send_plan(plan)
-                    trajectory.append(coach.TrajectoryStep(
-                        x=obs.progress, summary=obs.summary, action=action_note, event="danger"))
-                    frames += plan_frames(plan)
-                    obs = self._observe()
-                    seg_best = max(seg_best, obs.progress)
-                    final_score = max(final_score, obs.score)
-                    continue
-            if zone is None:
-                consulted_zone = None
-
-            # Billy on a hard stall; otherwise the reflex's plan.
+            # Billy on scene change or hard stall; otherwise the reflex's plan.
             if decision.needs_billy and self.use_llm:
-                bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent),
-                                  self.controller)
+                lessons_used = self.kb.retrieve(obs.summary)
+                bd = billy.decide(obs, lessons_used, list(self.recent), self.controller)
                 plan = bd.plan
                 billy_calls += 1
                 action_note = f"BILLY {self._label(plan)}"
+                # Track which lessons were given to Billy (he may or may not apply them)
+                for les in lessons_used:
+                    if les not in lesson_progress:
+                        lesson_progress[les] = obs.progress
                 print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
             elif decision.needs_billy:
                 plan = list(decision.plan)   # reflex's own fallback (e.g. a recovery jump)
@@ -225,6 +168,14 @@ class Director:
         if final_score > self.best_score:
             self.best_score = final_score
             hi = " 🏆 NEW HIGH SCORE!"
+
+        # Record impact from lessons used in this attempt (compounding learning).
+        # Lessons applied with progress gain level up their quality scores.
+        for lesson, started_at in lesson_progress.items():
+            progress_gain = seg_best - started_at
+            if progress_gain > 0:
+                self.kb.record_impact(lesson, progress_gain)
+
         result = metrics.AttemptResult(
             attempt=n, outcome=outcome, max_x=seg_best, frames=frames, billy_calls=billy_calls,
             world_stage=furthest, levels_cleared=levels_cleared, score=final_score,
@@ -233,42 +184,6 @@ class Director:
         print(f"  [attempt {n}] {outcome.upper()} — reached {furthest}, "
               f"cleared {levels_cleared} level(s), score {final_score}{hi}")
         return result
-
-    # --- savestate micro-search (game provides the candidate actions) -------------------
-    def _rollout(self, plan: Plan) -> tuple[bool, int]:
-        """Run a candidate from the search checkpoint and keep simulating for the FULL horizon
-        (not just until it lands) so a delayed hit — e.g. a Koopa reaching Mario a few frames
-        after he touches down — correctly counts as a death. Returns (survived, farthest)."""
-        self.session.send_plan(plan)
-        obs = self._observe()
-        reached = obs.progress
-        used = plan_frames(plan)
-        while used < config.SEARCH_HORIZON_FRAMES and not obs.dead:
-            self.session.send_plan(_IDLE)
-            obs = self._observe()
-            reached = max(reached, obs.progress)
-            used += 2
-        return (not obs.dead), reached
-
-    def _micro_search(self, candidates: list[Plan]) -> tuple[Plan, int, bool]:
-        """Try each candidate from a checkpoint; return (best, num_tried, best_survived)."""
-        self.session.save_state(config.SEARCH_SLOT)
-        self._observe()
-        best_plan, best_score = candidates[0], -10 ** 9
-        for plan in candidates:
-            survived, reached = self._rollout(plan)
-            score = reached if survived else reached - 100_000  # death is far worse than short
-            if score > best_score:
-                best_score, best_plan = score, plan
-            self.session.load_state(config.SEARCH_SLOT)
-            self._observe()
-        return best_plan, len(candidates), best_score >= 0
-
-    def _danger_zone_near(self, progress: int) -> int | None:
-        for z in self.danger_zones:
-            if z - config.DANGER_RADIUS <= progress <= z + config.DANGER_BUCKET:
-                return z
-        return None
 
     def _reflect(self, trajectory, outcome: str, level_label: str) -> None:
         if not self.use_llm:

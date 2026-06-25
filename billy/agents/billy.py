@@ -44,14 +44,24 @@ def decide(obs: Observation, lessons: list[Lesson], recent_events: list[str],
 
 
 def _build_prompt(obs: Observation, lessons: list[Lesson], recent_events: list[str]) -> str:
-    lesson_block = "\n".join(l.prompt_line() for l in lessons) or "- (none yet)"
+    # Rank lessons by quality (impact per use) and show effectiveness
+    if lessons:
+        sorted_lessons = sorted(lessons, key=lambda l: l.quality(), reverse=True)
+        lesson_lines = []
+        for l in sorted_lessons:
+            quality = f"[quality: {l.quality():.0f}]" if l.uses > 0 else "[new]"
+            lesson_lines.append(f"- {quality} At {l.situation}: {l.tactic}")
+        lesson_block = "\n".join(lesson_lines)
+    else:
+        lesson_block = "- (none yet; start building your knowledge base)"
+
     events = ", ".join(recent_events[-6:]) or "just started"
     return (
         f"GAME STATE:\n{obs.summary}\n\n"
         f"MAP (M=you, E=enemy, #=solid, space=air):\n{obs.ascii_map}\n\n"
         f"RECENT EVENTS: {events}\n\n"
-        f"LESSONS YOU'VE LEARNED HERE:\n{lesson_block}\n\n"
-        f"Decide your next inputs to make progress and beat the level. JSON object only."
+        f"YOUR BEST LESSONS (ranked by effectiveness):\n{lesson_block}\n\n"
+        f"Your next move: apply a high-quality lesson if it fits, or adapt as needed. JSON object only."
     )
 
 

@@ -22,10 +22,12 @@ class SmbReflex(ReflexPolicy):
         self.reflex_rules: list[ReflexRule] = []
         self._best = 0
         self._frames_stuck = 0
+        self._last_scene: Scene | None = None
 
     def reset(self, obs: Observation) -> None:
         self._best = obs.progress
         self._frames_stuck = 0
+        self._last_scene = None
 
     def note_level_advance(self, obs: Observation) -> None:
         self._best = obs.progress
@@ -33,6 +35,36 @@ class SmbReflex(ReflexPolicy):
 
     def add_reflex_rule(self, rule: ReflexRule) -> None:
         self.reflex_rules.append(rule)
+
+    def _detect_scene_change(self, scene: Scene) -> str | None:
+        """Return a change description if something truly pivotal happened.
+        Triggered on major events only, so Billy gets called with strategy context."""
+        if self._last_scene is None:
+            return None
+        last = self._last_scene
+
+        # Enemy count changed (new enemy appeared on screen or one left)
+        if len(scene.enemies) != len(last.enemies):
+            change = "appeared" if len(scene.enemies) > len(last.enemies) else "left"
+            return f"enemy_{change}"
+
+        # Close enemy arrived (within 32px)
+        near_now = scene.nearest_enemy(within=48)
+        near_before = last.nearest_enemy(within=48)
+        if (near_now is not None) != (near_before is not None):
+            return "enemy_close" if near_now is not None else "enemy_far"
+
+        # Gap detection state changed (pit detected/cleared)
+        gap_now = scene.gap_ahead()
+        gap_before = last.gap_ahead()
+        if gap_now != gap_before:
+            return "pit_ahead" if gap_now else "pit_clear"
+
+        # Size/powerup changed (hit a powerup or lost it)
+        if scene.size != last.size:
+            return "powerup_hit"
+
+        return None
 
     # --- mid-air steering toward a landing target ---------------------------------------
     def _air_steer(self, scene: Scene) -> "Plan | None":
@@ -84,25 +116,35 @@ class SmbReflex(ReflexPolicy):
         else:
             self._frames_stuck += tuning.REFLEX_STEP_FRAMES
 
+        # Scene change: let Billy react in the moment.
+        change = self._detect_scene_change(scene)
+        if change is not None:
+            self._last_scene = scene
+            return Decision([], needs_billy=True, note=f"scene-change: {change}")
+
         # Stuck: reflexes have failed — escalate to Billy.
         if self._frames_stuck >= tuning.STUCK_FRAMES:
+            self._last_scene = scene
             return Decision([], needs_billy=True, note=f"stuck {self._frames_stuck}f")
 
         # Billy-taught reflex rules get first crack.
         for rule in self.reflex_rules:
             plan = rule(scene)
             if plan:
+                self._last_scene = scene
                 return Decision(plan, note="reflex-rule")
 
         # Airborne: steer toward a landing target (D-pad + boost) instead of a blind arc.
         if not scene.on_ground:
             steer = self._air_steer(scene)
+            self._last_scene = scene
             if steer is not None:
                 return Decision(steer, note="air-steer")
             return Decision(controller.run_right(tuning.AIRBORNE_STEP_FRAMES), note="airborne carry")
 
         # Bump jump: brief on-ground stall => hop (catches blocks the geometry missed).
         if tuning.BUMP_FRAMES <= self._frames_stuck < tuning.STUCK_FRAMES:
+            self._last_scene = scene
             return Decision(controller.jump_right(jump_frames=28), note="bump jump")
 
         gap = scene.gap_info()
@@ -112,6 +154,7 @@ class SmbReflex(ReflexPolicy):
         near = scene.nearest_enemy(tuning.STOMP_RANGE)
         if near is not None and not imminent_pit:
             dx, dy = near
+            self._last_scene = scene
             if dy > 24:  # enemy on lower ground: hop off the ledge to FALL onto it
                 return Decision(controller.jump_right(jump_frames=6), note=f"drop-stomp @{dx}px")
             return Decision(controller.jump_right(jump_frames=tuning.STOMP_HOLD_FRAMES),
@@ -120,6 +163,7 @@ class SmbReflex(ReflexPolicy):
         # Gap-aware jump (launch near the edge, A-hold scaled to width; micro-searchable).
         if gap is not None:
             dist_px, width = gap
+            self._last_scene = scene
             if dist_px <= tuning.JUMP_TRIGGER_PX:
                 jf = tuning.JUMP_BASE_FRAMES + width * tuning.JUMP_PER_TILE_FRAMES
                 jf = max(tuning.JUMP_MIN_FRAMES, min(jf, tuning.JUMP_MAX_FRAMES))
@@ -132,6 +176,7 @@ class SmbReflex(ReflexPolicy):
         obstacle = scene.obstacle_ahead()
         if obstacle is not None:
             dist_px, height = obstacle
+            self._last_scene = scene
             if dist_px <= tuning.OBSTACLE_TRIGGER_PX:
                 jf = tuning.OBSTACLE_BASE_FRAMES + height * tuning.OBSTACLE_PER_HEIGHT_FRAMES
                 jf = max(tuning.JUMP_MIN_FRAMES, min(jf, tuning.JUMP_MAX_FRAMES))
@@ -140,6 +185,7 @@ class SmbReflex(ReflexPolicy):
                             note=f"approach wall ({dist_px}px)")
 
         if scene.enemy_ahead():
+            self._last_scene = scene
             return Decision(controller.jump_right(jump_frames=20), note="hop enemy")
 
         # Coins / power-ups: bonk a block — but survival first, so ONLY when it's safe (no
@@ -147,7 +193,9 @@ class SmbReflex(ReflexPolicy):
         bonk = scene.block_above_ahead()
         safe_to_bonk = gap is None and scene.nearest_enemy(96) is None
         if bonk is not None and bonk <= tuning.BONK_TRIGGER_PX and safe_to_bonk:
+            self._last_scene = scene
             return Decision(controller.jump_right(jump_frames=tuning.BONK_HOLD_FRAMES),
                             note="bonk block (coin/powerup)")
 
+        self._last_scene = scene
         return Decision(controller.run_right(tuning.REFLEX_STEP_FRAMES), note="cruise")

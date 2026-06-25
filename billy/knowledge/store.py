@@ -30,10 +30,25 @@ class Lesson:
     outcome: str
     world_stage: str = ""
     uses: int = 0
+    impact_score: float = 0.0  # cumulative progress gained from applying this lesson
     embedding: list[float] = field(default_factory=list)
 
     def prompt_line(self) -> str:
         return f"- At {self.situation}: {self.tactic} ({self.outcome})"
+
+    def quality(self) -> float:
+        """Lesson quality: impact per use. Higher = more valuable."""
+        return self.impact_score / max(1, self.uses)
+
+    def __hash__(self) -> int:
+        """Hash based on content, not embedding or mutable fields."""
+        return hash((self.situation, self.tactic))
+
+    def __eq__(self, other: object) -> bool:
+        """Equality based on situation+tactic (content), not metadata."""
+        if not isinstance(other, Lesson):
+            return NotImplemented
+        return self.situation == other.situation and self.tactic == other.tactic
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -85,14 +100,28 @@ class KnowledgeBase:
         return lesson
 
     def retrieve(self, situation: str, k: int = config.KB_TOP_K) -> list[Lesson]:
-        """Top-K lessons most similar to the current situation."""
+        """Top-K lessons ranked by: similarity + quality (impact/use).
+        High-impact lessons bubble up even if not perfectly similar."""
         if not self.lessons:
             return []
         q = _safe_embed(situation)
         if not q:
-            return self.lessons[-k:]  # fall back to most recent if embedding is unavailable
-        ranked = sorted(self.lessons, key=lambda l: _cosine(q, l.embedding), reverse=True)
+            # fall back to most recent + highest quality if embedding unavailable
+            return sorted(self.lessons, key=lambda l: (l.impact_score, l.uses), reverse=True)[-k:]
+        # Hybrid rank: similarity (70%) + quality (30%)
+        ranked = sorted(
+            self.lessons,
+            key=lambda l: (0.7 * _cosine(q, l.embedding) + 0.3 * min(1.0, l.quality() / 100)),
+            reverse=True
+        )
         return ranked[:k]
+
+    def record_impact(self, lesson: Lesson, progress_gain: int) -> None:
+        """Record that applying this lesson led to a progress gain."""
+        if lesson in self.lessons:
+            lesson.impact_score += progress_gain
+            lesson.uses += 1
+            self._save()
 
 
 def _safe_embed(text: str) -> list[float]:
