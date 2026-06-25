@@ -9,6 +9,7 @@ It never references a specific game or system.
 """
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 
@@ -32,6 +33,10 @@ class Director:
         self.kb = kb
         self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
         self.use_llm = use_llm
+        # Eval mode: end each attempt at the FIRST level clear so every attempt is a fresh run of
+        # the same starting level. This exposes the compounding curve (search-per-clear falls and
+        # clear-time drops as the cache fills) instead of the checkpoint marching forward.
+        self.repeat_level = os.environ.get("BILLY_REPEAT_LEVEL", "0") == "1"
         self.recent: deque[str] = deque(maxlen=12)
         self.commentator = Commentator()
         self.best_score = 0
@@ -185,6 +190,7 @@ class Director:
         self.commentator.reset(obs.raw)
         self.recent.clear()
         self.cur_level = obs.level_key
+        start_level = obs.level_key   # for the frontier metric (cur_level moves on clear)
 
         trajectory: list[coach.TrajectoryStep] = []
         billy_calls = frames = levels_cleared = fastest_in_attempt = 0
@@ -248,6 +254,9 @@ class Director:
                       f'{record} — Billy: "{self.commentator.event_line("clear")}"')
                 self._reflect(trajectory, "clear", obs.level_label)
                 trajectory = []
+                if self.repeat_level:
+                    outcome = "clear"   # eval mode: one clear per attempt -> next attempt restarts
+                    break
                 self.reflex.note_level_advance(obs)
                 self.commentator.reset(obs.raw)
                 self.cur_level = obs.level_key
@@ -301,7 +310,9 @@ class Director:
                 plan = best_plan
                 search_calls += 1
                 if progressed:
-                    self.cache.put(lk, obs.progress, plan, reach)
+                    # force-overwrite when refreshing a stale entry so the freshest WORKING plan
+                    # replaces the one that just failed verify (else we'd re-search it forever).
+                    self.cache.put(lk, obs.progress, plan, reach, force=cached is not None)
                     tag = "research✓" if cached is not None else "search✓"
                     action_note = f"{tag} {self._label(plan)}"
                     print(f'  [attempt {n}] {obs.progress} 🔍 solved (reach {reach}) — remembered')
@@ -367,7 +378,7 @@ class Director:
             world_stage=furthest, levels_cleared=levels_cleared, score=final_score,
             fastest_clear_frames=fastest_in_attempt, duration_s=round(time.monotonic() - t0, 2),
             search_calls=search_calls, replay_calls=replay_calls,
-            frontier_x=self.cache.solved_frontier(obs.level_key), frames_to_frontier=frames_to_frontier)
+            frontier_x=self.cache.solved_frontier(start_level), frames_to_frontier=frames_to_frontier)
         metrics.record(result)
         print(f"  [attempt {n}] {outcome.upper()} — reached {furthest}, "
               f"cleared {levels_cleared} level(s), score {final_score}{hi}")

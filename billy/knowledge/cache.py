@@ -60,12 +60,17 @@ class SolutionCache:
     def get(self, level_key: LevelKey, x: int) -> CacheEntry | None:
         return self.entries.get(bucket_of(level_key, x))
 
-    def put(self, level_key: LevelKey, x: int, plan: Plan, reach_after: int) -> CacheEntry:
-        """Store (or improve) the solution for this bucket. Keep whichever reaches further."""
+    def put(self, level_key: LevelKey, x: int, plan: Plan, reach_after: int,
+            force: bool = False) -> CacheEntry:
+        """Store the solution for this bucket. By default keep whichever reaches further; pass
+        force=True to overwrite regardless — used when a cached plan went stale (failed verify) and
+        a FRESH survivor was found: the fresh one works from the current state and must replace the
+        stale one even at equal reach, otherwise the stale plan is re-searched on every pass and the
+        learning never stabilises."""
         key = bucket_of(level_key, x)
         steps = [Step(s.frames, s.buttons) for s in plan]
         existing = self.entries.get(key)
-        if existing is None or reach_after > existing.reach_after:
+        if existing is None or force or reach_after > existing.reach_after:
             self.entries[key] = CacheEntry(plan=steps, reach_after=reach_after,
                                            hits=existing.hits if existing else 0,
                                            fails=existing.fails if existing else 0)
