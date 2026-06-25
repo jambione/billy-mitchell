@@ -45,21 +45,24 @@ class Director:
         return self.game.observe(st.frame, st.ram)
 
     # --- micro-search: evaluate candidates on a CLONE so the live run never visibly rewinds ----
-    def _rollout(self, plan: Plan, horizon: int = config.SEARCH_HORIZON_FRAMES) -> tuple[bool, int]:
-        """Simulate a candidate for the FULL horizon (so a delayed hit — e.g. a Koopa reaching
-        Mario a few frames after he lands — still counts as death). The agent COASTS FORWARD after
-        the candidate (reflex.advance_plan) rather than standing on neutral, so the rollout measures
-        survival while *continuing to move through* the hazard. Returns (survived, farthest)."""
+    def _rollout(self, plan: Plan, settle: int = config.SEARCH_HORIZON_FRAMES) -> tuple[bool, int]:
+        """Run the candidate, THEN coast forward `settle` frames and watch for a delayed death.
+
+        `settle` is a budget for the coast AFTER the candidate (not a total that the candidate's own
+        frames consume) — critical, because the killer case is a hazard just past where the candidate
+        lands (e.g. a Goomba 15px beyond a jump's landing). Coasting forward with reflex.advance_plan
+        after every candidate guarantees that imminent death is simulated instead of being declared a
+        false 'survivor'. Returns (survived, farthest)."""
         self.session.send_plan(plan)
         obs = self._observe()
         reached = obs.progress
-        used = plan_frames(plan)
-        while used < horizon and not obs.dead:
+        coasted = 0
+        while coasted < settle and not obs.dead:
             coast = self.reflex.advance_plan(obs)
             self.session.send_plan(coast)
             obs = self._observe()
             reached = max(reached, obs.progress)
-            used += max(1, plan_frames(coast))
+            coasted += max(1, plan_frames(coast))
         return (not obs.dead), reached
 
     _MIN_PROGRESS_PX = 8   # a "solution" must actually advance, else it's a stall, not an escape
@@ -147,7 +150,7 @@ class Director:
                 for plan in self._candidates_from(snap):
                     self.session.restore(snap)
                     self._observe()
-                    lived, reached = self._rollout(plan, horizon=config.LEARN_HORIZON_FRAMES)
+                    lived, reached = self._rollout(plan, settle=config.LEARN_HORIZON_FRAMES)
                     if lived and reached > death_x and reached > best_reach:
                         best_plan, best_reach = plan, reached
             self.session.restore(snap)
