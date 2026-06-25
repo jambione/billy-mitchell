@@ -41,6 +41,12 @@ end
 local speed = os.getenv("BILLY_SPEED")
 if speed and emu.speedmode then emu.speedmode(speed) end
 
+-- DISABLE REWIND: Billy should not cheat by rewinding time during play.
+-- This ensures fair gameplay - no second chances via time manipulation.
+if emu.setrewind then
+  emu.setrewind(false)  -- Disable FCEUX rewind feature
+end
+
 local function u32(n)
   return string.char(n % 256, math.floor(n / 256) % 256,
                      math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256)
