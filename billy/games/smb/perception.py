@@ -91,6 +91,17 @@ class Scene:
         return self.player_state in DYING_STATES or self.y_viewport > 1
 
     @property
+    def in_play(self) -> bool:
+        """False on death / level-transition / reset frames, where RAM positions read garbage
+        (world-x and world/stage flip to 0xFF -> the old x=65535 and '256-256' bugs). On those
+        frames the engine must NOT trust mario_x / world / stage."""
+        if self.world > 7 or self.stage > 3:        # implausible level id -> transition frame
+            return False
+        if self.mario_x >= 0x4000:                  # no single area is this long -> overflow read
+            return False
+        return True
+
+    @property
     def world_stage(self) -> str:
         return f"{self.world + 1}-{self.stage + 1}"
 

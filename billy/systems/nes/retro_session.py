@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-import retro
+import stable_retro as retro
 
 from . import controller
 

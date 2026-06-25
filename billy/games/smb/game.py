@@ -13,15 +13,23 @@ class SmbGame(Game):
 
     def __init__(self) -> None:
         self.system = NesSystem()
+        # Last in-play (progress, level_label, level_key) — reused on death/transition frames
+        # so the engine never sees the 0xFFFF overflow (x=65535 / "256-256" garbage).
+        self._last_good: tuple[int, str, tuple] = (0, "1-1", (0, 0))
 
     def observe(self, frame: int, ram: bytes) -> Observation:
         s = build_scene(ram, frame)
+        if s.in_play:
+            progress, level_label, level_key = s.mario_x, s.world_stage, (s.world, s.stage)
+            self._last_good = (progress, level_label, level_key)
+        else:
+            progress, level_label, level_key = self._last_good  # don't trust garbage RAM
         return Observation(
             frame=frame,
-            progress=s.mario_x,
+            progress=progress,
             score=s.score,
-            level_label=s.world_stage,
-            level_key=(s.world, s.stage),
+            level_label=level_label,
+            level_key=level_key,
             dead=s.is_dying,
             summary=s.summary(),
             ascii_map=s.ascii_view(),

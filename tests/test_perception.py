@@ -89,6 +89,39 @@ def test_gap_info_none_on_solid_floor():
     assert build_scene(bytes(ram), 0).gap_info() is None
 
 
+def test_in_play_guard_rejects_overflow_frames():
+    # Death / transition frames: world-x and world/stage read 0xFF -> must be flagged not-in-play.
+    ram = _blank_ram()
+    ram[0x6D], ram[0x86] = 0xFF, 0xFF      # world-x would be 65535
+    ram[0x075F], ram[0x075C] = 0xFF, 0xFF  # world/stage would be "256-256"
+    scene = build_scene(bytes(ram), 0)
+    assert scene.in_play is False
+    # A normal in-level frame is in_play.
+    good = _blank_ram()
+    good[0x6D], good[0x86] = 1, 0x20       # x = 288
+    assert build_scene(bytes(good), 0).in_play is True
+
+
+def test_observe_reuses_last_good_on_death_frame():
+    from billy.games.smb import SmbGame  # imports retro via NesSystem; run under the venv
+
+    game = SmbGame()
+    good = _blank_ram()
+    good[0x6D], good[0x86] = 0, 200        # x = 200, world 1-1
+    o1 = game.observe(0, bytes(good))
+    assert o1.progress == 200 and o1.level_label == "1-1" and o1.dead is False
+
+    death = _blank_ram()
+    death[0x6D], death[0x86] = 0xFF, 0xFF  # overflow x
+    death[0x075F], death[0x075C] = 0xFF, 0xFF
+    death[0x000E] = 0x0B                    # dying
+    o2 = game.observe(1, bytes(death))
+    assert o2.progress == 200              # reused last good, NOT 65535
+    assert o2.level_label == "1-1"         # NOT "256-256"
+    assert o2.level_key == (0, 0)
+    assert o2.dead is True                  # death is still reported
+
+
 def test_plan_encoding_roundtrip():
     plan = [controller.Step(12, controller.mask(controller.RIGHT, controller.B)),
             controller.Step(20, controller.mask(controller.RIGHT, controller.B, controller.A))]
