@@ -1,84 +1,115 @@
 # Billy Mitchell 🕹️
 
-An agentic NES game-player that **learns to beat levels** — starting with Super Mario Bros in
-FCEUX. "Billy" plays through a simulated NES controller, perceives the game by reading
-emulator RAM, reasons with a **local LLM in LM Studio**, and gets better across attempts by
-banking lessons in a knowledge base. He has the personality of the real Billy Mitchell:
-cocky, boastful, never wrong, and quick to blame a "glitchy cartridge" when he dies.
+An agentic NES game-player that **learns to beat levels and carries that learning forward to new
+games**. Billy perceives the game by reading emulator RAM, plays through a simulated NES controller,
+and **gets faster every attempt** by banking the exact solutions he discovers. He has the
+personality of the real Billy Mitchell: cocky, boastful, never wrong, and quick to blame a "glitchy
+cartridge" when he dies.
 
-## How it works
+The emulator runs **in-process** via [stable-retro](https://github.com/Farama-Foundation/stable-retro)
+— no external process, no file IPC, and **deterministic state cloning** so Billy can plan invisibly.
 
-A local 7B model is far too slow to react frame-by-frame (Mario wants ~60 decisions/sec), so
-Billy is **not** a frame-by-frame controller. The design is a **two-tier loop**:
+## The idea: discover once, replay forever
 
-- **Tier 1 — Reflex executor** (pure Python, every frame): runs right, hops gaps and enemies,
-  and detects "interesting" events (stuck, death, level clear). No LLM.
-- **Tier 2 — Billy (LLM)**: consulted *only* at decision points (e.g. when stuck). Reads the
-  scene + retrieved lessons and returns a short controller plan + trash talk.
-- **Tier 3 — Coach (LLM)**: after each attempt, distills one reusable lesson into the
-  knowledge base (embedded with `nomic-embed-text` for retrieval).
+A local LLM is far too slow to react ~60×/sec, so Billy is **not** a frame-by-frame controller.
+Instead he learns a **position-keyed policy** the first time he sees each hazard:
 
-Billy and FCEUX talk over **lock-step file IPC**: the Lua bridge publishes a state (2KB of
-RAM) and blocks until Python sends an action plan, so the LLM's latency never drops a frame.
-Instant `savestate`/`loadstate` makes every attempt a clean retry of the level start.
+1. **Reflex** runs the routine play (run right, hop gaps, stomp enemies) every frame — no LLM.
+2. At a hazard, Billy **micro-searches on a cloned copy of the game** (invisible to the live run) for
+   a button sequence that *verifiably survives and makes progress*, and **caches it** keyed to where
+   it happened — `(level, x)`.
+3. On any later pass he **replays that exact sequence** — no search, no LLM. Each hazard solved once
+   is solved forever, so later attempts only search the *new* frontier.
+4. On a **death**, he searches backward from the last safe spot for a sequence that gets *past* the
+   death, and banks it (learn-from-death) — this is what advances the frontier.
+5. Because enemies move, a cached plan is **verified on a clone first**; if it's gone stale he
+   live-searches with the enemy where it *actually* is now (replay-verify → live-search).
 
+The LLM (Billy + Coach) is consulted only for genuinely novel/stuck moments and persona — it is out
+of the hot loop.
+
+```mermaid
+flowchart TD
+    obs[Observe RAM → Scene] --> reflex{Reflex: routine or hazard?}
+    reflex -- routine --> act[Run right / hop / stomp]
+    reflex -- hazard --> cache{Solution cached here?}
+    cache -- yes --> verify{Verify on clone}
+    verify -- survives --> replay[Replay exact sequence ⚡]
+    verify -- stale --> search
+    cache -- no --> search["Micro-search on a CLONE 🔍<br/>seeded by reflex spread + transferable Skills"]
+    search -- found --> bank["Bank solution at (level, x)"] --> act
+    search -- none --> llm[Billy LLM improvises]
+    act --> obs
+    death[💀 death] --> lfd["Learn-from-death:<br/>search a survivor past the death, bank it"] --> obs
 ```
-FCEUX + billy_bridge.lua  <--state.bin / action.bin-->  Python brain (Director)
-   RAM read, joypad.set                                  perception · executor · Billy · Coach · KB
-```
+
+## Two kinds of learning → cross-game transfer
+
+- **SolutionCache** (`knowledge/cache.py`) — *exact* solutions, replayed deterministically. Keyed on
+  the engine's generic `(level_key, progress)`, so the whole discover-once/replay-forever capability
+  is **game-agnostic**.
+- **Skill library** (`knowledge/skills.py`) — *abstract* tactics ("precise gap jump", "stomp from
+  approach", "run-jump a tall obstacle") carried as embeddings. On a new game the cache is empty, but
+  skills retrieved by situation-similarity **seed the search** with carried-forward tactics. Skills
+  only widen the search set — they never blind-replay, so transfer can't cause a wrong action.
+- **Shared platformer reflex** (`games/common/platformer.py`) — the whole side-scroller policy,
+  parameterised by a per-game `PhysicsProfile`. A new NES platformer reuses it wholesale; e.g.
+  **SMB2-Japan / Lost Levels** (`games/smb_lost/`) plays with *zero new reflex code*.
 
 ## Setup
 
-1. **FCEUX**: `brew install fceux`
-2. **ROM**: put a legally-obtained `Super Mario Bros (USA).nes` at `roms/smb.nes` (gitignored).
-3. **LM Studio**: run it with the server on `localhost:1234` and load a chat model
-   (defaults to `deepseek-coder-v2-lite-instruct`) plus the `nomic-embed-text` embedding model.
-4. **Python**: `pip install -r requirements.txt` (only needs `requests`; Python 3.11+).
+```bash
+./emulator/setup_retro.sh          # creates .venv, installs deps, imports the ROM
+```
+You must supply a legally-obtained `Super Mario Bros (USA).nes` at `roms/smb.nes` (gitignored). For
+the second game, drop the SMB2-Japan ROM in `roms/` and re-run `python -m retro.import roms/`.
+The LLM tiers are optional — run with `--no-llm` for the pure learning loop. To enable Billy/Coach,
+run LM Studio on `localhost:1234` with a chat model + the `nomic-embed-text` embedder.
 
 ## Run
 
-Two terminals:
-
 ```bash
-# Terminal 1 — launch the emulator + bridge (loads SMB to the title screen)
-./emulator/run_fceux.sh
-
-# Terminal 2 — start Billy's brain (he presses Start himself and begins learning)
-python run.py --attempts 20
+.venv/bin/python run.py --attempts 20                      # play + learn, watch the window
+BILLY_HEADLESS=1 .venv/bin/python run.py --attempts 10 --no-llm   # fast headless benchmark
+.venv/bin/python run.py --game smb_lost --seed-skills      # SMB2-Japan, seeded with SMB skills
 ```
 
-Useful flags:
-- `--no-llm` — pure Tier-1 reflex run (no Billy/Coach); good for a first smoke test.
-- `--fresh` — wipe previously learned lessons.
-- `BILLY_SPEED=turbo ./emulator/run_fceux.sh` — run faster-than-realtime for quicker learning.
-- `BILLY_CHAT_MODEL=<id>` — use a different loaded LM Studio model.
+Flags / env:
+- `--no-llm` — pure learning loop (reflex + cache + search), no LLM. Great first smoke test.
+- `--game smb|smb_lost` — which title. `--seed-skills` — seed transferable SMB tactics.
+- `--fresh` — wipe learned solutions, skills, and lessons.
+- `BILLY_HEADLESS=1` — no window (fast). `BILLY_TURBO=1` — no realtime pacing when windowed.
+- `BILLY_REPEAT_LEVEL=1` — eval mode: end each attempt at the first clear so the **same** level
+  repeats and the compounding curve is visible. `BILLY_MAX_FRAMES=N` — cap attempt length.
 
-## Develop / verify without the emulator
-
+**Prove the learning compounds** (Billy clears 1-1 every attempt; the curve prints search↓/replay↑):
 ```bash
-python -c "import tests.test_perception as t; [getattr(t,n)() for n in dir(t) if n.startswith('test_')]"
-python scripts/dryrun.py          # full loop vs a FAKE emulator (no LLM)
-python scripts/dryrun.py --llm    # same, but also drives Billy + Coach against LM Studio
+BILLY_HEADLESS=1 BILLY_REPEAT_LEVEL=1 BILLY_MAX_FRAMES=8000 .venv/bin/python -u run.py --attempts 10 --no-llm
 ```
 
-`scripts/dryrun.py` speaks the exact same binary protocol as the Lua bridge, so it validates
-the whole brain (IPC, perception, executor, Billy, Coach, KB, metrics) without FCEUX.
+## Tests
+
+```bash
+BILLY_HEADLESS=1 .venv/bin/python -m pytest -q tests/
+```
 
 ## Layout
 
-Three layers — `Game → System → Controller` — behind abstract contracts, so the engine is
-reusable across consoles and titles. Adding a new system = a new `systems/<x>/`; a new game =
-a new `games/<y>/`; the engine never changes.
+Three layers — `Game → System → Controller` — behind abstract contracts, so the engine is reusable
+across consoles and titles. New system = a new `systems/<x>/`; new game = a new `games/<y>/`.
 
 | Path | Layer | Role |
 |------|-------|------|
-| `billy/abstractions.py` | engine | The contracts: `Observation`, `Decision`, `Controller`, `System`, `Game`, `ReflexPolicy` |
-| `billy/director.py` | engine | Game-agnostic loop: reflex ↔ Billy, danger-zone micro-search, checkpoints, records |
-| `billy/agents/billy.py` · `coach.py` | engine | LLM strategist + analyst (operate on an `Observation`) |
-| `billy/knowledge/store.py` · `metrics.py` · `commentary.py` · `persona.py` · `llm.py` · `ipc.py` | engine | KB, metrics, Billy's voice, LLM client, file-IPC transport |
-| `billy/systems/nes/controller.py` | controller | NES pad: button bits + name↔mask encoding |
-| `billy/systems/nes/system.py` · `bridge.lua` | system | NES transport + FCEUX launch + the in-emulator Lua bridge |
-| `billy/games/smb/perception.py` | game | SMB RAM → `Scene` (ported MarI/O readers) |
-| `billy/games/smb/reflexes.py` · `tuning.py` | game | SMB reflex policy (gap/pipe/stomp/air-steer) + physics constants |
-| `billy/games/smb/game.py` | game | `SmbGame` binds it all: `observe`, `boot`, `make_reflex` |
-| `run.py` | — | Entry point (picks the game, runs the engine) |
+| `billy/abstractions.py` | engine | Contracts: `Observation`, `Decision`, `Session`, `System`, `Game`, `ReflexPolicy` |
+| `billy/director.py` | engine | Game-agnostic loop: cache-first replay → invisible micro-search → learn-from-death → LLM |
+| `billy/knowledge/cache.py` | engine | `SolutionCache` — position-keyed exact solutions (the compounding policy) |
+| `billy/knowledge/skills.py` | engine | `SkillLibrary` — embedding-retrieved transferable tactics (cross-game) |
+| `billy/knowledge/store.py` | engine | Prose-lesson KB + embedding helpers (LLM strategy/narration) |
+| `billy/agents/billy.py` · `coach.py` | engine | LLM strategist + analyst (off the hot loop) |
+| `billy/metrics.py` · `commentary.py` · `persona.py` · `llm.py` | engine | Compounding metrics, Billy's voice, LLM client |
+| `billy/systems/nes/retro_session.py` | system | In-process stable-retro transport: step, RAM, **state cloning**, invisible search |
+| `billy/systems/nes/controller.py` · `system.py` | system | NES pad (button bits) + system wiring |
+| `billy/games/common/platformer.py` | game | Shared NES-platformer reflex + `PhysicsProfile` + candidate builders |
+| `billy/games/smb/{perception,reflexes,tuning,game}.py` | game | SMB: RAM→`Scene`, SMB profile, `SmbGame` |
+| `billy/games/smb_lost/game.py` | game | SMB2-Japan — same engine, reuses SMB perception + the shared reflex |
+| `run.py` | — | Entry point (picks the game, seeds skills, runs the engine) |
