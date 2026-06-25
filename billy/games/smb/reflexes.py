@@ -84,18 +84,13 @@ class SmbReflex(ReflexPolicy):
         return [Step(f, controller.NEUTRAL)]                                    # drop on it
 
     def danger_candidates(self, obs: Observation) -> list[Plan]:
-        """A diverse spread of escapes the engine micro-searches at a spot Mario has died
-        before — covers pits AND enemies. Crucially it includes PATIENCE: stand still and let
-        an approaching Koopa come into range, THEN stomp it (rushing in is what gets him hit).
-        The engine keeps whichever option actually survives."""
+        """A focused spread of escapes — covers pits AND enemies without exhaustive search.
+        Includes PATIENCE: stand still and let an approaching Koopa come into range, THEN stomp."""
         c = controller
         return [
-            c.run_right(10, sprint=False),                # cautious, no boost
-            c.jump_right(jump_frames=16),                 # quick hop
             c.jump_right(jump_frames=28),                 # higher jump (clear a pit)
             c.jump_right(jump_frames=34),                 # max jump
             c.idle(16) + c.jump_right(jump_frames=14),    # wait a beat, then stomp
-            c.idle(28) + c.jump_right(jump_frames=14),    # wait longer for the enemy
             c.idle(42) + c.jump_right(jump_frames=14),    # let the Koopa come all the way to you
         ]
 

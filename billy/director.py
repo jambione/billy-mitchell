@@ -38,6 +38,36 @@ class Director:
         st = self.session.read_state()
         return self.game.observe(st.frame, st.ram)
 
+    # --- micro-search (hybrid: when scene-change detects danger, search for best escape) -----
+    def _rollout(self, plan: Plan) -> tuple[bool, int]:
+        """Run a candidate from the search checkpoint and keep simulating for the FULL horizon
+        so a delayed hit (e.g. a Koopa reaching Mario a few frames after he touches down)
+        correctly counts as a death. Returns (survived, farthest)."""
+        self.session.send_plan(plan)
+        obs = self._observe()
+        reached = obs.progress
+        used = plan_frames(plan)
+        while used < config.SEARCH_HORIZON_FRAMES and not obs.dead:
+            self.session.send_plan(_IDLE)
+            obs = self._observe()
+            reached = max(reached, obs.progress)
+            used += 2
+        return (not obs.dead), reached
+
+    def _micro_search(self, candidates: list[Plan]) -> tuple[Plan, int, bool]:
+        """Try each candidate from a checkpoint; return (best, num_tried, best_survived)."""
+        self.session.save_state(config.SEARCH_SLOT)
+        self._observe()
+        best_plan, best_score = candidates[0], -10 ** 9
+        for plan in candidates:
+            survived, reached = self._rollout(plan)
+            score = reached if survived else reached - 100_000  # death is far worse than short
+            if score > best_score:
+                best_score, best_plan = score, plan
+            self.session.load_state(config.SEARCH_SLOT)
+            self._observe()
+        return best_plan, len(candidates), best_score >= 0
+
     # --- boot ---------------------------------------------------------------------------
     def boot(self) -> Observation:
         start = self.game.boot(self.session)   # game reaches a playable state, returns start obs
@@ -126,18 +156,26 @@ class Director:
             decision = self.reflex.step(obs)
             self.recent.append(decision.note)
 
-            # Billy on scene change or hard stall; otherwise the reflex's plan.
+            # Hybrid approach: micro-search on danger, Billy on strategy.
             if decision.needs_billy and self.use_llm:
-                lessons_used = self.kb.retrieve(obs.summary)
-                bd = billy.decide(obs, lessons_used, list(self.recent), self.controller)
-                plan = bd.plan
-                billy_calls += 1
-                action_note = f"BILLY {self._label(plan)}"
-                # Track which lessons were given to Billy (he may or may not apply them)
-                for les in lessons_used:
-                    if les not in lesson_progress:
-                        lesson_progress[les] = obs.progress
-                print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
+                # Scene-change danger: use micro-search to find the best escape.
+                if "enemy" in decision.note or "pit" in decision.note:
+                    best_plan, tried, survived = self._micro_search(self.reflex.danger_candidates(obs))
+                    plan = best_plan
+                    action_note = f"micro-search({tried}) {self._label(plan)}"
+                    print(f'  [attempt {n}] {obs.progress} 🔍 Escape found (tried {tried})')
+                else:
+                    # For other scene changes (stuck, etc.), consult Billy with KB lessons
+                    lessons_used = self.kb.retrieve(obs.summary)
+                    bd = billy.decide(obs, lessons_used, list(self.recent), self.controller)
+                    plan = bd.plan
+                    billy_calls += 1
+                    action_note = f"BILLY {self._label(plan)}"
+                    # Track which lessons were given to Billy (he may or may not apply them)
+                    for les in lessons_used:
+                        if les not in lesson_progress:
+                            lesson_progress[les] = obs.progress
+                    print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
             elif decision.needs_billy:
                 plan = list(decision.plan)   # reflex's own fallback (e.g. a recovery jump)
                 action_note = f"reflex {decision.note}"

@@ -51,6 +51,11 @@ MAX_ATTEMPT_FRAMES = 60 * 60 * 10  # safety cap (~10 game-minutes) per attempt
 MAX_LEVELS_PER_ATTEMPT = 8  # stop an attempt after clearing this many levels
 RESPAWNS_PER_ATTEMPT = 3    # on death, retry from the current level's checkpoint this many times
 
+# --- Micro-search (hybrid approach: scene-change danger -> micro-search -> learn) -----------
+MICRO_SEARCH = True
+SEARCH_SLOT = 1             # savestate slot reserved for search checkpoints (0 = level start)
+SEARCH_HORIZON_FRAMES = 50  # frames to simulate each candidate (balance: quick sim vs coverage)
+
 
 def ensure_dirs() -> None:
     """Create runtime/data dirs if missing. Cheap and idempotent."""
