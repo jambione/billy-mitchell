@@ -21,6 +21,7 @@ ROMS_DIR = REPO_ROOT / "roms"
 DATA_DIR = REPO_ROOT / "data"              # lessons.jsonl, metrics, savestates metadata
 LESSONS_FILE = DATA_DIR / "lessons.jsonl"
 METRICS_FILE = DATA_DIR / "metrics.jsonl"
+ESCAPES_FILE = DATA_DIR / "zone_escapes.json"  # persisted danger-zone survival plans
 
 # --- LM Studio (OpenAI-compatible) ------------------------------------------------------
 LMSTUDIO_BASE_URL = os.environ.get("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
@@ -46,7 +47,7 @@ CMD_SOFT_RESET = 3          # NES soft reset
 # architecture makes this nearly free, and it's how SMB bots "never miss" a pit.
 MICRO_SEARCH = True
 SEARCH_SLOT = 1             # savestate slot reserved for search checkpoints (0 = level start)
-SEARCH_HORIZON_FRAMES = 54  # frames to simulate each candidate (until landed or dead)
+SEARCH_HORIZON_FRAMES = 80  # frames to simulate each candidate (long enough to clear a hazard)
 
 # --- Engine loop tunables (game-agnostic) -----------------------------------------------
 # Game-specific reflex/physics constants live with each game (e.g. games/smb/tuning.py).

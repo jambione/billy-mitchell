@@ -7,6 +7,7 @@ and record tracking (score + fastest clear). It never references a specific game
 """
 from __future__ import annotations
 
+import json
 import time
 from collections import deque
 
@@ -30,9 +31,33 @@ class Director:
         self.recent: deque[str] = deque(maxlen=12)
         self.commentator = Commentator()
         self.danger_zones: set[int] = set()
+        self.zone_escapes: dict[int, Plan] = self._load_escapes()  # persisted across sessions
         self.best_score = 0
         self.fastest_clear_frames: int | None = None
         self.cur_level: tuple = ()
+
+    # --- zone-escape persistence --------------------------------------------------------
+    def _load_escapes(self) -> dict[int, Plan]:
+        try:
+            raw = json.loads(config.ESCAPES_FILE.read_text())
+            escapes = {int(z): [Step(s[0], s[1]) for s in steps] for z, steps in raw.items()}
+            if escapes:
+                print(f"[director] loaded {len(escapes)} remembered escape(s) from disk 🧠")
+            return escapes
+        except FileNotFoundError:
+            return {}
+        except Exception as exc:
+            print(f"[director] could not load escapes: {exc}")
+            return {}
+
+    def _save_escapes(self) -> None:
+        try:
+            config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+            payload = {str(z): [[s.frames, s.buttons] for s in steps]
+                       for z, steps in self.zone_escapes.items()}
+            config.ESCAPES_FILE.write_text(json.dumps(payload, indent=2))
+        except Exception as exc:
+            print(f"[director] could not save escapes: {exc}")
 
     # --- lock-step helper ---------------------------------------------------------------
     def _observe(self) -> Observation:
@@ -45,8 +70,10 @@ class Director:
         self.session.save_state(0)             # checkpoint the level start
         self._observe()                        # consume the post-save republished frame
         self.cur_level = start.level_key
+        n_mem = len(self.zone_escapes)
+        mem_note = f" ({n_mem} escape(s) remembered)" if n_mem else ""
         print(f"[director] in play at {start.level_label}, progress={start.progress}. "
-              f"Billy has taken the controller.")
+              f"Billy has taken the controller.{mem_note}")
         print(f'  🎤 Billy: "{self.commentator.event_line("start")}"')
         return start
 
@@ -125,20 +152,43 @@ class Director:
                 obs = self._observe()
                 continue
 
-            # --- normal play: danger-zone consult -> Billy / reflex / micro-search --------
+            # --- normal play -------------------------------------------------------------
             decision = self.reflex.step(obs)
             self.recent.append(decision.note)
             zone = self._danger_zone_near(obs.progress)
-            ask_billy = decision.needs_billy
-            if self.use_llm and zone is not None and zone != consulted_zone:
-                ask_billy = True
+
+            # Learn-from-death: at a spot Mario has died before, SEARCH for a survivor (try a
+            # spread of escapes, keep the one that lives) and REMEMBER it so the next attempt
+            # skips straight to it. Reliable and fast — no dependence on the flaky local LLM.
+            if zone is not None and zone != consulted_zone and config.MICRO_SEARCH:
                 consulted_zone = zone
-                print(f"  [attempt {n}] {obs.progress} ⚠️  danger zone (died here before) "
-                      f"— Billy takes manual control")
-            elif zone is None:
+                plan = self.zone_escapes.get(zone)
+                if plan is not None:
+                    action_note = "learned-escape"
+                    print(f"  [attempt {n}] {obs.progress} 🧠 Billy remembers the escape here")
+                else:
+                    best, tried, survived = self._micro_search(self.reflex.danger_candidates(obs))
+                    plan = best if survived else None
+                    if survived:
+                        self.zone_escapes[zone] = best
+                        self._save_escapes()
+                        action_note = f"danger-search/{tried}"
+                        print(f"  [attempt {n}] {obs.progress} 🔎 died here before — tried "
+                              f"{tried} escapes and LEARNED the one that survives")
+                if plan is not None:
+                    self.session.send_plan(plan)
+                    trajectory.append(coach.TrajectoryStep(
+                        x=obs.progress, summary=obs.summary, action=action_note, event="danger"))
+                    frames += plan_frames(plan)
+                    obs = self._observe()
+                    seg_best = max(seg_best, obs.progress)
+                    final_score = max(final_score, obs.score)
+                    continue
+            if zone is None:
                 consulted_zone = None
 
-            if ask_billy and self.use_llm:
+            # Billy on a hard stall; otherwise the reflex's plan.
+            if decision.needs_billy and self.use_llm:
                 bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent),
                                   self.controller)
                 plan = bd.plan
@@ -151,13 +201,6 @@ class Director:
             else:
                 plan = list(decision.plan)
                 action_note = f"{decision.note} {self._label(plan)}"
-                # Micro-search only at spots where Billy has DIED before (worth the rewind).
-                if (config.MICRO_SEARCH and zone is not None and decision.search_candidates):
-                    best, tried = self._micro_search(decision.search_candidates)
-                    plan = best
-                    action_note = f"search/{tried} -> {self._label(best)}"
-                    print(f"  [attempt {n}] {obs.progress} 🔎 Billy tries {tried} options "
-                          f"at the deadly spot, keeps the cleanest")
 
             self.session.send_plan(plan)
             trajectory.append(coach.TrajectoryStep(
@@ -193,32 +236,33 @@ class Director:
 
     # --- savestate micro-search (game provides the candidate actions) -------------------
     def _rollout(self, plan: Plan) -> tuple[bool, int]:
-        """Run a candidate from the search checkpoint until it lands/dies/horizon; return
-        (survived, farthest_progress). Coasts on neutral input — physics carries momentum."""
+        """Run a candidate from the search checkpoint and keep simulating for the FULL horizon
+        (not just until it lands) so a delayed hit — e.g. a Koopa reaching Mario a few frames
+        after he touches down — correctly counts as a death. Returns (survived, farthest)."""
         self.session.send_plan(plan)
         obs = self._observe()
         reached = obs.progress
         used = plan_frames(plan)
-        while used < config.SEARCH_HORIZON_FRAMES and not obs.dead \
-                and not getattr(obs.raw, "on_ground", True):
+        while used < config.SEARCH_HORIZON_FRAMES and not obs.dead:
             self.session.send_plan(_IDLE)
             obs = self._observe()
             reached = max(reached, obs.progress)
             used += 2
         return (not obs.dead), reached
 
-    def _micro_search(self, candidates: list[Plan]) -> tuple[Plan, int]:
+    def _micro_search(self, candidates: list[Plan]) -> tuple[Plan, int, bool]:
+        """Try each candidate from a checkpoint; return (best, num_tried, best_survived)."""
         self.session.save_state(config.SEARCH_SLOT)
         self._observe()
         best_plan, best_score = candidates[0], -10 ** 9
         for plan in candidates:
             survived, reached = self._rollout(plan)
-            score = reached if survived else reached - 100_000
+            score = reached if survived else reached - 100_000  # death is far worse than short
             if score > best_score:
                 best_score, best_plan = score, plan
             self.session.load_state(config.SEARCH_SLOT)
             self._observe()
-        return best_plan, len(candidates)
+        return best_plan, len(candidates), best_score >= 0
 
     def _danger_zone_near(self, progress: int) -> int | None:
         for z in self.danger_zones:
