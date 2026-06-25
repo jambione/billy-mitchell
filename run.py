@@ -21,13 +21,10 @@ from billy.knowledge import KnowledgeBase
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Billy Mitchell plays games.")
     p.add_argument("--attempts", type=int, default=10, help="number of attempts to play")
-    p.add_argument("--continuous", action="store_true",
-                   help="continuous game with no resets (play until game over)")
-    p.add_argument("--hardcore", action="store_true",
-                   help="ultimate test: 3 lives total, no micro-searches, pure learning")
     p.add_argument("--no-llm", action="store_true",
                    help="pure reflex run (no Billy/Coach LLM calls)")
-    p.add_argument("--fresh", action="store_true", help="wipe learned lessons before starting")
+    p.add_argument("--fresh", action="store_true",
+                   help="wipe learned lessons AND the solution cache before starting")
     args = p.parse_args(argv)
 
     config.ensure_dirs()
@@ -35,20 +32,17 @@ def main(argv: list[str] | None = None) -> int:
     if use_llm and not llm.health():
         print(f"[warn] LM Studio unreachable at {config.LMSTUDIO_BASE_URL} — "
               f"Billy will improvise with fallbacks (load a model to fix).")
-    if args.fresh and config.LESSONS_FILE.exists():
-        config.LESSONS_FILE.unlink()
-        print("[run] wiped prior lessons; Billy starts from scratch.")
+    if args.fresh:
+        for f in (config.LESSONS_FILE, config.SOLUTIONS_FILE):
+            if f.exists():
+                f.unlink()
+        print("[run] wiped prior lessons + solution cache; Billy starts from scratch.")
 
     game = SmbGame()
     director = Director(game, KnowledgeBase(), use_llm=use_llm)
     print(f"[run] {game.name} on {game.system.name} (in-process stable-retro).")
     try:
-        if args.hardcore:
-            director.run_hardcore_game()
-        elif args.continuous:
-            director.run_continuous_game()
-        else:
-            director.run_session(args.attempts)
+        director.run_session(args.attempts)
     except BootError as e:
         print("[error]", e)
         return 1

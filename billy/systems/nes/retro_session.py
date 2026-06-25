@@ -12,7 +12,9 @@ upstream changes. RAM perception is unchanged: the NES work-RAM (0x0000-0x07FF) 
 """
 from __future__ import annotations
 
+import contextlib
 import os
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,6 +25,35 @@ from . import controller
 
 RAM_SIZE = 0x800
 _GAME = os.environ.get("BILLY_RETRO_GAME", "SuperMarioBros-Nes-v0")
+
+
+class _Viewer:
+    """A tiny, best-effort pyglet window to watch Billy. Any failure degrades to headless."""
+
+    def __init__(self, scale: int = 3) -> None:
+        import pyglet
+        self._pyglet = pyglet
+        self.window = None
+        self.scale = scale
+
+    def show(self, frame: np.ndarray) -> None:
+        h, w, _ = frame.shape
+        if self.window is None:
+            self.window = self._pyglet.window.Window(
+                width=w * self.scale, height=h * self.scale, caption="Billy Mitchell", vsync=False)
+        img = self._pyglet.image.ImageData(w, h, "RGB", frame.tobytes(), pitch=-w * 3)
+        self.window.switch_to()
+        self.window.dispatch_events()
+        self.window.clear()
+        tex = img.get_texture()
+        tex.width, tex.height = w * self.scale, h * self.scale
+        tex.blit(0, 0)
+        self.window.flip()
+
+    def close(self) -> None:
+        if self.window is not None:
+            with contextlib.suppress(Exception):
+                self.window.close()
 
 
 @dataclass(frozen=True)
@@ -40,8 +71,12 @@ class RetroSession:
         # Watchable by default; set BILLY_HEADLESS=1 for fast benchmarks (no window).
         if render is None:
             render = os.environ.get("BILLY_HEADLESS", "0") != "1"
-        self._render = render
-        self.env = retro.make(_GAME, render_mode="human" if render else None)
+        # Always render to an offscreen array; WE decide which frames reach the screen, so
+        # micro-search frames stay hidden (the live run never visibly rewinds).
+        self.env = retro.make(_GAME, render_mode="rgb_array")
+        self._viewer = _Viewer() if render else None
+        self._show = render          # True only while executing committed (live) play
+        self._realtime = render and os.environ.get("BILLY_TURBO", "0") != "1"
         # Map our controller button names -> stable-retro action-vector indices.
         # env.buttons looks like ['B', None, 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'A'].
         self._btn_index = {name.upper(): i for i, name in enumerate(self.env.buttons) if name}
@@ -51,6 +86,16 @@ class RetroSession:
         self._slots: dict[int, bytes] = {}
         self._done = False
         self._started = False
+
+    @contextlib.contextmanager
+    def search_mode(self):
+        """Within this block, stepped frames are NOT displayed — micro-search stays invisible."""
+        prev = self._show
+        self._show = False
+        try:
+            yield
+        finally:
+            self._show = prev
 
     # --- engine Session contract --------------------------------------------------------
     def reset(self) -> None:
@@ -122,6 +167,16 @@ class RetroSession:
         else:
             _, _, self._done, _ = result
         self._frame += 1
+        if self._show and self._viewer is not None:
+            self._display()
+
+    def _display(self) -> None:
+        try:
+            self._viewer.show(np.asarray(self.env.render()))
+            if self._realtime:
+                time.sleep(1 / 60)
+        except Exception:
+            self._viewer = None  # disable display on any windowing failure; keep playing
 
     def _refresh_ram(self) -> None:
         ram = self.env.get_ram()

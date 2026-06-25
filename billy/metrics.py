@@ -19,6 +19,11 @@ class AttemptResult:
     score: int            # in-game score reached (Billy's record obsession #1)
     fastest_clear_frames: int  # fastest single-level clear this attempt (0 = none); ~60 fps
     duration_s: float
+    # --- compounding-learning telemetry (the proof the cache makes learning compound) -----
+    search_calls: int = 0       # NEW hazards solved by micro-search this attempt (should fall)
+    replay_calls: int = 0       # cached hazards replayed for free this attempt (should rise)
+    frontier_x: int = 0         # furthest solved x-bucket on the level (should rise)
+    frames_to_frontier: int = 0 # frames to re-reach last attempt's furthest x (should fall)
 
 
 def record(result: AttemptResult) -> None:
@@ -42,3 +47,22 @@ def print_curve(results: list[AttemptResult]) -> None:
     fast_str = f"{fastest / 60:.1f}s" if fastest else "n/a"
     print(f"\n🏆 best score: {best_score}   ⏱  fastest clear: {fast_str}   "
           f"most levels: {most}")
+    print_compounding_curve(results)
+
+
+def print_compounding_curve(results: list[AttemptResult]) -> None:
+    """The proof the learning compounds: NEW searches should fall, free replays should rise,
+    the solved frontier should advance, and frames-to-frontier should drop, across attempts."""
+    if not results:
+        return
+    print("\n=== Compounding curve (is the learning actually building?) ===")
+    print(f"{'#':>3} {'search':>7} {'replay':>7} {'frontier_x':>11} {'frames→frontier':>15} {'reached_x':>10}")
+    for r in results:
+        f2f = r.frames_to_frontier if r.frames_to_frontier else "-"
+        print(f"{r.attempt:>3} {r.search_calls:>7} {r.replay_calls:>7} {r.frontier_x:>11} "
+              f"{str(f2f):>15} {r.max_x:>10}")
+    first, last = results[0], results[-1]
+    verdict = ("✅ compounding: searches↓ replays↑ frontier↑"
+               if last.replay_calls >= first.replay_calls and last.frontier_x >= first.frontier_x
+               else "⚠️  not yet compounding — inspect cache hits / bucket size")
+    print(verdict)

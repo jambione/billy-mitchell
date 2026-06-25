@@ -1,9 +1,11 @@
 """The Director — the game-agnostic engine loop.
 
-Drives any Game through the abstract contracts: lock-step observe/act, boot, then per attempt
-a continuous playthrough — reflex policy for routine play, Billy (LLM) at decision points,
-Coach + knowledge base after each segment, danger-zone micro-search, checkpoints, respawns,
-and record tracking (score + fastest clear). It never references a specific game or system.
+Drives any Game through the abstract contracts: observe/act, boot, then a continuous
+playthrough — reflex for routine play, and at each hazard a **cache-first policy**: replay the
+exact verified solution if we've solved this spot before, else **search on a cloned state**
+(invisible to the live run) for a surviving sequence and **remember it**. The LLM is consulted
+only when search finds nothing. This is what makes the learning compound across attempts.
+It never references a specific game or system.
 """
 from __future__ import annotations
 
@@ -14,35 +16,37 @@ from . import config, metrics
 from .abstractions import Game, Observation, Plan, Step, plan_frames
 from .agents import billy, coach
 from .commentary import Commentator
-from .knowledge import KnowledgeBase
+from .knowledge import KnowledgeBase, SolutionCache
 
 _IDLE: Plan = [Step(2, 0)]   # neutral input — to consume a pending frame or coast a cutscene
 
 
 class Director:
-    def __init__(self, game: Game, kb: KnowledgeBase, use_llm: bool = True) -> None:
+    def __init__(self, game: Game, kb: KnowledgeBase, use_llm: bool = True,
+                 cache: SolutionCache | None = None) -> None:
         self.game = game
         self.session = game.system.connect()
         self.controller = game.system.controller
         self.reflex = game.make_reflex()
         self.kb = kb
+        self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
         self.use_llm = use_llm
         self.recent: deque[str] = deque(maxlen=12)
         self.commentator = Commentator()
         self.best_score = 0
         self.fastest_clear_frames: int | None = None
         self.cur_level: tuple = ()
+        self._prev_best_x = 0   # furthest x reached so far (for frames-to-frontier metric)
 
     # --- lock-step helper ---------------------------------------------------------------
     def _observe(self) -> Observation:
         st = self.session.read_state()
         return self.game.observe(st.frame, st.ram)
 
-    # --- micro-search (hybrid: when scene-change detects danger, search for best escape) -----
+    # --- micro-search: evaluate candidates on a CLONE so the live run never visibly rewinds ----
     def _rollout(self, plan: Plan) -> tuple[bool, int]:
-        """Run a candidate from the search checkpoint and keep simulating for the FULL horizon
-        so a delayed hit (e.g. a Koopa reaching Mario a few frames after he touches down)
-        correctly counts as a death. Returns (survived, farthest)."""
+        """Simulate a candidate for the FULL horizon (so a delayed hit — e.g. a Koopa reaching
+        Mario a few frames after he lands — still counts as death). Returns (survived, farthest)."""
         self.session.send_plan(plan)
         obs = self._observe()
         reached = obs.progress
@@ -54,19 +58,29 @@ class Director:
             used += 2
         return (not obs.dead), reached
 
-    def _micro_search(self, candidates: list[Plan]) -> tuple[Plan, int, bool]:
-        """Try each candidate from a checkpoint; return (best, num_tried, best_survived)."""
-        self.session.save_state(config.SEARCH_SLOT)
+    def _micro_search(self, candidates: list[Plan]) -> tuple[Plan, bool, int]:
+        """Try each candidate on a cloned state; return (best_plan, survived, reach_after).
+
+        Runs inside the session's search_mode + a state clone, so none of the candidate frames
+        are displayed and the live game is left exactly where it started (invisible search)."""
+        snap = self.session.clone_state()
+        best_plan, best_score, best_reach = candidates[0], -10 ** 9, 0
+        with self.session.search_mode():
+            for plan in candidates:
+                survived, reached = self._rollout(plan)
+                score = reached if survived else reached - 100_000  # death ≫ worse than short
+                if score > best_score:
+                    best_score, best_plan, best_reach = score, plan, reached
+                self.session.restore(snap)
+        self.session.restore(snap)   # back to the live pre-search position, nothing shown
         self._observe()
-        best_plan, best_score = candidates[0], -10 ** 9
-        for plan in candidates:
-            survived, reached = self._rollout(plan)
-            score = reached if survived else reached - 100_000  # death is far worse than short
-            if score > best_score:
-                best_score, best_plan = score, plan
-            self.session.load_state(config.SEARCH_SLOT)
-            self._observe()
-        return best_plan, len(candidates), best_score >= 0
+        return best_plan, best_score >= 0, best_reach
+
+    def _candidates(self, obs: Observation) -> list[Plan]:
+        """Diverse escape sequences for search: the reflex's hand-picked spread, plus — when the
+        spot is genuinely hard — a few LLM-proposed sequences from Billy."""
+        cands = list(self.reflex.danger_candidates(obs))
+        return cands
 
     # --- boot ---------------------------------------------------------------------------
     def boot(self) -> Observation:
@@ -91,6 +105,8 @@ class Director:
 
         trajectory: list[coach.TrajectoryStep] = []
         billy_calls = frames = levels_cleared = fastest_in_attempt = 0
+        search_calls = replay_calls = 0          # compounding-curve telemetry
+        frames_to_frontier = 0                    # frames to re-reach last attempt's furthest x
         respawns = config.RESPAWNS_PER_ATTEMPT
         seg_best = obs.progress
         final_score = obs.score
@@ -98,7 +114,6 @@ class Director:
         need_checkpoint = False
         outcome = "timeout"
         furthest = obs.level_label
-        lesson_progress: dict = {}  # track progress gains from lessons applied
 
         while frames <= config.MAX_ATTEMPT_FRAMES:
             # --- death: reflect, then respawn at the checkpoint (or end) ------------------
@@ -155,27 +170,45 @@ class Director:
             # --- normal play -------------------------------------------------------------
             decision = self.reflex.step(obs)
             self.recent.append(decision.note)
+            danger = decision.needs_billy and ("enemy" in decision.note or "pit" in decision.note)
+            world, stage = obs.level_key
 
-            # Hybrid approach: micro-search on danger, Billy on strategy.
-            if decision.needs_billy and self.use_llm:
-                # Scene-change danger: use micro-search to find the best escape.
-                if "enemy" in decision.note or "pit" in decision.note:
-                    best_plan, tried, survived = self._micro_search(self.reflex.danger_candidates(obs))
-                    plan = best_plan
-                    action_note = f"micro-search({tried}) {self._label(plan)}"
-                    print(f'  [attempt {n}] {obs.progress} 🔍 Escape found (tried {tried})')
+            if danger:
+                # CACHE-FIRST: if we've solved this exact spot before, replay it verbatim —
+                # deterministic, no search, no LLM. This is the compounding fast-path.
+                cached = self.cache.get(world, stage, obs.progress)
+                if cached is not None:
+                    plan = cached.plan
+                    replay_calls += 1
+                    self.cache.record_hit(world, stage, obs.progress)
+                    action_note = f"replay {self._label(plan)}"
+                    print(f'  [attempt {n}] {obs.progress} ⚡ replay (solved x{world+1}-{stage+1}@{obs.progress})')
                 else:
-                    # For other scene changes (stuck, etc.), consult Billy with KB lessons
-                    lessons_used = self.kb.retrieve(obs.summary)
-                    bd = billy.decide(obs, lessons_used, list(self.recent), self.controller)
-                    plan = bd.plan
-                    billy_calls += 1
-                    action_note = f"BILLY {self._label(plan)}"
-                    # Track which lessons were given to Billy (he may or may not apply them)
-                    for les in lessons_used:
-                        if les not in lesson_progress:
-                            lesson_progress[les] = obs.progress
-                    print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
+                    # MISS: search (invisibly, on a clone) for a surviving sequence and REMEMBER it.
+                    best_plan, survived, reach = self._micro_search(self._candidates(obs))
+                    plan = best_plan
+                    search_calls += 1
+                    if survived:
+                        self.cache.put(world, stage, obs.progress, plan, reach)
+                        action_note = f"search✓ {self._label(plan)}"
+                        print(f'  [attempt {n}] {obs.progress} 🔍 solved (reach {reach}) — remembered')
+                    elif self.use_llm:
+                        # Genuinely hard: let Billy improvise (out of the routine path).
+                        bd = billy.decide(obs, self.kb.retrieve(obs.summary),
+                                          list(self.recent), self.controller)
+                        plan = bd.plan
+                        billy_calls += 1
+                        action_note = f"BILLY {self._label(plan)}"
+                        print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
+                    else:
+                        action_note = f"search✗ {self._label(plan)}"
+            elif decision.needs_billy and self.use_llm:
+                # Non-danger escalation (stuck, etc.): consult Billy with KB lessons.
+                bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent), self.controller)
+                plan = bd.plan
+                billy_calls += 1
+                action_note = f"BILLY {self._label(plan)}"
+                print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
             elif decision.needs_billy:
                 plan = list(decision.plan)   # reflex's own fallback (e.g. a recovery jump)
                 action_note = f"reflex {decision.note}"
@@ -184,12 +217,17 @@ class Director:
                 action_note = f"{decision.note} {self._label(plan)}"
 
             self.session.send_plan(plan)
+            # If a replayed solution didn't survive (context drifted), drop it so search refreshes it.
+            if danger and "replay" in action_note and self._observe().dead:
+                self.cache.record_fail(world, stage, obs.progress)
             trajectory.append(coach.TrajectoryStep(
                 x=obs.progress, summary=obs.summary, action=action_note, event=decision.note))
             frames += plan_frames(plan)
             obs = self._observe()
             seg_best = max(seg_best, obs.progress)
             final_score = max(final_score, obs.score)
+            if frames_to_frontier == 0 and self._prev_best_x > 0 and obs.progress >= self._prev_best_x:
+                frames_to_frontier = frames   # re-reached last attempt's furthest point
 
             if need_checkpoint and getattr(obs.raw, "on_ground", True) and 16 < obs.progress < 120:
                 self.session.save_state(0)
@@ -207,20 +245,19 @@ class Director:
             self.best_score = final_score
             hi = " 🏆 NEW HIGH SCORE!"
 
-        # Record impact from lessons used in this attempt (compounding learning).
-        # Lessons applied with progress gain level up their quality scores.
-        for lesson, started_at in lesson_progress.items():
-            progress_gain = seg_best - started_at
-            if progress_gain > 0:
-                self.kb.record_impact(lesson, progress_gain)
-
+        self._prev_best_x = max(self._prev_best_x, seg_best)
+        w0, s0 = obs.level_key
         result = metrics.AttemptResult(
             attempt=n, outcome=outcome, max_x=seg_best, frames=frames, billy_calls=billy_calls,
             world_stage=furthest, levels_cleared=levels_cleared, score=final_score,
-            fastest_clear_frames=fastest_in_attempt, duration_s=round(time.monotonic() - t0, 2))
+            fastest_clear_frames=fastest_in_attempt, duration_s=round(time.monotonic() - t0, 2),
+            search_calls=search_calls, replay_calls=replay_calls,
+            frontier_x=self.cache.solved_frontier(w0, s0), frames_to_frontier=frames_to_frontier)
         metrics.record(result)
         print(f"  [attempt {n}] {outcome.upper()} — reached {furthest}, "
               f"cleared {levels_cleared} level(s), score {final_score}{hi}")
+        print(f"      ↳ search={search_calls} replay={replay_calls} "
+              f"frontier_x={result.frontier_x} cache={len(self.cache)}")
         return result
 
     def _reflect(self, trajectory, outcome: str, level_label: str) -> None:
@@ -238,204 +275,9 @@ class Director:
     # --- the session --------------------------------------------------------------------
     def run_session(self, attempts: int) -> list[metrics.AttemptResult]:
         self.session.reset()
-        print("[director] waiting for the emulator bridge…")
         self.session.wait_until_live()
         self.boot()
         results = [self.run_attempt(n) for n in range(1, attempts + 1)]
         metrics.print_curve(results)
         return results
 
-    def run_continuous_game(self) -> None:
-        """Play a single continuous game with no resets. Billy learns as he plays through levels."""
-        self.session.reset()
-        print("[director] waiting for the emulator bridge…")
-        self.session.wait_until_live()
-        self.boot()
-
-        print("\n" + "="*70)
-        print("🎮 BILLY MITCHELL - CONTINUOUS SUPER MARIO BROS GAME")
-        print("   No resets. No rewinding. Play until game over.")
-        print("="*70 + "\n")
-
-        t0 = time.monotonic()
-        obs = self._observe()
-        self.reflex.reset(obs)
-        self.commentator.reset(obs.raw)
-        self.recent.clear()
-        self.cur_level = obs.level_key
-
-        trajectory: list[coach.TrajectoryStep] = []
-        frames = levels_cleared = 0
-        final_score = obs.score
-        furthest = obs.level_label
-        lesson_progress: dict = {}
-
-        print(f'🎤 Billy: "{self.commentator.event_line("start")}"')
-
-        while frames <= config.MAX_ATTEMPT_FRAMES:
-            # Game over: dead and out of lives
-            if obs.dead and hasattr(obs.raw, 'lives') and obs.raw.lives <= 0:
-                print(f"\n💀 GAME OVER at {furthest} (score {final_score})")
-                print(f"   Total playtime: {(time.monotonic() - t0)/60:.1f} minutes")
-                print(f"   Levels cleared: {levels_cleared}")
-                print(f"   Max reach: {furthest}")
-                self._reflect(trajectory, "death", obs.level_label)
-                break
-
-            # Level clear: progress to next
-            if obs.level_key > self.cur_level:
-                levels_cleared += 1
-                furthest = obs.level_label
-                print(f'\n🏁 CLEARED! Now entering {obs.level_label} (score {obs.score})')
-                self._reflect(trajectory, "clear", obs.level_label)
-                trajectory = []
-                self.reflex.note_level_advance(obs)
-                self.commentator.reset(obs.raw)
-                self.cur_level = obs.level_key
-                self.session.send_plan(_IDLE)
-                frames += 2
-                obs = self._observe()
-                continue
-
-            # Normal play
-            decision = self.reflex.step(obs)
-            self.recent.append(decision.note)
-
-            if decision.needs_billy and self.use_llm:
-                # Scene-change danger: use micro-search
-                if "enemy" in decision.note or "pit" in decision.note:
-                    best_plan, tried, survived = self._micro_search(self.reflex.danger_candidates(obs))
-                    plan = best_plan
-                    action_note = f"micro-search({tried}) {self._label(plan)}"
-                    print(f'  x={obs.progress} 🔍 Escape (tried {tried})')
-                else:
-                    # Other scene changes: consult Billy
-                    lessons_used = self.kb.retrieve(obs.summary)
-                    bd = billy.decide(obs, lessons_used, list(self.recent), self.controller)
-                    plan = bd.plan
-                    action_note = f"BILLY {self._label(plan)}"
-                    for les in lessons_used:
-                        if les not in lesson_progress:
-                            lesson_progress[les] = obs.progress
-                    print(f'  x={obs.progress} 🎮 Billy: "{bd.trash_talk}"')
-            elif decision.needs_billy:
-                plan = list(decision.plan)
-                action_note = f"reflex {decision.note}"
-            else:
-                plan = list(decision.plan)
-                action_note = f"{decision.note} {self._label(plan)}"
-
-            self.session.send_plan(plan)
-            trajectory.append(coach.TrajectoryStep(
-                x=obs.progress, summary=obs.summary, action=action_note, event=decision.note))
-            frames += plan_frames(plan)
-            obs = self._observe()
-            final_score = max(final_score, obs.score)
-
-            quip = self.commentator.observe(obs.raw)
-            if quip:
-                print(f'  🎤 Billy: "{quip}"')
-
-    def run_hardcore_game(self) -> None:
-        """HARDCORE MODE: 3 lives total, no micro-searches, pure learning.
-        Billy must rely entirely on scene detection, LLM decisions, and learned lessons."""
-        self.session.reset()
-        print("[director] waiting for the emulator bridge…")
-        self.session.wait_until_live()
-        self.boot()
-
-        print("\n" + "="*70)
-        print("🎮 BILLY MITCHELL - HARDCORE PLAYTHROUGH")
-        print("   3 LIVES. NO MICRO-SEARCHES. PURE LEARNING.")
-        print("   No rewinding. No searching. Billy learns or dies.")
-        print("="*70 + "\n")
-
-        t0 = time.monotonic()
-        obs = self._observe()
-        self.reflex.reset(obs)
-        self.commentator.reset(obs.raw)
-        self.recent.clear()
-        self.cur_level = obs.level_key
-
-        trajectory: list[coach.TrajectoryStep] = []
-        frames = levels_cleared = 0
-        lives = 3
-        final_score = obs.score
-        furthest = obs.level_label
-        lesson_progress: dict = {}
-
-        print(f'🎤 Billy: "{self.commentator.event_line("start")}"')
-        print(f"💚 Lives remaining: {lives}\n")
-
-        while frames <= config.MAX_ATTEMPT_FRAMES and lives > 0:
-            # Death: lose a life
-            if obs.dead:
-                lives -= 1
-                print(f"💀 Death at {furthest} (x={obs.progress}) — {lives} lives left")
-                if lives <= 0:
-                    print(f"\n💀💀💀 GAME OVER at {furthest}")
-                    print(f"   Final Score: {final_score}")
-                    print(f"   Levels Cleared: {levels_cleared}")
-                    print(f"   Max Reach: {furthest}")
-                    print(f"   Total Time: {(time.monotonic() - t0)/60:.1f} minutes")
-                    self._reflect(trajectory, "death", obs.level_label)
-                    break
-                self._reflect(trajectory, "death", obs.level_label)
-                trajectory = []
-                self.session.send_plan(_IDLE)
-                self._observe()
-                self.session.load_state(0)
-                obs = self._observe()
-                self.reflex.reset(obs)
-                self.commentator.reset(obs.raw)
-                self.recent.clear()
-                print(f"💚 Lives: {lives}\n")
-                continue
-
-            # Level clear: progress to next
-            if obs.level_key > self.cur_level:
-                levels_cleared += 1
-                furthest = obs.level_label
-                print(f'\n🏁 CLEARED {obs.level_label}! Score: {obs.score}')
-                self._reflect(trajectory, "clear", obs.level_label)
-                trajectory = []
-                self.reflex.note_level_advance(obs)
-                self.commentator.reset(obs.raw)
-                self.cur_level = obs.level_key
-                self.session.save_state(0)
-                self.session.send_plan(_IDLE)
-                frames += 2
-                obs = self._observe()
-                continue
-
-            # Normal play: Billy learns from scene changes, no micro-search
-            decision = self.reflex.step(obs)
-            self.recent.append(decision.note)
-
-            if decision.needs_billy and self.use_llm:
-                # Scene change detected: NO micro-search, only Billy LLM + KB lessons
-                lessons_used = self.kb.retrieve(obs.summary)
-                bd = billy.decide(obs, lessons_used, list(self.recent), self.controller)
-                plan = bd.plan
-                action_note = f"BILLY {self._label(plan)}"
-                for les in lessons_used:
-                    if les not in lesson_progress:
-                        lesson_progress[les] = obs.progress
-                print(f'  x={obs.progress} 🎮 Billy: "{bd.trash_talk}"')
-            elif decision.needs_billy:
-                plan = list(decision.plan)
-                action_note = f"reflex {decision.note}"
-            else:
-                plan = list(decision.plan)
-                action_note = f"{decision.note} {self._label(plan)}"
-
-            self.session.send_plan(plan)
-            trajectory.append(coach.TrajectoryStep(
-                x=obs.progress, summary=obs.summary, action=action_note, event=decision.note))
-            frames += plan_frames(plan)
-            obs = self._observe()
-            final_score = max(final_score, obs.score)
-
-            quip = self.commentator.observe(obs.raw)
-            if quip:
-                print(f'  🎤 Billy: "{quip}"')
