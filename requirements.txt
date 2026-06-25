@@ -1,0 +1,4 @@
+# Billy Mitchell — runtime deps (Python 3.11+ recommended; 3.14 works for this route)
+requests>=2.31      # LM Studio OpenAI-compatible HTTP client
+# numpy is optional; only used to speed up KB cosine search if present.
+# Everything else (IPC, perception, controller) is pure stdlib.
