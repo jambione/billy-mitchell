@@ -111,6 +111,19 @@ class Director:
                     last_snap_x = obs.progress
         return obs, last_snap_x
 
+    def _verify(self, plan: Plan, horizon: int = config.LEARN_HORIZON_FRAMES) -> bool:
+        """Does this plan still survive from the CURRENT live state? Checked on a clone (invisible).
+        Because the clone is the exact live state, a plan that survives here will reproduce
+        identically when committed — so a verified replay is deterministic. A cached solution that
+        no longer survives (e.g. a moving enemy has shifted phase since it was learned) fails here,
+        and the caller live-searches fresh with the enemy where it ACTUALLY is now."""
+        snap = self.session.clone_state()
+        with self.session.search_mode():
+            lived, _ = self._rollout(plan, horizon)
+        self.session.restore(snap)
+        self._observe()
+        return lived
+
     def _candidates(self, obs: Observation) -> list[Plan]:
         """Diverse escape sequences for search: the reflex's hand-picked spread, plus — when the
         spot is genuinely hard — a few LLM-proposed sequences from Billy."""
@@ -268,20 +281,26 @@ class Director:
                     outcome = "stuck"
                     break
 
-            if cached is not None:
+            # A cached solution exists here AND it still survives from the current state -> replay
+            # it (deterministic, no search). If it's gone stale (moving enemy shifted), fall through
+            # to a fresh live-search below.
+            if cached is not None and self._verify(
+                    cached.plan, max(plan_frames(cached.plan) + 24, config.SEARCH_HORIZON_FRAMES)):
                 plan = cached.plan
                 replay_calls += 1
                 self.cache.record_hit(lk, obs.progress)
                 action_note = f"replay {self._label(plan)}"
-            elif danger:
-                # MISS: search (invisibly, on a clone) for a surviving, FORWARD-PROGRESSING
+            elif cached is not None or danger:
+                # MISS or STALE cache: search (invisibly, on a clone of the LIVE state, so moving
+                # enemies are where they actually are now) for a surviving, FORWARD-PROGRESSING
                 # sequence and REMEMBER it. A non-progress escape is a stall — never cached.
                 best_plan, progressed, reach = self._micro_search(self._candidates(obs), obs.progress)
                 plan = best_plan
                 search_calls += 1
                 if progressed:
                     self.cache.put(lk, obs.progress, plan, reach)
-                    action_note = f"search✓ {self._label(plan)}"
+                    tag = "research✓" if cached is not None else "search✓"
+                    action_note = f"{tag} {self._label(plan)}"
                     print(f'  [attempt {n}] {obs.progress} 🔍 solved (reach {reach}) — remembered')
                 elif self.use_llm:
                     # Genuinely hard: let Billy improvise (out of the routine path).
