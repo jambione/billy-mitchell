@@ -87,6 +87,21 @@ Flags / env:
 BILLY_HEADLESS=1 BILLY_REPEAT_LEVEL=1 BILLY_MAX_FRAMES=8000 .venv/bin/python -u run.py --attempts 10 --no-llm
 ```
 
+## Optional: learned (RL) reflex tier
+
+A PPO policy can replace the hand-crafted reflex as the fast Tier-1 controller, trained against a
+Gymnasium wrapper over the *same* in-process emulator + RAM perception (`billy/rl/`). It's optional
+(heavy deps) and **coexists** with everything else: the Director order stays cache → reflex →
+micro-search → LLM, so the SolutionCache still owns deterministic hazard replay and the verified
+search still handles lethal spots — RL just makes routine movement smarter (and falls back to the
+hand-crafted reflex at hazards).
+
+```bash
+.venv/bin/pip install -r requirements-rl.txt        # torch + stable-baselines3 (cp314 wheels)
+.venv/bin/python train_rl.py --timesteps 200000 --n-envs 4 --imitate 4000   # train (BC warm-start)
+.venv/bin/python run.py --rl data/rl/ppo_smb        # play with the learned policy
+```
+
 ## Tests
 
 ```bash

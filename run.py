@@ -32,6 +32,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="seed the SkillLibrary with SMB's transferable tactics (cross-game carry-forward)")
     p.add_argument("--fresh", action="store_true",
                    help="wipe learned lessons, solution cache AND skills before starting")
+    p.add_argument("--rl", metavar="MODEL", default="",
+                   help="use a trained PPO policy (a .zip from train_rl.py) as the reflex tier; "
+                        "the hand-crafted reflex remains the fallback at hazards")
     args = p.parse_args(argv)
 
     config.ensure_dirs()
@@ -52,6 +55,12 @@ def main(argv: list[str] | None = None) -> int:
 
     game = GAMES[args.game]()
     director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills)
+    if args.rl:
+        # Lazy import so torch/SB3 are only needed when actually using RL. The learned policy
+        # becomes the reflex tier; its fallback is the game's hand-crafted reflex, so cache +
+        # micro-search + learn-from-death + LLM still own the lethal hazards.
+        from billy.rl.learned_reflex import LearnedReflex
+        director.reflex = LearnedReflex(args.rl, fallback=director.reflex)
     print(f"[run] {game.name} on {game.system.name} (in-process stable-retro).")
     try:
         director.run_session(args.attempts)

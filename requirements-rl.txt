@@ -1,0 +1,5 @@
+# Optional RL tier (Phase 1). Heavy — install only to train/run the learned policy:
+#   .venv/bin/pip install -r requirements-rl.txt
+# torch ships a cp314 macOS-arm64 wheel; MPS (Apple GPU) is used automatically where supported.
+stable-baselines3>=2.9
+torch>=2.8
