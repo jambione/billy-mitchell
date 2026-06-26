@@ -351,7 +351,12 @@ class Director:
             # --- normal play -------------------------------------------------------------
             decision = self.reflex.step(obs)
             self.recent.append(decision.note)
-            danger = decision.needs_billy and ("enemy" in decision.note or "pit" in decision.note)
+            # Engage the search (and stall-breaker) not just at enemy/pit hazards but whenever the
+            # reflex is STUCK — a wall/dead-end with no enemy or pit (e.g. 1-2's top-right ledge)
+            # otherwise never triggers search, so Billy reflex-loops at it forever without ever
+            # trying a retreat/reroute. "stuck" routes it into micro-search instead.
+            danger = decision.needs_billy and (
+                "enemy" in decision.note or "pit" in decision.note or "stuck" in decision.note)
             lk = obs.level_key   # game-agnostic level identity; the cache key needs nothing else
 
             # POSITION-KEYED POLICY, consulted every ON-GROUND step (not just on danger): if we've
