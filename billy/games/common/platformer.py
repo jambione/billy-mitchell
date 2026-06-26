@@ -192,13 +192,19 @@ class PlatformerReflex(ReflexPolicy):
         patience = [c.idle(d) + tail for d in (12, 28, 48, 70)
                     for tail in (c.jump_right(jump_frames=9), c.jump_right(jump_frames=24),
                                  c.run_right(12))]
-        backup = [[Step(b, controller.LEFT)] + c.jump_right(run_frames=18, jump_frames=30)
-                  for b in (8, 16)]
-        # ENTER-PIPE: walk onto a pipe and hold DOWN. Some levels (e.g. 1-2) only exit via a pipe;
-        # a pure-movement grid can never discover this, so Billy runs at the pipe forever. The search
-        # rejects it everywhere it does nothing (Mario just ducks) and banks it where it warps him.
+        # BACK-UP then run-jump: Billy is right-biased, but some walls only clear with a real run-up.
+        # Step left first (varying distance), then run-jump right — the search discovers when backing
+        # up unblocks a jump that no standing/short run-up could make.
+        backup = [c.run_left(b, sprint=False) + c.jump_right(run_frames=r, jump_frames=h)
+                  for b in (8, 16, 24) for r in (14, 24) for h in (28, 34)]
+        # ENTER-PIPE: get centred on a pipe and hold DOWN. Some levels (e.g. 1-2) only exit via a pipe;
+        # a pure-movement grid can never discover this, so Billy runs at the pipe forever. We try
+        # lining up from the LEFT (walk right onto it) AND from the right (he overshot -> step back
+        # left onto it), then hold DOWN. The search rejects it where it does nothing (Mario just
+        # ducks) and banks it where it warps him.
         enter_pipe = [(c.run_right(n, sprint=False) if n else []) + [Step(h, controller.DOWN)]
                       for n in (0, 6, 12, 18, 24) for h in (24, 40)]
+        enter_pipe += [c.run_left(n, sprint=False) + [Step(40, controller.DOWN)] for n in (6, 12, 20)]
 
         low_ceiling = scene.block_above_ahead() is not None
         if low_ceiling:   # height is a liability here — lead with hops/walks that won't bonk
