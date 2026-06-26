@@ -56,6 +56,12 @@ CACHE_Y_BAND_PX = 24
 # when x-progress is comparable — so Billy stops greedily climbing into dead-ends / past low exits.
 # (SMB elevation = mario_y, where LARGER = lower on screen, so a positive weight prefers staying low.)
 ROUTE_DEAD_PENALTY = 50_000
+# Phase 2a — backward dead-end propagation: when a node dead-ends, also mark+drop the last N nodes of
+# the APPROACH that led there, so next pass the search avoids that branch (e.g. the high road) and the
+# re-search routes the other way. The 2-D key means marking the high-road nodes dead leaves the low
+# road (same x, different y band) open. Keep small — marking too much of the approach dead nukes
+# legit path nodes and regresses the route.
+DEADEND_BACKTRACK = 4
 # Gravity tiebreak (prefer the lower road on comparable x): a blanket version cost 1-1 score (lower
 # paths = fewer coins) without cracking 1-2's exit, so it's OFF by default. The real route-finding is
 # dead-end memory + Phase-2 backtracking, not a blanket bias. Kept as a tunable knob.

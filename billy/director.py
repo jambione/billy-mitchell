@@ -355,7 +355,10 @@ class Director:
             on_ground = getattr(obs.raw, "on_ground", True)
             ey = obs.elevation
             cached = self.cache.get(lk, obs.progress, ey) if on_ground else None
-            if cached is not None or danger:
+            # x≈0 is a transition artifact (the pipe-entry animation reads x=0 for many frames while
+            # uncontrollable), NOT a real spot — don't let it trip the stall-breaker. Level starts at
+            # x≈40, so a tiny-x guard is safe and stops the false "stuck at @0" after taking an exit.
+            if (cached is not None or danger) and obs.progress >= 16:
                 # Stall breaker: keep arriving at the same spot without getting past it -> give up.
                 bkey = bucket_of(lk, obs.progress, ey)
                 bucket_visits[bkey] = bucket_visits.get(bkey, 0) + 1
@@ -363,7 +366,15 @@ class Director:
                     # Route-awareness: remember this node is a DEAD-END so future searches avoid
                     # re-entering it (deprioritised in _micro_search) instead of re-discovering it.
                     self.cache.mark_dead(lk, obs.progress, ey)
-                    print(f'  [attempt {n}] {obs.progress} 🧱 stuck at {obs.level_label}@{obs.progress} — giving up this run')
+                    # Phase 2a — propagate the dead mark BACK along the approach (the high road that
+                    # led here) and DROP those cached steps, so next pass replays nothing on this
+                    # branch and the re-search routes the other way (the low road stays open: distinct
+                    # y band). This is what turns "give up at the dead-end" into "take the other path".
+                    for px, py, plk, _ in list(safe_history)[-config.DEADEND_BACKTRACK:]:
+                        self.cache.mark_dead(plk, px, py)
+                        self.cache.record_fail(plk, px, py)
+                    print(f'  [attempt {n}] {obs.progress} 🧱 dead-end at {obs.level_label}@{obs.progress} '
+                          f'— marked the approach, will reroute next pass')
                     outcome = "stuck"
                     break
 
