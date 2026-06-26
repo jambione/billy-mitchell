@@ -22,6 +22,8 @@ GRID_ROWS = 13          # the 13 tile rows of the play area (suby 0..12)
 COL_BEHIND = 2          # tiles shown behind Mario
 COL_AHEAD = 10          # tiles shown ahead of Mario
 DYING_STATES = (0x06, 0x0B)
+POWERUP_ID = 0x2E       # Enemy_ID of a power-up object (mushroom/flower) — a collectible, NOT a threat
+N_OBJECT_SLOTS = 6      # SMB has 6 object slots (0-4 enemies, 5 = special/power-up slot)
 
 
 def _u8(ram: bytes, addr: int) -> int:
@@ -78,6 +80,7 @@ class Scene:
     float_state: int   # 0 = on ground
     y_viewport: int
     enemies: list[Enemy] = field(default_factory=list)
+    powerups: list[Enemy] = field(default_factory=list)   # collectible power-ups (mushroom/flower)
     tiles: list[list[int]] = field(default_factory=list)  # GRID_ROWS x window, 1=solid
     ram: bytes = b""   # raw snapshot, kept so gap checks probe the true level
 
@@ -156,6 +159,13 @@ class Scene:
                  if 0 < (e.x - self.mario_x) <= within and -y_above <= (e.y - self.mario_y) <= y_below]
         return min(cands) if cands else None
 
+    def nearest_powerup(self, within: int = 80) -> tuple[int, int] | None:
+        """Closest collectible power-up as (dx, dy) relative to Mario — ahead or just behind (a
+        mushroom can bounce back past him), within reach. None if there's nothing to grab."""
+        cands = [(p.x - self.mario_x, p.y - self.mario_y) for p in self.powerups
+                 if -40 <= (p.x - self.mario_x) <= within]
+        return min(cands, key=lambda d: abs(d[0])) if cands else None
+
     def air_landing_target(self) -> int | None:
         """Absolute x Mario should aim to land on while airborne — the nearest enemy to stomp.
         None when there's nothing to aim at (just carry forward)."""
@@ -227,10 +237,16 @@ def build_scene(ram: bytes, frame: int) -> Scene:
     mario_y = _u8(ram, 0x03B8) + 16
 
     enemies: list[Enemy] = []
-    for slot in range(5):
-        if _u8(ram, 0x0F + slot) != 0:
-            ex = _u8(ram, 0x6E + slot) * 256 + _u8(ram, 0x87 + slot)
-            ey = _u8(ram, 0xCF + slot) + 24
+    powerups: list[Enemy] = []
+    for slot in range(N_OBJECT_SLOTS):
+        if _u8(ram, 0x0F + slot) == 0:
+            continue
+        eid = _u8(ram, 0x16 + slot)                      # Enemy_ID (object type)
+        ex = _u8(ram, 0x6E + slot) * 256 + _u8(ram, 0x87 + slot)
+        ey = _u8(ram, 0xCF + slot) + 24
+        if eid == POWERUP_ID:                            # a mushroom/flower to COLLECT, not avoid
+            powerups.append(Enemy(slot=slot, x=ex, y=ey))
+        elif slot < 5:                                   # hostiles occupy slots 0-4 (5 is special)
             enemies.append(Enemy(slot=slot, x=ex, y=ey))
 
     # Tile window around Mario: GRID_ROWS rows x (COL_BEHIND+COL_AHEAD+1) cols, 1=solid.
@@ -260,6 +276,7 @@ def build_scene(ram: bytes, frame: int) -> Scene:
         float_state=_u8(ram, 0x001D),
         y_viewport=_u8(ram, 0x00B5),
         enemies=enemies,
+        powerups=powerups,
         tiles=tiles,
         ram=ram,
     )

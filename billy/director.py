@@ -51,6 +51,8 @@ class Director:
         return self.game.observe(st.frame, st.ram)
 
     # --- micro-search: evaluate candidates on a CLONE so the live run never visibly rewinds ----
+    _TRANSITION_BONUS = 100_000   # a level/area advance (e.g. entering a pipe) dominates any reach
+
     def _rollout(self, plan: Plan, settle: int = config.SEARCH_HORIZON_FRAMES) -> tuple[bool, int]:
         """Run the candidate, THEN coast forward `settle` frames and watch for a delayed death.
 
@@ -58,28 +60,44 @@ class Director:
         frames consume) — critical, because the killer case is a hazard just past where the candidate
         lands (e.g. a Goomba 15px beyond a jump's landing). Coasting forward with reflex.advance_plan
         after every candidate guarantees that imminent death is simulated instead of being declared a
-        false 'survivor'. Returns (survived, farthest)."""
+        false 'survivor'. Returns (survived, farthest).
+
+        A candidate that ADVANCES the level_key — most importantly entering a pipe, which warps Mario
+        to a new area where x resets to a low value — would otherwise look like NO progress (x didn't
+        grow). We detect the advance and report a dominating `reached` so the search prefers and banks
+        it; this is what lets Billy take 1-2's mandatory exit pipe instead of running at it forever."""
+        start = self._observe()
+        start_level, base_x = start.level_key, start.progress
         self.session.send_plan(plan)
         obs = self._observe()
         reached = obs.progress
+        advanced = obs.level_key > start_level
         coasted = 0
-        while coasted < settle and not obs.dead:
+        while coasted < settle and not obs.dead and not advanced:
             coast = self.reflex.advance_plan(obs)
             self.session.send_plan(coast)
             obs = self._observe()
+            advanced = obs.level_key > start_level
             reached = max(reached, obs.progress)
             coasted += max(1, plan_frames(coast))
+        if advanced:
+            reached = base_x + self._TRANSITION_BONUS
         return (not obs.dead), reached
 
     _MIN_PROGRESS_PX = 8   # a "solution" must actually advance, else it's a stall, not an escape
 
-    def _micro_search(self, candidates: list[Plan], start_x: int) -> tuple[Plan, bool, int]:
+    def _micro_search(self, candidates: list[Plan], start_x: int,
+                      early_exit: bool = False) -> tuple[Plan, bool, int]:
         """Try each candidate on a cloned state; return (best_plan, made_progress, reach_after).
 
         Runs inside the session's search_mode + a state clone, so none of the candidate frames
         are displayed and the live game is left exactly where it started (invisible search). A
         candidate only counts as a real escape if it SURVIVES *and* moves forward — a plan that
-        merely avoids death without advancing is a stall and must not be cached/replayed."""
+        merely avoids death without advancing is a stall and must not be cached/replayed.
+
+        With `early_exit`, return the FIRST surviving+advancing candidate instead of scanning all
+        of them. Used for the dense expanded grid (~40 candidates): once one works we don't need the
+        best, just a survivor to bank — this keeps the brute-force fallback's cost bounded."""
         snap = self.session.clone_state()
         best_plan, best_score, best_reach = candidates[0], -10 ** 9, start_x
         with self.session.search_mode():
@@ -89,6 +107,8 @@ class Director:
                 if score > best_score:
                     best_score, best_plan, best_reach = score, plan, reached
                 self.session.restore(snap)
+                if early_exit and survived and reached > start_x + self._MIN_PROGRESS_PX:
+                    break   # good-enough survivor found — stop the expensive grid here
         self.session.restore(snap)   # back to the live pre-search position, nothing shown
         self._observe()
         made_progress = best_score >= 0 and best_reach > start_x + self._MIN_PROGRESS_PX
@@ -167,14 +187,24 @@ class Director:
                 continue                                # too close to set up an escape
             if runway > config.LEARN_HORIZON_FRAMES:
                 break                                   # further back is out of rollout reach
+            # Focused spread first; if nothing survives past the death, fall back to the dense grid
+            # (the same brute-force set that cracks low-ceiling/enemy-ledge walls the spread misses).
+            cand_sets = [self._candidates_from(snap)]
+            expand = getattr(self.reflex, "expanded_candidates", None)
+            if expand is not None and config.EXPANDED_FALLBACK:
+                self.session.restore(snap)
+                cand_sets.append(expand(self._observe()))
             best_plan, best_reach = None, x
             with self.session.search_mode():
-                for plan in self._candidates_from(snap):
-                    self.session.restore(snap)
-                    self._observe()
-                    lived, reached = self._rollout(plan, settle=config.LEARN_HORIZON_FRAMES)
-                    if lived and reached > death_x and reached > best_reach:
-                        best_plan, best_reach = plan, reached
+                for candidates in cand_sets:
+                    for plan in candidates:
+                        self.session.restore(snap)
+                        self._observe()
+                        lived, reached = self._rollout(plan, settle=config.LEARN_HORIZON_FRAMES)
+                        if lived and reached > death_x and reached > best_reach:
+                            best_plan, best_reach = plan, reached
+                    if best_plan is not None:
+                        break   # cracked it with this set — don't pay for the next (denser) one
             self.session.restore(snap)
             self._observe()
             if best_plan is not None:
@@ -256,7 +286,10 @@ class Director:
                 continue
 
             # --- level clear: keep going into the next level, then checkpoint it ----------
-            if obs.level_key > self.cur_level:
+            # Compare only (world, stage): the cache key carries AREA too (so pipe warps get their
+            # own bucket region), but an internal area boundary inside a level — e.g. 1-2's joined
+            # areas — is NOT a level clear and must not over-count or trip the per-attempt cap.
+            if obs.level_key[:2] > self.cur_level[:2]:
                 levels_cleared += 1
                 furthest = obs.level_label
                 clear_frames = max(1, frames - level_start_frame)
@@ -339,8 +372,9 @@ class Director:
                 # brute-force grid before the LLM (deterministic, model-free, but ~40 candidates so
                 # it's slow — opt in with BILLY_EXPANDED_SEARCH=1).
                 expand = getattr(self.reflex, "expanded_candidates", None)
-                if not progressed and expand is not None and config.EXPANDED_SEARCH:
-                    best_plan, progressed, reach = self._micro_search(expand(obs), obs.progress)
+                if not progressed and expand is not None and config.EXPANDED_FALLBACK:
+                    best_plan, progressed, reach = self._micro_search(
+                        expand(obs), obs.progress, early_exit=True)
                 plan = best_plan
                 search_calls += 1
                 if progressed:
@@ -349,7 +383,8 @@ class Director:
                     self.cache.put(lk, obs.progress, plan, reach, force=cached is not None)
                     tag = "research✓" if cached is not None else "search✓"
                     action_note = f"{tag} {self._label(plan)}"
-                    print(f'  [attempt {n}] {obs.progress} 🔍 solved (reach {reach}) — remembered')
+                    reach_str = "→ pipe/area" if reach >= self._TRANSITION_BONUS else f"reach {reach}"
+                    print(f'  [attempt {n}] {obs.progress} 🔍 solved ({reach_str}) — remembered')
                 elif self.use_llm:
                     # Genuinely hard: let Billy improvise. Then VERIFY his plan on a clone and, if it
                     # survives AND progresses, BANK it like a search win — so the next pass replays

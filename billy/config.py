@@ -51,8 +51,14 @@ MAX_BUCKET_VISITS = int(os.environ.get("BILLY_MAX_BUCKET_VISITS", 8))  # same ha
 # Trust-replay (default): replay cached plans verbatim; a deterministic emulator reproduces them.
 # Set BILLY_VERIFY_REPLAY=1 to instead clone-check each replay (re-searches on mismatch — can drift).
 VERIFY_REPLAY = os.environ.get("BILLY_VERIFY_REPLAY", "0") == "1"
-# Dense brute-force grid at hard walls (thorough but ~40 candidates -> slow). Off by default.
-EXPANDED_SEARCH = os.environ.get("BILLY_EXPANDED_SEARCH", "0") == "1"
+# Dense brute-force grid at hard walls the focused spread can't crack (e.g. 1-2's low-ceiling +
+# enemy ledge at x=908). Fires ONLY as a fallback when the focused micro-search fails to progress,
+# and stops at the first surviving+advancing candidate (early-exit), so its ~40-candidate cost is
+# paid only at genuine walls and only until one works — then it's cached forever. On by default;
+# set BILLY_EXPANDED_FALLBACK=0 to disable. (BILLY_EXPANDED_SEARCH kept as a back-compat alias.)
+EXPANDED_FALLBACK = (os.environ.get("BILLY_EXPANDED_FALLBACK",
+                                    os.environ.get("BILLY_EXPANDED_SEARCH", "1")) == "1")
+EXPANDED_SEARCH = EXPANDED_FALLBACK   # back-compat alias
 
 
 def ensure_dirs() -> None:

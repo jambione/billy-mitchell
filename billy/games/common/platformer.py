@@ -62,6 +62,7 @@ class PlatformerView(Protocol):
     def block_above_ahead(self, max_tiles: int = ...) -> "int | None": ...
     def air_landing_target(self) -> "int | None": ...
     def enemy_ahead(self, within: int = ...) -> bool: ...
+    def nearest_powerup(self, within: int = ...) -> "tuple[int, int] | None": ...   # optional
 
 
 # --- candidate builders (also reused by the Skill layer to instantiate transferable tactics) ----
@@ -171,18 +172,38 @@ class PlatformerReflex(ReflexPolicy):
         return gap_jumper(width, self.p)
 
     def expanded_candidates(self, obs: Observation) -> list[Plan]:
-        """A DENSE brute-force grid for hard walls the focused spread can't crack — a thorough
-        sweep of run-up × jump-hold (and a couple of back-up variants for flush obstacles). Tried
-        when the normal search fails, before bothering the (slow, weak-on-this) LLM."""
+        """A DENSE brute-force grid for hard walls the focused spread can't crack. Beyond the
+        run-up × jump-hold sweep it carries the move *types* a pure-jump grid lacks — the ones that
+        crack 1-2's low-ceiling + enemy-ledge walls (x=908/978):
+          • SHORT HOPS — clear a single enemy/step without gaining the height that bonks a low
+            ceiling (and drops you back onto the hazard);
+          • WALK-THROUGH (no jump) — run/walk under a low ceiling or off a ledge without leaping
+            into it;
+          • PATIENCE — idle out a moving enemy's phase, then a short hop or walk.
+        When a low ceiling is detected ahead, the ceiling-safe moves are tried FIRST (early-exit then
+        banks the first survivor fast). Tried when the normal search fails, before the (slow) LLM."""
         c = controller
+        scene = obs.raw
         runs = (0, 6, 10, 14, 18, 24, 30)
         holds = (16, 20, 24, 28, 31, 34)
-        cands: list[Plan] = [c.jump_right(run_frames=r, jump_frames=h) for r in runs for h in holds]
-        # a few patience + back-up options for enemy timing / flush pipes
-        cands += [c.idle(d) + c.jump_right(jump_frames=h) for d in (10, 24, 40) for h in (14, 24)]
-        cands += [[Step(b, controller.LEFT)] + c.jump_right(run_frames=18, jump_frames=30)
+        big_jumps: list[Plan] = [c.jump_right(run_frames=r, jump_frames=h) for r in runs for h in holds]
+        short_hops = [c.jump_right(run_frames=r, jump_frames=h) for r in (0, 8, 16) for h in (6, 9, 12)]
+        walk_through = [c.run_right(n, sprint=s) for n in (8, 14, 22) for s in (True, False)]
+        patience = [c.idle(d) + tail for d in (12, 28, 48, 70)
+                    for tail in (c.jump_right(jump_frames=9), c.jump_right(jump_frames=24),
+                                 c.run_right(12))]
+        backup = [[Step(b, controller.LEFT)] + c.jump_right(run_frames=18, jump_frames=30)
                   for b in (8, 16)]
-        return cands
+        # ENTER-PIPE: walk onto a pipe and hold DOWN. Some levels (e.g. 1-2) only exit via a pipe;
+        # a pure-movement grid can never discover this, so Billy runs at the pipe forever. The search
+        # rejects it everywhere it does nothing (Mario just ducks) and banks it where it warps him.
+        enter_pipe = [(c.run_right(n, sprint=False) if n else []) + [Step(h, controller.DOWN)]
+                      for n in (0, 6, 12, 18, 24) for h in (24, 40)]
+
+        low_ceiling = scene.block_above_ahead() is not None
+        if low_ceiling:   # height is a liability here — lead with hops/walks that won't bonk
+            return short_hops + walk_through + enter_pipe + patience + big_jumps + backup
+        return big_jumps + short_hops + walk_through + enter_pipe + patience + backup
 
     # --- the per-exchange decision (ported verbatim from the SMB reflex) ------------------
     def step(self, obs: Observation) -> Decision:
@@ -258,12 +279,32 @@ class PlatformerReflex(ReflexPolicy):
             self._last_scene = scene
             return Decision(controller.jump_right(jump_frames=20), note="hop enemy")
 
-        bonk = scene.block_above_ahead()
-        safe_to_bonk = gap is None and scene.nearest_enemy(96) is None
-        if bonk is not None and bonk <= p.bonk_trigger_px and safe_to_bonk:
+        # BALANCED power-up handling (survival-first: every hazard above is resolved before this).
+        # 1) If a power-up is already out, COLLECT it (don't sprint past the slow-emerging mushroom).
+        pu = scene.nearest_powerup() if hasattr(scene, "nearest_powerup") else None
+        if pu is not None:
+            dx, dy = pu
             self._last_scene = scene
-            return Decision(controller.jump_right(jump_frames=p.bonk_hold_frames),
-                            note="bonk block (coin/powerup)")
+            if dy < -16:        # above / still emerging -> a small hop to meet it
+                return Decision(controller.jump_right(jump_frames=10), note=f"grab powerup ^{dx}px")
+            if dx < 0:          # bounced behind him -> wait a beat for it to come back
+                return Decision(controller.idle(6), note="wait for powerup")
+            return Decision(controller.run_right(p.reflex_step_frames, sprint=False),  # walk, no overshoot
+                            note=f"grab powerup {dx}px")
+
+        # 2) SEEK-AND-BONK: while small (wants the mushroom), line up under a reachable floating block
+        # and bump it from BELOW with a STRAIGHT-UP jump. A jump_right would carry Billy up ONTO the
+        # block row instead of bumping it, so the power-up never pops — that was the bug. Gated to
+        # small + safe, so once Big/Fire he stops detouring and just cruises (keeps it "balanced").
+        bonk = scene.block_above_ahead(max_tiles=4)
+        safe_to_bonk = gap is None and scene.nearest_enemy(52) is None
+        if bonk is not None and safe_to_bonk and scene.size == 0:
+            self._last_scene = scene
+            if bonk > 8:        # not lined up yet -> shuffle right under the block (no sprint)
+                return Decision(controller.run_right(p.reflex_step_frames, sprint=False),
+                                note=f"line up block {bonk}px")
+            return Decision([Step(p.bonk_hold_frames, controller.A)],   # straight up: bump from below
+                            note="bonk for powerup")
 
         self._last_scene = scene
         return Decision(controller.run_right(p.reflex_step_frames), note="cruise")

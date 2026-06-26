@@ -16,12 +16,17 @@ class SmbGame(Game):
         self.system = NesSystem(self.RETRO_GAME)
         # Last in-play (progress, level_label, level_key) — reused on death/transition frames
         # so the engine never sees the 0xFFFF overflow (x=65535 / "256-256" garbage).
-        self._last_good: tuple[int, str, tuple] = (0, "1-1", (0, 0))
+        self._last_good: tuple[int, str, tuple] = (0, "1-1", (0, 0, 0))
 
     def observe(self, frame: int, ram: bytes) -> Observation:
         s = build_scene(ram, frame)
         if s.in_play:
-            progress, level_label, level_key = s.mario_x, s.world_stage, (s.world, s.stage)
+            # level_key includes the AREA (0x0760): a level like 1-2 has multiple areas joined by
+            # pipes, and entering a pipe warps Mario to a new area where x RESETS. Keying on
+            # (world, stage, area) keeps post-pipe solutions in their own cache region (no collision
+            # with start-of-level buckets) and lets the engine SEE the pipe warp as a forward
+            # transition (area advances), which is how Billy gets past 1-2's mandatory exit pipe.
+            progress, level_label, level_key = s.mario_x, s.world_stage, (s.world, s.stage, s.area)
             self._last_good = (progress, level_label, level_key)
         else:
             progress, level_label, level_key = self._last_good  # don't trust garbage RAM
