@@ -68,19 +68,53 @@ run LM Studio on `localhost:1234` with a chat model + the `nomic-embed-text` emb
 
 ## Run
 
+Everything is driven by `run.py`. Always use the project venv (`.venv/bin/python`). The simplest run:
+
 ```bash
 .venv/bin/python run.py --attempts 20                      # play + learn, watch the window
-BILLY_HEADLESS=1 .venv/bin/python run.py --attempts 10 --no-llm   # fast headless benchmark
-.venv/bin/python run.py --game smb_lost --seed-skills      # SMB2-Japan, seeded with SMB skills
 ```
 
-Flags / env:
-- `--no-llm` — pure learning loop (reflex + cache + search), no LLM. Great first smoke test.
-- `--game smb|smb_lost` — which title. `--seed-skills` — seed transferable SMB tactics.
-- `--fresh` — wipe learned solutions, skills, and lessons.
-- `BILLY_HEADLESS=1` — no window (fast). `BILLY_TURBO=1` — no realtime pacing when windowed.
-- `BILLY_REPEAT_LEVEL=1` — eval mode: end each attempt at the first clear so the **same** level
-  repeats and the compounding curve is visible. `BILLY_MAX_FRAMES=N` — cap attempt length.
+Common recipes:
+```bash
+# Pure learning loop, watch in a real-time window (no LLM needed):
+.venv/bin/python run.py --attempts 6 --no-llm
+
+# Fast headless benchmark (no window, no realtime pacing):
+BILLY_HEADLESS=1 .venv/bin/python run.py --attempts 10 --no-llm
+
+# Enable the hazard-scoped RL sub-policies (e.g. Billy crosses 1-3's tree-top section):
+.venv/bin/python run.py --attempts 6 --no-llm --rl-sections
+
+# Start clean (wipe everything Billy has learned) and watch from scratch:
+.venv/bin/python run.py --attempts 6 --no-llm --rl-sections --fresh
+
+# Second game — SMB2-Japan, seeded with the SMB skills it carries forward:
+.venv/bin/python run.py --game smb_lost --seed-skills
+```
+
+### Flags (`run.py --help`)
+| Flag | Meaning |
+| --- | --- |
+| `--attempts N` | How many attempts to play (default 10). |
+| `--game smb\|smb_lost` | Which title (default `smb`). |
+| `--no-llm` | Pure learning loop (reflex + cache + search), no LLM. Best first smoke test. |
+| `--rl-sections` | Enable hazard-scoped RL sub-policies; they seed micro-search with a learned crossing that search verifies and the cache banks. Needs a trained model under `data/rl/` (see below). |
+| `--rl MODEL` | Use a whole-level PPO policy (a `.zip` from `train_rl.py`) as the reflex tier; the hand-crafted reflex stays the fallback at hazards. |
+| `--seed-skills` | Seed the SkillLibrary with SMB's transferable tactics (cross-game carry-forward). |
+| `--fresh` | Wipe learned solutions, skills, and lessons before starting. |
+
+### Environment knobs
+| Var | Effect |
+| --- | --- |
+| `BILLY_HEADLESS=1` | No window — fast. (Default is windowed/watchable.) |
+| `BILLY_TURBO=1` | When windowed, drop the 60fps realtime pacing (run as fast as it draws). |
+| `BILLY_MAX_FRAMES=N` | Cap an attempt's length (a ~10-game-minute safety cap by default). |
+| `BILLY_REPEAT_LEVEL=1` | Eval mode: end each attempt at the first clear so the **same** level repeats and the compounding curve is visible. |
+| `BILLY_RETRO_GAME=id` | Override the stable-retro integration id. |
+
+> **Watching tip:** without `BILLY_HEADLESS=1` a "Billy Mitchell" window opens and plays in real
+> time. Micro-search runs on an invisible clone, so on screen you only ever see committed forward
+> play — never a rewind.
 
 **Prove the learning compounds** (Billy clears 1-1 every attempt; the curve prints search↓/replay↑):
 ```bash
@@ -101,6 +135,27 @@ hand-crafted reflex at hazards).
 .venv/bin/python train_rl.py --timesteps 200000 --n-envs 4 --imitate 4000   # train (BC warm-start)
 .venv/bin/python run.py --rl data/rl/ppo_smb        # play with the learned policy
 ```
+
+### Hazard-scoped RL sub-policies (the part Billy actually uses)
+
+A whole-level RL policy lost to the hand-crafted reflex, but a **narrow** sub-policy trained to cross
+*one* section the geometry reflex can't chain (e.g. 1-3's tree-top platform hops) wins. It's wired so
+it can only ever fire at its registered hazard — at that spot the controller rolls the policy out on
+an invisible clone, and if it gets through alive the Director commits and **banks** that exact button
+sequence, so the crossing compounds like any cached solution (1-1/1-2 are untouched).
+
+```bash
+# Train a section sub-policy from a savestate at the hazard entrance (see NEXT_STEPS.md to capture one):
+.venv/bin/python train_section.py --timesteps 400000 --n-envs 8 \
+    --state data/rl/states/smb_1_3_section.state --goal-x 700 --out data/rl/section_1_3
+
+# Gate it standalone (cross-rate from the savestate), then play with it enabled:
+.venv/bin/python eval_section.py --model data/rl/section_1_3 --episodes 20
+.venv/bin/python run.py --attempts 6 --no-llm --rl-sections
+```
+
+Models live under `data/rl/` (gitignored) — reproduce them with the train scripts. The roadmap for
+adding the next sub-policy (the 1-3 moving-lift gap) is in [NEXT_STEPS.md](NEXT_STEPS.md).
 
 ## Tests
 
