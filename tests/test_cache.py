@@ -21,10 +21,13 @@ def _plan():
 
 
 def test_bucket_quantizes_by_tile():
-    assert bucket_of(LK, 0) == ((0, 0), 0)
-    assert bucket_of(LK, 15) == ((0, 0), 0)
-    assert bucket_of(LK, 16) == ((0, 0), 1)
-    assert bucket_of((1, 2), 700) == ((1, 2), 43)
+    # key is (level, x_band, y_band) — y defaults to 0 (one band) so the x quantization is unchanged
+    assert bucket_of(LK, 0) == ((0, 0), 0, 0)
+    assert bucket_of(LK, 15) == ((0, 0), 0, 0)
+    assert bucket_of(LK, 16) == ((0, 0), 1, 0)
+    assert bucket_of((1, 2), 700) == ((1, 2), 43, 0)
+    # the y band disambiguates a high road from a low road at the SAME x
+    assert bucket_of(LK, 16, 0) != bucket_of(LK, 16, 128)
 
 
 def test_put_get_and_keep_better(tmp_path):

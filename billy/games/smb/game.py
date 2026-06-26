@@ -40,6 +40,7 @@ class SmbGame(Game):
             summary=s.summary(),
             ascii_map=s.ascii_view(),
             raw=s,
+            elevation=s.mario_y,   # 2nd route coordinate (larger = lower on screen)
         )
 
     def make_reflex(self) -> ReflexPolicy:

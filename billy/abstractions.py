@@ -64,6 +64,9 @@ class Observation:
     summary: str           # compact text for the LLM
     ascii_map: str         # small visual for the LLM
     raw: Any = None        # game-specific scene, for the game's own reflex policy
+    elevation: int = 0     # generic 2nd coordinate: the route key is (level, progress, elevation),
+                           # so a high road and a low road at the same `progress` are distinct nodes.
+                           # (SMB sets this to mario_y, where a LARGER value is lower on screen.)
 
 
 @dataclass

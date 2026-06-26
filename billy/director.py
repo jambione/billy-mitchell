@@ -82,12 +82,14 @@ class Director:
             coasted += max(1, plan_frames(coast))
         if advanced:
             reached = base_x + self._TRANSITION_BONUS
-        return (not obs.dead), reached
+        # also report where the candidate ENDS UP (its route node) for dead-end / elevation scoring
+        return (not obs.dead), reached, obs.progress, obs.elevation
 
     _MIN_PROGRESS_PX = 8   # a "solution" must actually advance, else it's a stall, not an escape
 
     def _micro_search(self, candidates: list[Plan], start_x: int, early_exit: bool = False,
-                      settle: int = config.SEARCH_HORIZON_FRAMES) -> tuple[Plan, bool, int]:
+                      settle: int = config.SEARCH_HORIZON_FRAMES,
+                      level_key: tuple = ()) -> tuple[Plan, bool, int]:
         """Try each candidate on a cloned state; return (best_plan, made_progress, reach_after).
 
         Runs inside the session's search_mode + a state clone, so none of the candidate frames
@@ -107,12 +109,20 @@ class Director:
         best_plan, best_score, best_reach = candidates[0], -10 ** 9, start_x
         with self.session.search_mode():
             for plan in candidates:
-                survived, reached = self._rollout(plan, settle)
+                survived, reached, end_x, end_y = self._rollout(plan, settle)
                 score = reached if survived else reached - 100_000  # death ≫ worse than short
+                dead = bool(survived and level_key and self.cache.is_dead(level_key, end_x, end_y))
+                if survived:
+                    # ROUTE-AWARENESS: prefer the lower/grounded road on comparable x (a gentle
+                    # gravity bias against gratuitous climbs into dead-ends / over low exits), and
+                    # heavily avoid a candidate that lands on a node already proven to dead-end.
+                    score += end_y * config.ELEVATION_TIEBREAK
+                    if dead:
+                        score -= config.ROUTE_DEAD_PENALTY
                 if score > best_score:
                     best_score, best_plan, best_reach = score, plan, reached
                 self.session.restore(snap)
-                if early_exit and survived and reached > start_x + self._MIN_PROGRESS_PX:
+                if early_exit and survived and not dead and reached > start_x + self._MIN_PROGRESS_PX:
                     break   # good-enough survivor found — stop the expensive grid here
         self.session.restore(snap)   # back to the live pre-search position, nothing shown
         self._observe()
@@ -141,7 +151,8 @@ class Director:
                 # Mario's exact mid-jump state on the next approach, so its replay would drift).
                 if (obs.progress >= last_snap_x + config.CACHE_BUCKET_PX
                         and getattr(obs.raw, "on_ground", True)):
-                    safe_history.append((obs.progress, obs.level_key, self.session.clone_state()))
+                    safe_history.append((obs.progress, obs.elevation, obs.level_key,
+                                         self.session.clone_state()))
                     last_snap_x = obs.progress
         return obs, last_snap_x
 
@@ -153,7 +164,7 @@ class Director:
         and the caller live-searches fresh with the enemy where it ACTUALLY is now."""
         snap = self.session.clone_state()
         with self.session.search_mode():
-            lived, _ = self._rollout(plan, horizon)
+            lived, *_ = self._rollout(plan, horizon)
         self.session.restore(snap)
         self._observe()
         return lived
@@ -163,7 +174,7 @@ class Director:
         scoring an LLM-improvised plan before trusting/caching it. Invisible; leaves live untouched."""
         snap = self.session.clone_state()
         with self.session.search_mode():
-            survived, reach = self._rollout(plan, settle)
+            survived, reach, *_ = self._rollout(plan, settle)
         self.session.restore(snap)
         self._observe()
         return survived, reach
@@ -186,7 +197,7 @@ class Director:
         spot. This is what advances the frontier: next attempt replays the survivor instead of
         walking into the same death. Runs on a clone in search_mode (invisible). Returns the x it
         learned to pass, or None. Trying several start points gives a stomp/clear room to set up."""
-        for x, lk, snap in reversed(safe_history):      # nearest the death first
+        for x, y, lk, snap in reversed(safe_history):   # nearest the death first
             runway = death_x - x
             if runway < config.MIN_RUNWAY_PX:
                 continue                                # too close to set up an escape
@@ -205,7 +216,7 @@ class Director:
                     for plan in candidates:
                         self.session.restore(snap)
                         self._observe()
-                        lived, reached = self._rollout(plan, settle=config.LEARN_HORIZON_FRAMES)
+                        lived, reached, *_ = self._rollout(plan, settle=config.LEARN_HORIZON_FRAMES)
                         if lived and reached > death_x and reached > best_reach:
                             best_plan, best_reach = plan, reached
                     if best_plan is not None:
@@ -213,7 +224,7 @@ class Director:
             self.session.restore(snap)
             self._observe()
             if best_plan is not None:
-                self.cache.put(lk, x, best_plan, best_reach)
+                self.cache.put(lk, x, best_plan, best_reach, y=y)
                 return x
         return None
 
@@ -260,7 +271,7 @@ class Director:
         # from one with enough RUNWAY before the death spot (a stomp/clear needs room to set up),
         # not the frame flush against it. Throttled to ~one snapshot per tile.
         safe_history: deque = deque(maxlen=24)
-        safe_history.append((obs.progress, obs.level_key, self.session.clone_state()))
+        safe_history.append((obs.progress, obs.elevation, obs.level_key, self.session.clone_state()))
         last_snap_x = obs.progress
 
         while frames <= config.MAX_ATTEMPT_FRAMES:
@@ -342,12 +353,16 @@ class Director:
             # height), so replaying them diverges into deaths. On-ground spots are reproducible.
             # (This caps how much compounds — airborne hazards re-search — but keeps replays safe.)
             on_ground = getattr(obs.raw, "on_ground", True)
-            cached = self.cache.get(lk, obs.progress) if on_ground else None
+            ey = obs.elevation
+            cached = self.cache.get(lk, obs.progress, ey) if on_ground else None
             if cached is not None or danger:
                 # Stall breaker: keep arriving at the same spot without getting past it -> give up.
-                bkey = bucket_of(lk, obs.progress)
+                bkey = bucket_of(lk, obs.progress, ey)
                 bucket_visits[bkey] = bucket_visits.get(bkey, 0) + 1
                 if bucket_visits[bkey] > config.MAX_BUCKET_VISITS:
+                    # Route-awareness: remember this node is a DEAD-END so future searches avoid
+                    # re-entering it (deprioritised in _micro_search) instead of re-discovering it.
+                    self.cache.mark_dead(lk, obs.progress, ey)
                     print(f'  [attempt {n}] {obs.progress} 🧱 stuck at {obs.level_label}@{obs.progress} — giving up this run')
                     outcome = "stuck"
                     break
@@ -366,13 +381,14 @@ class Director:
             if do_replay:
                 plan = cached.plan
                 replay_calls += 1
-                self.cache.record_hit(lk, obs.progress)
+                self.cache.record_hit(lk, obs.progress, ey)
                 action_note = f"replay {self._label(plan)}"
             elif cached is not None or danger:
                 # MISS or STALE cache: search (invisibly, on a clone of the LIVE state, so moving
                 # enemies are where they actually are now) for a surviving, FORWARD-PROGRESSING
                 # sequence and REMEMBER it. A non-progress escape is a stall — never cached.
-                best_plan, progressed, reach = self._micro_search(self._candidates(obs), obs.progress)
+                best_plan, progressed, reach = self._micro_search(
+                    self._candidates(obs), obs.progress, level_key=lk)
                 # Hard wall: the focused spread couldn't progress -> optionally try a DENSE
                 # brute-force grid before the LLM (deterministic, model-free, but ~40 candidates so
                 # it's slow — opt in with BILLY_EXPANDED_SEARCH=1).
@@ -382,13 +398,13 @@ class Director:
                     # show net forward progress (a short horizon only sees the leftward dip).
                     best_plan, progressed, reach = self._micro_search(
                         expand(obs), obs.progress, early_exit=True,
-                        settle=config.LEARN_HORIZON_FRAMES)
+                        settle=config.LEARN_HORIZON_FRAMES, level_key=lk)
                 plan = best_plan
                 search_calls += 1
                 if progressed:
                     # force-overwrite when refreshing a stale entry so the freshest WORKING plan
                     # replaces the one that just failed verify (else we'd re-search it forever).
-                    self.cache.put(lk, obs.progress, plan, reach, force=cached is not None)
+                    self.cache.put(lk, obs.progress, plan, reach, y=ey, force=cached is not None)
                     tag = "research✓" if cached is not None else "search✓"
                     action_note = f"{tag} {self._label(plan)}"
                     reach_str = "→ pipe/area" if reach >= self._TRANSITION_BONUS else f"reach {reach}"
@@ -404,7 +420,7 @@ class Director:
                     billy_calls += 1
                     survived, reach = self._evaluate(plan)
                     if survived and reach > obs.progress + self._MIN_PROGRESS_PX:
-                        self.cache.put(lk, obs.progress, plan, reach, force=cached is not None)
+                        self.cache.put(lk, obs.progress, plan, reach, y=ey, force=cached is not None)
                         action_note = f"BILLY✓ {self._label(plan)}"
                         print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}" — '
                               f'cracked it (reach {reach}), remembered')
@@ -431,10 +447,10 @@ class Director:
             # is behaviour-preserving (identical per-frame input) but lets us capture snapshots
             # DURING a long jump — so learn-from-death always has a runway snapshot before a death,
             # even when a single ballistic plan skips many tiles at once.
-            replay_x = obs.progress
+            replay_x, replay_y = obs.progress, obs.elevation
             obs, last_snap_x = self._commit(plan, safe_history, last_snap_x)
             if "replay" in action_note and obs.dead:
-                self.cache.record_fail(lk, replay_x)   # a banked solution drifted -> re-search it
+                self.cache.record_fail(lk, replay_x, replay_y)   # banked solution drifted -> re-search
             trajectory.append(coach.TrajectoryStep(
                 x=replay_x, summary=obs.summary, action=action_note, event=decision.note))
             frames += plan_frames(plan)

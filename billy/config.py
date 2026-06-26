@@ -47,6 +47,19 @@ SEARCH_HORIZON_FRAMES = 50  # frames to simulate each candidate at a live danger
 LEARN_HORIZON_FRAMES = 150  # longer rollout for learn-from-death (must traverse the death zone)
 MIN_RUNWAY_PX = 24          # learn-from-death needs at least this much room before a hazard
 CACHE_BUCKET_PX = 16        # solution-cache key granularity (one NES tile)
+# Route-awareness (Phase 1): a cache/route node is keyed on (level, x_band, y_band) — the y band
+# disambiguates a high road from a low road at the SAME x (the high ledge vs the main path), which a
+# 1-D x-only key conflated. Coarse so one flat platform stays a single node.
+CACHE_Y_BAND_PX = 24
+# When micro-search scores candidates, penalise one that lands on a node already proven to dead-end
+# (stall-breaker fired there), and add a small GRAVITY tiebreak preferring the lower/grounded path
+# when x-progress is comparable — so Billy stops greedily climbing into dead-ends / past low exits.
+# (SMB elevation = mario_y, where LARGER = lower on screen, so a positive weight prefers staying low.)
+ROUTE_DEAD_PENALTY = 50_000
+# Gravity tiebreak (prefer the lower road on comparable x): a blanket version cost 1-1 score (lower
+# paths = fewer coins) without cracking 1-2's exit, so it's OFF by default. The real route-finding is
+# dead-end memory + Phase-2 backtracking, not a blanket bias. Kept as a tunable knob.
+ELEVATION_TIEBREAK = 0.0
 MAX_BUCKET_VISITS = int(os.environ.get("BILLY_MAX_BUCKET_VISITS", 8))  # same hazard N times w/o passing -> give up
 # Trust-replay (default): replay cached plans verbatim; a deterministic emulator reproduces them.
 # Set BILLY_VERIFY_REPLAY=1 to instead clone-check each replay (re-searches on mismatch — can drift).
