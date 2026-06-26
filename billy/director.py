@@ -80,6 +80,12 @@ class Director:
             advanced = obs.level_key > start_level
             reached = max(reached, obs.progress)
             coasted += max(1, plan_frames(coast))
+            # SPEED: a FORWARD candidate only needs the basic death-watch window (SEARCH_HORIZON); the
+            # long `settle` exists ONLY so a BACKWARD detour can recover. Once we've watched the
+            # death window AND the candidate is already clearly ahead, stop — don't burn the full
+            # (e.g. 150-frame) horizon on the bulk of the grid that never needed it.
+            if coasted >= config.SEARCH_HORIZON_FRAMES and reached > base_x + self._MIN_PROGRESS_PX:
+                break
         if advanced:
             reached = base_x + self._TRANSITION_BONUS
         # also report where the candidate ENDS UP (its route node) for dead-end / elevation scoring
