@@ -205,11 +205,20 @@ class PlatformerReflex(ReflexPolicy):
         enter_pipe = [(c.run_right(n, sprint=False) if n else []) + [Step(h, controller.DOWN)]
                       for n in (0, 6, 12, 18, 24) for h in (24, 40)]
         enter_pipe += [c.run_left(n, sprint=False) + [Step(40, controller.DOWN)] for n in (6, 12, 20)]
+        # RETREAT / drop off a dead-end: when a wall ahead reaches the ceiling (impassable at this
+        # level), the way on is BELOW — go back left and off the ledge so the lower path can be
+        # found. These travel left a real distance; the search's long post-coast (run-right) then
+        # recovers along whatever path the drop lands on, crediting net forward progress. Only
+        # offered when truly walled in, so they don't tempt Billy backward in open play.
+        tall_wall = (scene.obstacle_ahead() or (0, 0))[1] >= 3
+        retreat = ([c.run_left(n, sprint=True) for n in (24, 40, 60)] +
+                   [c.run_left(n, sprint=True) + c.jump_right(run_frames=24, jump_frames=h)
+                    for n in (24, 40) for h in (16, 30)]) if tall_wall else []
 
         low_ceiling = scene.block_above_ahead() is not None
         if low_ceiling:   # height is a liability here — lead with hops/walks that won't bonk
-            return short_hops + walk_through + enter_pipe + patience + big_jumps + backup
-        return big_jumps + short_hops + walk_through + enter_pipe + patience + backup
+            return short_hops + walk_through + enter_pipe + patience + big_jumps + backup + retreat
+        return big_jumps + short_hops + walk_through + enter_pipe + patience + backup + retreat
 
     # --- the per-exchange decision (ported verbatim from the SMB reflex) ------------------
     def step(self, obs: Observation) -> Decision:

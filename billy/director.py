@@ -86,14 +86,19 @@ class Director:
 
     _MIN_PROGRESS_PX = 8   # a "solution" must actually advance, else it's a stall, not an escape
 
-    def _micro_search(self, candidates: list[Plan], start_x: int,
-                      early_exit: bool = False) -> tuple[Plan, bool, int]:
+    def _micro_search(self, candidates: list[Plan], start_x: int, early_exit: bool = False,
+                      settle: int = config.SEARCH_HORIZON_FRAMES) -> tuple[Plan, bool, int]:
         """Try each candidate on a cloned state; return (best_plan, made_progress, reach_after).
 
         Runs inside the session's search_mode + a state clone, so none of the candidate frames
         are displayed and the live game is left exactly where it started (invisible search). A
         candidate only counts as a real escape if it SURVIVES *and* moves forward — a plan that
         merely avoids death without advancing is a stall and must not be cached/replayed.
+
+        `settle` is the post-candidate coast budget. The expanded fallback passes a LONGER one so a
+        detour candidate (retreat left, drop off a dead-end ledge) can recover and show NET forward
+        progress on the path it reaches — a short horizon would only see the leftward dip and reject
+        it, which is why Billy couldn't escape 1-2's dead-end upper ledge.
 
         With `early_exit`, return the FIRST surviving+advancing candidate instead of scanning all
         of them. Used for the dense expanded grid (~40 candidates): once one works we don't need the
@@ -102,7 +107,7 @@ class Director:
         best_plan, best_score, best_reach = candidates[0], -10 ** 9, start_x
         with self.session.search_mode():
             for plan in candidates:
-                survived, reached = self._rollout(plan)
+                survived, reached = self._rollout(plan, settle)
                 score = reached if survived else reached - 100_000  # death ≫ worse than short
                 if score > best_score:
                     best_score, best_plan, best_reach = score, plan, reached
@@ -373,8 +378,11 @@ class Director:
                 # it's slow — opt in with BILLY_EXPANDED_SEARCH=1).
                 expand = getattr(self.reflex, "expanded_candidates", None)
                 if not progressed and expand is not None and config.EXPANDED_FALLBACK:
+                    # Longer settle so a retreat/drop detour off a dead-end ledge can recover and
+                    # show net forward progress (a short horizon only sees the leftward dip).
                     best_plan, progressed, reach = self._micro_search(
-                        expand(obs), obs.progress, early_exit=True)
+                        expand(obs), obs.progress, early_exit=True,
+                        settle=config.LEARN_HORIZON_FRAMES)
                 plan = best_plan
                 search_calls += 1
                 if progressed:
