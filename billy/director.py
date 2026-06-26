@@ -25,7 +25,8 @@ _IDLE: Plan = [Step(2, 0)]   # neutral input — to consume a pending frame or c
 
 class Director:
     def __init__(self, game: Game, kb: KnowledgeBase, use_llm: bool = True,
-                 cache: SolutionCache | None = None, skills: SkillLibrary | None = None) -> None:
+                 cache: SolutionCache | None = None, skills: SkillLibrary | None = None,
+                 sections=None) -> None:
         self.game = game
         self.session = game.system.connect()
         self.controller = game.system.controller
@@ -33,6 +34,9 @@ class Director:
         self.kb = kb
         self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
         self.skills = skills if skills is not None else SkillLibrary()  # cross-game transferable tactics
+        # Optional hazard-scoped RL sub-policies: at a registered section they SEED micro-search with
+        # a learned crossing candidate (verified+banked like any solution). None = pure reflex/search.
+        self.sections = sections
         self.use_llm = use_llm
         # Eval mode: end each attempt at the FIRST level clear so every attempt is a fresh run of
         # the same starting level. This exposes the compounding curve (search-per-clear falls and
@@ -411,51 +415,67 @@ class Director:
                 self.cache.record_hit(lk, obs.progress, ey)
                 action_note = f"replay {self._label(plan)}"
             elif cached is not None or danger:
-                # MISS or STALE cache: search (invisibly, on a clone of the LIVE state, so moving
-                # enemies are where they actually are now) for a surviving, FORWARD-PROGRESSING
-                # sequence and REMEMBER it. A non-progress escape is a stall — never cached.
-                best_plan, progressed, reach = self._micro_search(
-                    self._candidates(obs), obs.progress, level_key=lk)
-                # Hard wall: the focused spread couldn't progress -> optionally try a DENSE
-                # brute-force grid before the LLM (deterministic, model-free, but ~40 candidates so
-                # it's slow — opt in with BILLY_EXPANDED_SEARCH=1).
-                expand = getattr(self.reflex, "expanded_candidates", None)
-                if not progressed and expand is not None and config.EXPANDED_FALLBACK:
-                    # Longer settle so a retreat/drop detour off a dead-end ledge can recover and
-                    # show net forward progress (a short horizon only sees the leftward dip).
-                    best_plan, progressed, reach = self._micro_search(
-                        expand(obs), obs.progress, early_exit=True,
-                        settle=config.LEARN_HORIZON_FRAMES, level_key=lk)
-                plan = best_plan
-                search_calls += 1
-                if progressed:
-                    # force-overwrite when refreshing a stale entry so the freshest WORKING plan
-                    # replaces the one that just failed verify (else we'd re-search it forever).
+                # HAZARD-SCOPED RL: if Billy is at a registered section, let its verified sub-policy
+                # own the crossing — roll it out on a clone and, if it gets through alive, commit and
+                # bank THAT directly (no death-watch scorer, which would penalize the crossing for a
+                # death at the NEXT hazard further down the level). Falls through to search otherwise.
+                seg = (self.sections.cross(obs, self.session, self._observe)
+                       if (self.sections is not None and on_ground) else None)
+                if seg is not None:
+                    plan, reach = seg
+                    search_calls += 1
                     self.cache.put(lk, obs.progress, plan, reach, y=ey, force=cached is not None)
-                    tag = "research✓" if cached is not None else "search✓"
-                    action_note = f"{tag} {self._label(plan)}"
-                    reach_str = "→ pipe/area" if reach >= self._TRANSITION_BONUS else f"reach {reach}"
-                    print(f'  [attempt {n}] {obs.progress} 🔍 solved ({reach_str}) — remembered')
-                elif self.use_llm:
-                    # Genuinely hard: let Billy improvise. Then VERIFY his plan on a clone and, if it
-                    # survives AND progresses, BANK it like a search win — so the next pass replays
-                    # it instead of re-asking the (slow, inconsistent) LLM. This is what lets an
-                    # LLM-cracked wall (e.g. early 1-2) actually compound.
-                    bd = billy.decide(obs, self.kb.retrieve(obs.summary),
-                                      list(self.recent), self.controller)
-                    plan = bd.plan
-                    billy_calls += 1
-                    survived, reach = self._evaluate(plan)
-                    if survived and reach > obs.progress + self._MIN_PROGRESS_PX:
-                        self.cache.put(lk, obs.progress, plan, reach, y=ey, force=cached is not None)
-                        action_note = f"BILLY✓ {self._label(plan)}"
-                        print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}" — '
-                              f'cracked it (reach {reach}), remembered')
-                    else:
-                        action_note = f"BILLY {self._label(plan)}"
-                        print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
+                    action_note = f"section✓ {self._label(plan)}"
+                    print(f'  [attempt {n}] {obs.progress} 🤖 section-policy crossed '
+                          f'(reach {reach}) — remembered')
+                    # fall through to the normal chunked commit so the crossing snapshots its trail
+                    # (the post-section hazard then has a runway for learn-from-death).
                 else:
-                    action_note = f"search✗ {self._label(plan)}"   # best-effort, not cached
+                    # MISS or STALE cache: search (invisibly, on a clone of the LIVE state, so moving
+                    # enemies are where they actually are now) for a surviving, FORWARD-PROGRESSING
+                    # sequence and REMEMBER it. A non-progress escape is a stall — never cached.
+                    best_plan, progressed, reach = self._micro_search(
+                        self._candidates(obs), obs.progress, level_key=lk)
+                    # Hard wall: the focused spread couldn't progress -> optionally try a DENSE
+                    # brute-force grid before the LLM (deterministic, model-free, but ~40 candidates
+                    # so it's slow — opt in with BILLY_EXPANDED_SEARCH=1).
+                    expand = getattr(self.reflex, "expanded_candidates", None)
+                    if not progressed and expand is not None and config.EXPANDED_FALLBACK:
+                        # Longer settle so a retreat/drop detour off a dead-end ledge can recover and
+                        # show net forward progress (a short horizon only sees the leftward dip).
+                        best_plan, progressed, reach = self._micro_search(
+                            expand(obs), obs.progress, early_exit=True,
+                            settle=config.LEARN_HORIZON_FRAMES, level_key=lk)
+                    plan = best_plan
+                    search_calls += 1
+                    if progressed:
+                        # force-overwrite when refreshing a stale entry so the freshest WORKING plan
+                        # replaces the one that just failed verify (else we'd re-search it forever).
+                        self.cache.put(lk, obs.progress, plan, reach, y=ey, force=cached is not None)
+                        tag = "research✓" if cached is not None else "search✓"
+                        action_note = f"{tag} {self._label(plan)}"
+                        reach_str = "→ pipe/area" if reach >= self._TRANSITION_BONUS else f"reach {reach}"
+                        print(f'  [attempt {n}] {obs.progress} 🔍 solved ({reach_str}) — remembered')
+                    elif self.use_llm:
+                        # Genuinely hard: let Billy improvise. Then VERIFY his plan on a clone and, if
+                        # it survives AND progresses, BANK it like a search win — so the next pass
+                        # replays it instead of re-asking the (slow, inconsistent) LLM. This is what
+                        # lets an LLM-cracked wall (e.g. early 1-2) actually compound.
+                        bd = billy.decide(obs, self.kb.retrieve(obs.summary),
+                                          list(self.recent), self.controller)
+                        plan = bd.plan
+                        billy_calls += 1
+                        survived, reach = self._evaluate(plan)
+                        if survived and reach > obs.progress + self._MIN_PROGRESS_PX:
+                            self.cache.put(lk, obs.progress, plan, reach, y=ey, force=cached is not None)
+                            action_note = f"BILLY✓ {self._label(plan)}"
+                            print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}" — '
+                                  f'cracked it (reach {reach}), remembered')
+                        else:
+                            action_note = f"BILLY {self._label(plan)}"
+                            print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}"')
+                    else:
+                        action_note = f"search✗ {self._label(plan)}"   # best-effort, not cached
             elif decision.needs_billy and self.use_llm:
                 # Non-danger escalation (stuck, etc.): consult Billy with KB lessons.
                 bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent), self.controller)

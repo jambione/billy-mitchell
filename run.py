@@ -35,6 +35,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rl", metavar="MODEL", default="",
                    help="use a trained PPO policy (a .zip from train_rl.py) as the reflex tier; "
                         "the hand-crafted reflex remains the fallback at hazards")
+    p.add_argument("--rl-sections", action="store_true",
+                   help="enable hazard-scoped RL sub-policies (e.g. 1-3's platform/lift chain): "
+                        "they SEED micro-search with a learned crossing candidate, which search "
+                        "still verifies and the cache banks — the reflex/cache/search loop is unchanged")
     args = p.parse_args(argv)
 
     config.ensure_dirs()
@@ -54,7 +58,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[run] seeded {len(skills)} transferable skills.")
 
     game = GAMES[args.game]()
-    director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills)
+    sections = None
+    if args.rl_sections:
+        # Lazy import (torch/SB3 only needed with RL). Sub-policies seed micro-search at their
+        # registered hazards; the cache/search/reflex loop is otherwise untouched.
+        from billy.rl.section_policy import SectionController, default_smb_sections
+        sections = SectionController(default_smb_sections())
+    director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills, sections=sections)
     if args.rl:
         # Lazy import so torch/SB3 are only needed when actually using RL. The learned policy
         # becomes the reflex tier; its fallback is the game's hand-crafted reflex, so cache +
