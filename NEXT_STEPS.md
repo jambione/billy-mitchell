@@ -1,5 +1,8 @@
 # Billy Mitchell — Next Steps
 
+The **tactical** near-term list (finish 1-3 → 1-4 → 2-1 + infra). For the **strategic** direction
+(exponential velocity, objective-aware play, and new games like Zelda) see [ROADMAP.md](ROADMAP.md).
+
 Roadmap as of the hazard-scoped RL sub-policy milestone (branch
 `feat/pipe-entry-and-powerup-perception`, commit `9e364d6`).
 
