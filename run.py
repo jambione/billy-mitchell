@@ -17,9 +17,10 @@ from billy.abstractions import BootError
 from billy.director import Director
 from billy.games.smb import SmbGame
 from billy.games.smb_lost import SmbLostGame
+from billy.games.zelda import ZeldaGame
 from billy.knowledge import KnowledgeBase, SkillLibrary
 
-GAMES = {"smb": SmbGame, "smb_lost": SmbLostGame}
+GAMES = {"smb": SmbGame, "smb_lost": SmbLostGame, "zelda": ZeldaGame}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[warn] LM Studio unreachable at {config.LMSTUDIO_BASE_URL} — "
               f"Billy will improvise with fallbacks (load a model to fix).")
     if args.fresh:
-        for f in (config.LESSONS_FILE, config.SOLUTIONS_FILE, config.SKILLS_FILE):
+        for f in (config.LESSONS_FILE, config.SOLUTIONS_FILE, config.SKILLS_FILE,
+                  config.TAPES_FILE):
             if f.exists():
                 f.unlink()
         print("[run] wiped prior lessons + solution cache + skills; Billy starts from scratch.")

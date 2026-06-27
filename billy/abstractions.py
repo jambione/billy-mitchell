@@ -141,7 +141,7 @@ class Game(ABC):
     system: System
 
     @abstractmethod
-    def observe(self, frame: int, ram: bytes) -> Observation: ...
+    def observe(self, frame: int, ram: bytes, rgb=None) -> Observation: ...
 
     @abstractmethod
     def boot(self, session: Session) -> Observation:
@@ -150,3 +150,24 @@ class Game(ABC):
 
     @abstractmethod
     def make_reflex(self) -> ReflexPolicy: ...
+
+    def hazard_hooks(self) -> "HazardHooks":
+        """Optional per-game hazard callbacks (lift zones, pit approaches, etc.)."""
+        from .hazard_hooks import null_hooks
+        return null_hooks()
+
+    def level_cleared(self, prev_key: tuple, new_key: tuple) -> bool:
+        """True when the player finished a major stage (SMB world-stage, Zelda dungeon, etc.).
+
+        Screen/area hops within a stage are NOT clears — see `screen_changed`."""
+        return new_key[:2] > prev_key[:2]
+
+    def screen_changed(self, prev_key: tuple, new_key: tuple) -> bool:
+        """True on an in-run screen/area change that should not count as a level clear."""
+        return prev_key != new_key and not self.level_cleared(prev_key, new_key)
+
+    def search_area_advance(self, start_key: tuple, end_key: tuple) -> bool:
+        """Whether a micro-search rollout 'warped' to a new area (pipe, new Zelda screen, etc.).
+
+        Zelda returns False so exploration progress is measured by `progress` only, not room id."""
+        return end_key > start_key

@@ -20,11 +20,13 @@ from dataclasses import dataclass
 import numpy as np
 
 import stable_retro as retro
+from stable_retro.data import Integrations
 
 from . import controller
 
 RAM_SIZE = 0x800
 _GAME = os.environ.get("BILLY_RETRO_GAME", "SuperMarioBros-Nes-v0")
+_INTTYPE = os.environ.get("BILLY_RETRO_INTTYPE", "").lower()
 
 
 class _Viewer:
@@ -62,19 +64,42 @@ class State:
     frame: int
     ram: bytes
     done: bool = False
+    rgb: object = None   # latest rgb_array frame (optional; Zelda vision uses this)
+
+
+def _resolve_inttype(inttype) -> Integrations:
+    """Map None / env override / string aliases to a stable-retro Integrations value."""
+    if inttype is not None:
+        return inttype
+    if _INTTYPE in ("experimental", "exp"):
+        return Integrations.EXPERIMENTAL
+    if _INTTYPE in ("all",):
+        return Integrations.ALL
+    if _INTTYPE in ("stable",):
+        return Integrations.STABLE
+    return Integrations.STABLE
 
 
 class RetroSession:
     """A stable-retro env presented through the engine's lock-step Session contract."""
 
-    def __init__(self, render: bool | None = None, game: str | None = None) -> None:
+    def __init__(self, render: bool | None = None, game: str | None = None,
+                 inttype=None) -> None:
         # Watchable by default; set BILLY_HEADLESS=1 for fast benchmarks (no window).
         if render is None:
             render = os.environ.get("BILLY_HEADLESS", "0") != "1"
         game = game or _GAME   # integration id: arg > BILLY_RETRO_GAME env > SMB default
+        inttype = _resolve_inttype(inttype)
         # Always render to an offscreen array; WE decide which frames reach the screen, so
         # micro-search frames stay hidden (the live run never visibly rewinds).
-        self.env = retro.make(game, render_mode="rgb_array")
+        try:
+            self.env = retro.make(game, render_mode="rgb_array", inttype=inttype)
+        except FileNotFoundError:
+            if inttype == Integrations.STABLE:
+                self.env = retro.make(game, render_mode="rgb_array",
+                                      inttype=Integrations.EXPERIMENTAL)
+            else:
+                raise
         self._viewer = _Viewer() if render else None
         self._show = render          # True only while executing committed (live) play
         self._realtime = render and os.environ.get("BILLY_TURBO", "0") != "1"
@@ -84,6 +109,7 @@ class RetroSession:
         self._n_buttons = len(self.env.buttons)
         self._frame = 0
         self._ram = bytes(RAM_SIZE)
+        self._rgb: np.ndarray | None = None
         self._slots: dict[int, bytes] = {}
         self._done = False
         self._started = False
@@ -105,6 +131,10 @@ class RetroSession:
         self._done = False
         self._frame = 0
         self._refresh_ram()
+        try:
+            self._rgb = np.asarray(self.env.render())
+        except Exception:
+            self._rgb = None
 
     def wait_until_live(self, timeout_s: float = 180.0) -> None:
         """In-process: the env is live as soon as it's reset. Ensure that has happened."""
@@ -112,7 +142,7 @@ class RetroSession:
             self.reset()
 
     def read_state(self, timeout_s: float | None = None) -> State:
-        return State(frame=self._frame, ram=self._ram, done=self._done)
+        return State(frame=self._frame, ram=self._ram, done=self._done, rgb=self._rgb)
 
     def send_plan(self, plan) -> None:
         """Execute every frame of the plan on the live env, then publish the resulting RAM."""
@@ -168,12 +198,17 @@ class RetroSession:
         else:
             _, _, self._done, _ = result
         self._frame += 1
+        try:
+            self._rgb = np.asarray(self.env.render())
+        except Exception:
+            self._rgb = None
         if self._show and self._viewer is not None:
             self._display()
 
     def _display(self) -> None:
         try:
-            self._viewer.show(np.asarray(self.env.render()))
+            frame = self._rgb if self._rgb is not None else np.asarray(self.env.render())
+            self._viewer.show(frame)
             if self._realtime:
                 time.sleep(1 / 60)
         except Exception:

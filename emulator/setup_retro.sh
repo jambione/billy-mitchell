@@ -26,7 +26,12 @@ if [[ ! -f roms/smb.nes ]]; then
   exit 1
 fi
 
-echo "[setup] importing ROM into stable-retro"
+echo "[setup] importing ROMs into stable-retro"
 .venv/bin/python -m retro.import roms/
+
+if [[ -f roms/zelda.nes ]]; then
+  echo "[setup] Zelda ROM present (uses stable-retro's experimental LegendOfZeldaPRG0-Nes integration)"
+  echo "[setup]   Run:  .venv/bin/python run.py --game zelda --attempts 5 --no-llm"
+fi
 
 echo "[setup] done. Run:  .venv/bin/python run.py --attempts 8"

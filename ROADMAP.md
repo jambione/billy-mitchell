@@ -74,24 +74,19 @@ games. Each game makes the next faster (the cross-game exponential).
 
 ## Phase 3 — The Legend of Zelda (first target: boot + explore + survive)
 
-**3A. Custom integration.** No Zelda integration ships with stable-retro, so author one: import the
-ROM, a minimal `data.json` (RAM vars), `scenario.json`, and `metadata.json` with a boot `.state`
-captured at a controllable start; make the id selectable via `RETRO_GAME` (as
-[billy/games/smb_lost/game.py](billy/games/smb_lost/game.py) does). Extend
-[emulator/setup_retro.sh](emulator/setup_retro.sh). ROM/state gitignored.
+**Status (June 2026):** Adapter in [billy/games/zelda/](billy/games/zelda/); details in
+[billy/games/zelda/STATUS.md](billy/games/zelda/STATUS.md). Boots, 17 tests green, FAQ walkthrough
+wired, NW cave entry works, learning compounded on overworld combat (#72) in earlier runs. **Blocked**
+on start-cave wooden sword pickup (Link stalls at cave y≈141; `current_sword` never flips).
 
-**3B. `games/zelda/` adapter.**
-- `perception.py` — a Zelda RAM decoder (Link x/y, hearts/health, rupees, current screen/room id,
-  on-screen enemies, sword/projectile, exits) → an `Observation` with `level_key=(overworld|dungeon,
-  room)`, `progress`=exploration-novelty, position via `progress`/`elevation`.
-- `reflex.py` — a NEW **top-down** `ReflexPolicy` (not the platformer): move toward unexplored exits,
-  attack enemies ahead, dodge/space to avoid damage, grab drops; implement
-  `step`/`advance_plan`/`danger_candidates` so micro-search + learn-from-death work unchanged.
-- `game.py` + register in `run.py` `GAMES`.
+**3A. Custom integration.** ✅ Experimental stable-retro `LegendOfZeldaPRG0-Nes`; ROM gitignored;
+[emulator/setup_retro.sh](emulator/setup_retro.sh) extended.
 
-**3C. Prove transfer.** Drive Zelda through the SAME director (cache / search / learn-from-death / tape
-+ generalized progress) with **no engine changes**. Milestone: Link explores new screens and survives —
-the genre-agnostic loop proven on a non-platformer.
+**3B. `games/zelda/` adapter.** ✅ perception, reflex, vision, items, walkthrough, curiosity, explore,
+hazard_hooks. Remaining: sword pickup macro, dungeon rooms, cave text.
+
+**3C. Prove transfer.** 🔄 Director + cache work without engine changes. Next: FAQ step 1 (sword) →
+east to sea (#127) → Level 1 entrance.
 
 ## Sequencing & honest scope
 

@@ -24,6 +24,11 @@ class AttemptResult:
     replay_calls: int = 0       # cached hazards replayed for free this attempt (should rise)
     frontier_x: int = 0         # furthest solved x-bucket on the level (should rise)
     frames_to_frontier: int = 0 # frames to re-reach last attempt's furthest x (should fall)
+    # --- learning ledger (visible proof of compounding) ---------------------------------
+    banks: int = 0
+    drops: int = 0
+    learns: int = 0
+    level_frontier: int = 0     # solved px frontier on the furthest level reached
 
 
 def record(result: AttemptResult) -> None:
@@ -48,6 +53,8 @@ def print_curve(results: list[AttemptResult]) -> None:
     print(f"\n🏆 best score: {best_score}   ⏱  fastest clear: {fast_str}   "
           f"most levels: {most}")
     print_compounding_curve(results)
+    from .learning import print_session_learning
+    print_session_learning(results)
 
 
 def print_compounding_curve(results: list[AttemptResult]) -> None:
@@ -56,11 +63,12 @@ def print_compounding_curve(results: list[AttemptResult]) -> None:
     if not results:
         return
     print("\n=== Compounding curve (is the learning actually building?) ===")
-    print(f"{'#':>3} {'search':>7} {'replay':>7} {'frontier_x':>11} {'frames→frontier':>15} {'reached_x':>10}")
+    print(f"{'#':>3} {'search':>7} {'replay':>7} {'bank':>5} {'learn':>5} "
+          f"{'frontier':>8} {'reached_x':>10}")
     for r in results:
-        f2f = r.frames_to_frontier if r.frames_to_frontier else "-"
-        print(f"{r.attempt:>3} {r.search_calls:>7} {r.replay_calls:>7} {r.frontier_x:>11} "
-              f"{str(f2f):>15} {r.max_x:>10}")
+        print(f"{r.attempt:>3} {r.search_calls:>7} {r.replay_calls:>7} "
+              f"{getattr(r, 'banks', 0):>5} {getattr(r, 'learns', 0):>5} "
+              f"{getattr(r, 'level_frontier', r.frontier_x):>8} {r.max_x:>10}")
     first, last = results[0], results[-1]
     verdict = ("✅ compounding: searches↓ replays↑ frontier↑"
                if last.replay_calls >= first.replay_calls and last.frontier_x >= first.frontier_x
