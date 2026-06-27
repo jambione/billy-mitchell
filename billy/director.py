@@ -230,6 +230,15 @@ class Director:
         self._observe()
         return survived, reach
 
+    def _cached_at(self, obs: Observation, *, on_ground: bool, in_special: bool):
+        """Cache lookup; stale entries count as a miss (reflex owns the spot)."""
+        if not (on_ground or in_special):
+            return None
+        cached = self.cache.get(obs.level_key, obs.progress, obs.elevation)
+        if cached is not None and self.hooks.stale_cache(obs, cached):
+            return None
+        return cached
+
     def _candidates(self, obs: Observation) -> list[Plan]:
         """Search candidate set on a cache MISS: the reflex's hand-picked spread, PLUS the
         instantiated plans of the situationally-relevant transferable Skills. Skills only widen the
@@ -475,8 +484,7 @@ class Director:
                 "enemy" in decision.note or "pit" in decision.note or "stuck" in decision.note)
             lk, ey = obs.level_key, obs.elevation
             in_special = self.hooks.in_special_zone(obs)
-            cached = (self.cache.get(lk, obs.progress, ey)
-                      if (on_ground or in_special) else None)
+            cached = self._cached_at(obs, on_ground=on_ground, in_special=in_special)
 
             if (cached is not None or danger or in_special) and obs.progress >= 16:
                 if not self.hooks.stall_break_exempt(obs):
@@ -489,7 +497,7 @@ class Director:
                         frames += 2
                         continue
 
-            if cached is not None and on_ground and not self.hooks.stale_cache(obs, cached):
+            if cached is not None and on_ground:
                 plan = cached.plan
             elif cached is not None or danger or in_special:
                 seg = (self.sections.cross(obs, self.session, self._observe)
@@ -686,8 +694,7 @@ class Director:
             on_ground = getattr(obs.raw, "on_ground", True)
             ey = obs.elevation
             in_special = self.hooks.in_special_zone(obs)
-            cached = (self.cache.get(lk, obs.progress, ey)
-                      if (on_ground or in_special) else None)
+            cached = self._cached_at(obs, on_ground=on_ground, in_special=in_special)
             # x≈0 is a transition artifact (the pipe-entry animation reads x=0 for many frames while
             # uncontrollable), NOT a real spot — don't let it trip the stall-breaker. Level starts at
             # x≈40, so a tiny-x guard is safe and stops the false "stuck at @0" after taking an exit.
@@ -721,7 +728,6 @@ class Director:
             # genuinely dies, record_fail (below) drops it and it re-searches once: self-healing.
             # Set BILLY_VERIFY_REPLAY=1 to gate replays on a clone-check instead.
             do_replay = (cached is not None and on_ground
-                         and not self.hooks.stale_cache(obs, cached)
                          and (not config.VERIFY_REPLAY
                               or self._verify(cached.plan,
                                               max(plan_frames(cached.plan) + 24,

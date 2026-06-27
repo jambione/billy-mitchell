@@ -34,12 +34,17 @@ FAQ first-quest phases encoded as screen IDs (origin grid 8,8 = screen 119):
 - Start cave targets **NW mouth** ~(60, 76), not the north screen edge (#103).
 - After sword: march **east** along row 8 per FAQ (not north through #103 first).
 
-### Reflex (`reflex.py`, `hazard_hooks.py`)
+### Reflex (`reflex.py`, `hazard_hooks.py`, `start_cave.py`)
 
 - Top-down movement, sword combat, screen-edge transitions.
-- **Start-cave state machine** — approach NW → enter → dismiss text (`A`) → walk toward drops.
+- **ROM-verified start-cave macro** (`start_cave.py`) — phase playback: text → climb →
+  pickup (RIGHT → DOWN → DOWN → UP+LEFT → LEFT → A) → exit (long DOWN).
+- Reflex emits one macro step per tick; cave interior is not a special zone during macro
+  (Director uses reflex plan directly). Macro drift falls back to micro-search via
+  `macro_candidates()` in `hazard_hooks.extra_candidates`.
+- **Cave timeout** — after 900 frames without sword, FAQ `east_to_sea` fallback (degraded).
 - Item pickup priority over exploration when no enemies nearby.
-- Cave zones exempt from stall-breaker; expanded micro-search candidates for cave (`A`, `UP`, diagonals).
+- Cave zones exempt from stall-breaker; expanded micro-search candidates for cave.
 
 ### Learning (observed behavior)
 
@@ -49,43 +54,37 @@ FAQ first-quest phases encoded as screen IDs (origin grid 8,8 = screen 119):
   `sword_level` never increments → FAQ `east_to_sea` phase never starts.
 - Cache entries exist for screen-119 cave wander (~118 solutions) but do not solve sword pickup.
 
-## Current blocker (ROM-validated)
+## P0 solved — start-cave wooden sword (June 2026)
 
-Billy reliably:
+Brute-force ROM probing found a reproducible sequence (banked in `start_cave.py`):
 
-1. Approaches NW cave on screen 119
-2. Enters cave interior (mode 11)
-3. Dismisses old-man text (drop type 1 → 2 after `A`)
-4. Climbs from (112, 213) to **(112, 141)**
+1. **Approach:** LEFT 35, UP 25, LEFT 15, UP 15
+2. **Enter:** UP+LEFT 50, LEFT 40, UP+LEFT 40
+3. **Text:** A × 35 (12 frames each)
+4. **Climb:** UP × 18 (4 frames each) → link ≈ (112, 141)
+5. **Sword pickup:** RIGHT 4 → DOWN 8 → DOWN 16 → UP+LEFT 12 → LEFT 12 → A 8 → `sword_level = 1`
+6. **Exit:** DOWN 120 → overworld mode 5
 
-He **cannot**:
+The old item-walk reflex could not reach drops at y=128 (ceiling at y≈141). The pickup trick
+ducks under the lip with RIGHT/DOWN then UP+LEFT into the old man.
 
-- Move above **y ≈ 141** inside the cave (hard ceiling row)
-- Reach displayed drops at **y = 128** (120, 72, 168)
-- Increment `current_sword` @ RAM 1623 in brute-force probing
+**Wired:** reflex phase macro, `macro_candidates()` for Director search, 900-frame cave timeout
+→ FAQ `east_to_sea` fallback. Director treats `stale_cache` as a cache miss (no search storms).
+Pre-sword / in-cave cache on screen 119 is stale so reflex macro owns the route.
 
-Until sword acquisition works (or an alternate success signal is confirmed), Billy cannot
-complete FAQ step 1 or march east to the sea.
+**Validated (June 2026):**
+
+- ROM one-shot: `FULL_FROM_APPROACH` → `sword_level=1`, exit → overworld #119.
+- Unit tests: 24 passing (`test_zelda.py` + `test_start_cave.py`).
+- Director 3×25k frames: search 8→1→1, replay 1683→1690, frontier 2208px; still times out on
+  #119 before screen #120 in the frame cap (live phase playback slower than one-shot macro).
 
 ## Path forward (priority order)
 
-### P0 — Solve start-cave sword (unblocks everything)
+### P1 — East march & learning compounding
 
-1. **ROM probe** — confirm stable-retro cave interior matches retail (old-man room vs wrong template).
-   Check `start.state` and whether `current_sword` is the correct field.
-2. **Scripted macro** — bank a verified frame-perfect sequence in `start_cave.py` once found:
-   enter → text dismiss → climb path above y=141 (if one exists).
-3. **Micro-search in cave** — Director already treats cave as special zone; ensure search banks
-   any plan that increases `objective_score` or flips sword RAM.
-4. **Alternate success signal** — if sword RAM never moves, detect pickup via `screen_item`,
-   `dungeon_item`, or post-cave `B` button slash; relax `requires_start_cave_inspection` gate.
-5. **Pragmatic timeout** — after N frames in cave without sword, log + allow FAQ `east_to_sea`
-   (degraded path; Billy fights without sword until revisit).
-
-### P1 — Item loop & learning compounding
-
-- Finish pickup collision (walk RIGHT along y=141 row, then UP if path opens).
-- Bank cave macro in `data/solutions.jsonl` → attempt N+1 replays for free.
+- Tune live cave exit (continue DOWN until `in_cave` clears); raise frame cap or bank full macro.
+- Confirm overworld #120+ after sword in multi-attempt runs without `--fresh`.
 - Re-enable overworld exploration learning (combat on #72+ was working).
 
 ### P2 — FAQ milestones after sword
@@ -123,6 +122,7 @@ BILLY_HEADLESS=1 BILLY_MAX_FRAMES=5000 .venv/bin/python run.py --game zelda --at
 | `walkthrough.py` | FAQ route phases & screen grid |
 | `curiosity.py` | Cave approach & inspection gates |
 | `explore.py` | Direction scoring with FAQ priority |
-| `reflex.py` | Live policy + cave interior FSM |
+| `reflex.py` | Live policy + cave macro playback |
+| `start_cave.py` | ROM-verified wooden sword macro |
 | `hazard_hooks.py` | Combat/cave zones for Director |
 | `tuning.py` | Constants (START_SCREEN=119, etc.) |

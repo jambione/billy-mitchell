@@ -15,6 +15,7 @@ from .tuning import (
     SCREEN_WEST,
     START_SCREEN,
 )
+from .start_cave import cave_quest_active
 from .walkthrough import (
     LEVEL_1_STAIRS,
     NORTH_CAVE_CHAIN,
@@ -55,15 +56,17 @@ def requires_start_cave_inspection(
     *,
     sword_level: int = 0,
     in_cave: bool = False,
+    cave_gave_up: bool = False,
+    cave_frames: int = 0,
 ) -> bool:
     """On the start screen, enter the NW cave for the wooden sword (FAQ step 1)."""
-    if here != START_SCREEN:
+    if not cave_quest_active(
+            here, sword_level, in_cave=in_cave,
+            cave_frames=cave_frames, cave_gave_up=cave_gave_up):
         return False
-    if sword_level >= 1:
+    if here != START_SCREEN and not in_cave:
         return False
-    if in_cave:
-        return True
-    return True
+    return here == START_SCREEN
 
 
 def start_cave_inspection_action(
@@ -129,6 +132,8 @@ def curious_exit(
     in_cave: bool = False,
     link_x: int = 0,
     link_y: int = 0,
+    cave_gave_up: bool = False,
+    cave_frames: int = 0,
 ) -> tuple[int, str, int] | None:
     """Return (button, label, dest) when curiosity or the FAQ has a strong target."""
     faq = route_step(
@@ -139,12 +144,15 @@ def curious_exit(
         in_cave=in_cave,
         link_x=link_x,
         link_y=link_y,
+        cave_gave_up=cave_gave_up,
+        cave_frames=cave_frames,
     )
     if faq is not None:
         return faq.button, faq.label, faq.dest
 
     if requires_start_cave_inspection(
-            here, visited, recent, sword_level=sword_level, in_cave=in_cave):
+            here, visited, recent, sword_level=sword_level, in_cave=in_cave,
+            cave_gave_up=cave_gave_up, cave_frames=cave_frames):
         return start_cave_inspection_action(link_x, link_y, cave_mouths=cave_mouths)
 
     blocked = BLOCKED_NEIGHBORS.get(here, frozenset())

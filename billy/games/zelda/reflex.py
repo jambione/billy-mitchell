@@ -17,8 +17,14 @@ from .curiosity import (
     start_cave_inspection_action,
 )
 from .explore import pick_explore_direction
-from .items import walk_toward
 from .perception import Scene
+from .start_cave import (
+    cave_attempt_exhausted,
+    cave_quest_active,
+    has_wooden_sword,
+    interior_phase,
+    phase_plan,
+)
 from .tuning import (
     ATTACK_RANGE,
     BACKTRACK_MEMORY,
@@ -27,8 +33,8 @@ from .tuning import (
     STUCK_FRAMES,
 )
 
-CAVE_TEXT_FRAMES = 120
 ITEM_PICKUP_RANGE = 12
+CAVE_MACRO_STUCK_FRAMES = 180
 
 
 def _walk(button: int, frames: int = REFLEX_FRAMES) -> Plan:
@@ -85,10 +91,13 @@ class ZeldaReflex(ReflexPolicy):
         self._commit_btn: int | None = None
         self._commit_label: str = ""
         self._last_scene: Scene | None = None
-        self._cave_text_frames = 0
         self._last_sword_level = 0
-        self._cave_stuck_pos: tuple[int, int] | None = None
-        self._cave_stuck_tries = 0
+        self._cave_frames = 0
+        self._cave_gave_up = False
+        self._macro_phase = ""
+        self._macro_idx = 0
+        self._macro_stuck_frames = 0
+        self._macro_last_progress = 0
 
     def reset(self, obs: Observation) -> None:
         self._best = obs.progress
@@ -98,10 +107,13 @@ class ZeldaReflex(ReflexPolicy):
         self._recent_screens.append(obs.raw.map_location)
         self._commit_btn = None
         self._last_scene = None
-        self._cave_text_frames = 0
         self._last_sword_level = obs.raw.sword_level
-        self._cave_stuck_pos = None
-        self._cave_stuck_tries = 0
+        self._cave_frames = 0
+        self._cave_gave_up = False
+        self._macro_phase = ""
+        self._macro_idx = 0
+        self._macro_stuck_frames = 0
+        self._macro_last_progress = obs.progress
 
     def note_level_advance(self, obs: Observation) -> None:
         self._best = obs.progress
@@ -111,11 +123,18 @@ class ZeldaReflex(ReflexPolicy):
 
     def advance_plan(self, obs: Observation) -> Plan:
         scene: Scene = obs.raw
+        if scene.in_cave and not self._cave_gave_up:
+            phase = interior_phase(scene)
+            plan = phase_plan(phase)
+            if plan:
+                idx = min(self._macro_idx, len(plan) - 1)
+                return [plan[idx]]
         visited = set(scene.visited_screens)
         btn, _, _ = pick_explore_direction(
             scene.map_location, visited, recent=self._recent_screens,
             sword_level=scene.sword_level, max_hearts=scene.max_hearts,
-            in_cave=scene.in_cave, link_x=scene.link_x, link_y=scene.link_y)
+            in_cave=scene.in_cave, link_x=scene.link_x, link_y=scene.link_y,
+            cave_gave_up=self._cave_gave_up, cave_frames=self._cave_frames)
         return _walk(btn, REFLEX_FRAMES)
 
     def danger_candidates(self, obs: Observation) -> list[Plan]:
@@ -147,53 +166,62 @@ class ZeldaReflex(ReflexPolicy):
             return Decision(_walk(c.UP, hold), note=f"edge-transition {label}")
         return None
 
-    def _cave_interior_step(self, scene: Scene) -> Decision | None:
-        """FAQ start cave (screen 119 / mode 11).
+    def _track_cave_timeout(self, scene: Scene, obs: Observation) -> None:
+        if cave_quest_active(
+                scene.map_location, scene.sword_level, in_cave=scene.in_cave,
+                cave_frames=self._cave_frames, cave_gave_up=self._cave_gave_up):
+            self._cave_frames += REFLEX_FRAMES
+            if cave_attempt_exhausted(self._cave_frames, scene.sword_level):
+                self._cave_gave_up = True
+                self._macro_phase = ""
+                self._macro_idx = 0
 
-        Sequence: mash A until text done (drop type ≥ 2) → climb UP → walk toward
-        ground items. Known ROM ceiling at link_y≈141 blocks sword pickup today;
-        see STATUS.md P0.
-        """
+    def _cave_interior_step(self, scene: Scene, obs: Observation) -> Decision | None:
+        """ROM-verified start cave macro (start_cave.py): text → climb → pickup → exit."""
         if not scene.in_cave:
-            self._cave_text_frames = 0
+            self._macro_phase = ""
+            self._macro_idx = 0
+            self._macro_stuck_frames = 0
             return None
 
-        if scene.link_y >= 180:
-            self._cave_text_frames += REFLEX_FRAMES
-            if self._cave_text_frames < CAVE_TEXT_FRAMES:
-                return Decision(_walk(c.A, REFLEX_FRAMES), note="cave-dismiss-text")
-            self._cave_text_frames = CAVE_TEXT_FRAMES
+        if self._cave_gave_up:
+            return None
 
-        item = scene.nearest_ground_item(within=96)
-        if item is not None:
-            dx, dy, ground = item
-            if abs(dx) + abs(dy) <= ITEM_PICKUP_RANGE:
-                return Decision(_walk(c.NEUTRAL, REFLEX_FRAMES), note=f"cave-loot@{ground.x},{ground.y}")
-            pos = (scene.link_x, scene.link_y)
-            if self._cave_stuck_pos == pos:
-                self._cave_stuck_tries += 1
-            else:
-                self._cave_stuck_pos = pos
-                self._cave_stuck_tries = 0
-            if self._cave_stuck_tries >= 3 and scene.link_y > ground.y:
-                btn = c.RIGHT if dx > 0 else c.LEFT
-                self._cave_stuck_tries = 0
-            elif scene.link_y > ground.y + 8 and abs(dx) >= 4:
-                btn = c.RIGHT if dx > 0 else c.LEFT
-            else:
-                btn = walk_toward(dx, dy)
-                if btn == c.DOWN:
-                    btn = c.RIGHT if dx > 0 else c.LEFT
-            return Decision(_walk(btn, REFLEX_FRAMES), note=f"cave-walk-item ({dx},{dy})")
+        self._track_cave_timeout(scene, obs)
 
-        if scene.sword_level > self._last_sword_level:
+        if has_wooden_sword(scene.sword_level):
             self._last_sword_level = scene.sword_level
-            return Decision(_walk(c.UP, REFLEX_FRAMES * 4), note="cave-exit-after-sword")
 
-        if scene.link_y > 150:
-            return Decision(_walk(c.UP, REFLEX_FRAMES), note="cave-walk-up")
+        phase = interior_phase(scene)
+        if phase == "overworld":
+            return None
 
-        return Decision(_walk(c.UP, REFLEX_FRAMES), note="cave-explore")
+        plan = phase_plan(phase)
+        if phase != self._macro_phase:
+            self._macro_phase = phase
+            self._macro_idx = 0
+            self._macro_stuck_frames = 0
+            self._macro_last_progress = obs.progress
+
+        if obs.progress <= self._macro_last_progress:
+            self._macro_stuck_frames += REFLEX_FRAMES
+        else:
+            self._macro_stuck_frames = 0
+            self._macro_last_progress = obs.progress
+
+        if self._macro_stuck_frames >= CAVE_MACRO_STUCK_FRAMES:
+            return Decision([], needs_billy=True, note="cave-macro-stuck")
+
+        if self._macro_idx >= len(plan):
+            if phase == "exit":
+                if scene.in_cave:
+                    return Decision([Step(16, c.DOWN)], note="cave-macro-exit-continue")
+                return None
+            self._macro_idx = 0
+
+        step = plan[self._macro_idx]
+        self._macro_idx += 1
+        return Decision([step], note=f"cave-macro-{phase}")
 
     def step(self, obs: Observation) -> Decision:
         scene: Scene = obs.raw
@@ -209,7 +237,7 @@ class ZeldaReflex(ReflexPolicy):
             self._last_scene = scene
             return Decision([], needs_billy=True, note=f"enemy damage ({scene.health} hearts)")
 
-        cave_step = self._cave_interior_step(scene)
+        cave_step = self._cave_interior_step(scene, obs)
         if cave_step is not None:
             self._last_scene = scene
             return cave_step
@@ -227,7 +255,8 @@ class ZeldaReflex(ReflexPolicy):
         mouths = scene.cave_mouths
         inspecting_cave = requires_start_cave_inspection(
             scene.map_location, visited, self._recent_screens,
-            sword_level=scene.sword_level, in_cave=scene.in_cave)
+            sword_level=scene.sword_level, in_cave=scene.in_cave,
+            cave_gave_up=self._cave_gave_up, cave_frames=self._cave_frames)
 
         if inspecting_cave:
             if needs_cave_approach(scene.map_location, scene.link_x, scene.link_y,
@@ -278,7 +307,8 @@ class ZeldaReflex(ReflexPolicy):
                 recent=self._recent_screens, prefer_dungeons=prefer_dungeons,
                 cave_mouths=mouths, sword_level=scene.sword_level,
                 max_hearts=scene.max_hearts, in_cave=scene.in_cave,
-                link_x=scene.link_x, link_y=scene.link_y)
+                link_x=scene.link_x, link_y=scene.link_y,
+                cave_gave_up=self._cave_gave_up, cave_frames=self._cave_frames)
             self._commit_btn, self._commit_label = btn, label
         else:
             btn, label, dest = self._commit_btn, self._commit_label, scene.map_location

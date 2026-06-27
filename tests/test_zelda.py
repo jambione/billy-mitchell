@@ -160,6 +160,40 @@ def test_objective_score_weights_exploration():
     assert s2.objective_score() > base
 
 
+def test_zelda_stale_cache_before_sword():
+    hooks = ZeldaHazardHooks()
+    ram = bytearray(0x800)
+    ram[18] = 5
+    ram[16] = 0
+    ram[235] = 119
+    ram[1647] = 0x22
+    ram[112] = 120
+    ram[132] = 141
+    scene = build_scene(bytes(ram))
+    from billy.abstractions import Observation, Step
+    from billy.knowledge.cache import CacheEntry
+    obs = Observation(
+        frame=1, progress=500, score=0, level_label=scene.room_label,
+        level_key=("overworld", 119), dead=False, summary="", ascii_map="",
+        raw=scene, elevation=scene.link_y)
+    cached = CacheEntry(plan=[Step(8, c.LEFT)], reach_after=600)
+    assert hooks.stale_cache(obs, cached)
+    ram[1623] = 1
+    scene2 = build_scene(bytes(ram))
+    obs2 = Observation(
+        frame=1, progress=1500, score=0, level_label=scene2.room_label,
+        level_key=("overworld", 119), dead=False, summary="", ascii_map="",
+        raw=scene2, elevation=scene2.link_y)
+    assert not hooks.stale_cache(obs2, cached)
+    ram[18] = 11
+    scene3 = build_scene(bytes(ram))
+    obs3 = Observation(
+        frame=1, progress=1500, score=0, level_label=scene3.room_label,
+        level_key=("overworld", 119), dead=False, summary="", ascii_map="",
+        raw=scene3, elevation=scene3.link_y)
+    assert hooks.stale_cache(obs3, cached)
+
+
 def test_zelda_hazard_hooks_combat_zone():
     hooks = ZeldaHazardHooks()
     ram = bytearray(0x800)

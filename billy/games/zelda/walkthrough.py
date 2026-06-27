@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ...systems.nes import controller as c
+from .start_cave import cave_quest_active
 from .tuning import (
     SCREEN_EAST,
     SCREEN_NORTH,
@@ -70,9 +71,13 @@ def current_phase(
     max_hearts: int,
     visited: set[int],
     in_cave: bool,
+    cave_gave_up: bool = False,
+    cave_frames: int = 0,
 ) -> str:
     """Highest-priority FAQ milestone Billy is working on."""
-    if sword_level == 0 or (map_location == START_SCREEN and in_cave):
+    if cave_quest_active(
+            map_location, sword_level, in_cave=in_cave,
+            cave_frames=cave_frames, cave_gave_up=cave_gave_up):
         return "wooden_sword"
     gx, gy = screen_to_grid(map_location)
     if (SEA_EAST_SCREEN not in visited and gy == 8
@@ -94,6 +99,8 @@ def route_step(
     in_cave: bool,
     link_x: int,
     link_y: int,
+    cave_gave_up: bool = False,
+    cave_frames: int = 0,
 ) -> RouteStep | None:
     """Return the FAQ route direction when we have a clear next step."""
     phase = current_phase(
@@ -102,6 +109,8 @@ def route_step(
         max_hearts=max_hearts,
         visited=visited,
         in_cave=in_cave,
+        cave_gave_up=cave_gave_up,
+        cave_frames=cave_frames,
     )
 
     if phase == "wooden_sword":
@@ -170,6 +179,8 @@ def phase_summary(
     max_hearts: int,
     visited: set[int],
     in_cave: bool,
+    cave_gave_up: bool = False,
+    cave_frames: int = 0,
 ) -> str:
     phase = current_phase(
         map_location=map_location,
@@ -177,6 +188,8 @@ def phase_summary(
         max_hearts=max_hearts,
         visited=visited,
         in_cave=in_cave,
+        cave_gave_up=cave_gave_up,
+        cave_frames=cave_frames,
     )
     labels = {
         "wooden_sword": "FAQ: wooden sword (NW cave)",

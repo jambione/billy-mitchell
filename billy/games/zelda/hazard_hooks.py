@@ -16,7 +16,15 @@ class ZeldaHazardHooks:
 
     def in_special_zone(self, obs: Observation) -> bool:
         scene = obs.raw
-        return scene.enemy_count() > 0 or scene.scrolling or scene.in_cave
+        if scene.enemy_count() > 0 or scene.scrolling:
+            return True
+        if scene.in_cave:
+            from .start_cave import has_wooden_sword, interior_phase
+            if not has_wooden_sword(scene.sword_level):
+                phase = interior_phase(scene)
+                if phase in ("text", "climb", "pickup", "exit"):
+                    return False
+        return scene.in_cave
 
     def stall_break_exempt(self, obs: Observation) -> bool:
         scene = obs.raw
@@ -38,6 +46,17 @@ class ZeldaHazardHooks:
         return False
 
     def stale_cache(self, obs: Observation, cached) -> bool:
+        if cached is None:
+            return False
+        from .start_cave import has_wooden_sword
+        from .tuning import START_SCREEN
+        scene = obs.raw
+        if scene.map_location != START_SCREEN:
+            return False
+        # Cave interior + pre-sword overworld: reflex macro owns the route; cached
+        # item-walk / partial interior plans from earlier runs loop forever.
+        if scene.in_cave or not has_wooden_sword(scene.sword_level):
+            return True
         return False
 
     def pit_death(self, level_label: str, death_x: int) -> bool:
@@ -77,8 +96,12 @@ class ZeldaHazardHooks:
     def extra_candidates(self, obs: Observation) -> list[Plan]:
         from ...systems.nes import controller as c
         from .reflex import combat_candidates, _walk
+        from .start_cave import has_wooden_sword, macro_candidates
         scene = obs.raw
-        out = combat_candidates(obs)
+        out: list[Plan] = []
+        if scene.in_cave and not has_wooden_sword(scene.sword_level):
+            out.extend(macro_candidates())
+        out.extend(combat_candidates(obs))
         if scene.in_cave or scene.item_count() > 0:
             out.extend([
                 _walk(c.UP, 24),

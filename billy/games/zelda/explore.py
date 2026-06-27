@@ -45,6 +45,8 @@ def pick_explore_direction(
     in_cave: bool = False,
     link_x: int = 0,
     link_y: int = 0,
+    cave_gave_up: bool = False,
+    cave_frames: int = 0,
 ) -> tuple[int, str, int]:
     """Return (button, label, dest_screen) with anti-oscillation and dungeon bias.
 
@@ -57,7 +59,8 @@ def pick_explore_direction(
       5. Default east
     """
     if use_curiosity and requires_start_cave_inspection(
-            here, visited, recent, sword_level=sword_level, in_cave=in_cave):
+            here, visited, recent, sword_level=sword_level, in_cave=in_cave,
+            cave_gave_up=cave_gave_up, cave_frames=cave_frames):
         from .curiosity import start_cave_inspection_action
         return start_cave_inspection_action(link_x, link_y, cave_mouths=cave_mouths)
 
@@ -65,7 +68,8 @@ def pick_explore_direction(
         curious = curious_exit(
             here, visited, cave_mouths=cave_mouths, recent=recent,
             sword_level=sword_level, max_hearts=max_hearts, in_cave=in_cave,
-            link_x=link_x, link_y=link_y)
+            link_x=link_x, link_y=link_y,
+            cave_gave_up=cave_gave_up, cave_frames=cave_frames)
         if curious is not None:
             return curious
 
