@@ -15,6 +15,7 @@ ROMS_DIR = REPO_ROOT / "roms"
 DATA_DIR = REPO_ROOT / "data"              # lessons.jsonl, solutions.jsonl, metrics
 LESSONS_FILE = DATA_DIR / "lessons.jsonl"
 SOLUTIONS_FILE = DATA_DIR / "solutions.jsonl"   # position-keyed solution cache (the policy)
+TAPES_FILE = DATA_DIR / "tapes.jsonl"           # whole-trajectory level replays (search→0)
 SKILLS_FILE = DATA_DIR / "skills.jsonl"         # transferable abstract tactics (cross-game)
 METRICS_FILE = DATA_DIR / "metrics.jsonl"
 
@@ -78,6 +79,11 @@ VERIFY_REPLAY = os.environ.get("BILLY_VERIFY_REPLAY", "0") == "1"
 EXPANDED_FALLBACK = (os.environ.get("BILLY_EXPANDED_FALLBACK",
                                     os.environ.get("BILLY_EXPANDED_SEARCH", "1")) == "1")
 EXPANDED_SEARCH = EXPANDED_FALLBACK   # back-compat alias
+
+# --- Auto-Stuck Trainer (closed-loop self-improvement) ----------------------------------
+AUTO_TRAIN = os.environ.get("BILLY_AUTO_TRAIN", "1") == "1"
+STUCK_DEATH_THRESHOLD = int(os.environ.get("BILLY_STUCK_DEATHS", "4"))
+STUCK_SECTION_TRAIN = os.environ.get("BILLY_STUCK_SECTION_TRAIN", "1") == "1"
 
 
 def ensure_dirs() -> None:

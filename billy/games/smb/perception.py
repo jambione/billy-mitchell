@@ -108,6 +108,19 @@ class Scene:
     def world_stage(self) -> str:
         return f"{self.world + 1}-{self.stage + 1}"
 
+    def pipe_entry_spot(self, max_tiles: int = 2) -> int | None:
+        """Mario can enter a vertical pipe here (1-2 exit, warp zone → 4/5/6). Returns px to
+        align (0 = centred); None if no pipe mouth detected. x may stall while ducking — not stuck."""
+        if not self.on_ground:
+            return None
+        above = self.block_above_ahead(max_tiles=max_tiles)
+        if above is not None:
+            return above
+        wall = self.obstacle_ahead(max_tiles=1)
+        if wall and wall[0] <= 16 and wall[1] >= 2:
+            return wall[0]
+        return None
+
     def block_above_ahead(self, max_tiles: int = 2) -> int | None:
         """A floating, bonkable block (? block or brick) just ahead: a solid tile up at head
         height with open space beneath it (so it's not a wall/pipe). Returns dist_px or None.

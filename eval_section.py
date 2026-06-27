@@ -19,13 +19,18 @@ def main() -> int:
     p.add_argument("--goal-x", type=int, default=700)
     p.add_argument("--episodes", type=int, default=30)
     p.add_argument("--stochastic", action="store_true", help="sample actions (default: deterministic)")
+    p.add_argument("--landing-waits", type=int, default=0)
+    p.add_argument("--randomize-frames", type=int, default=36)
+    p.add_argument("--start-x", type=int, default=126)
+    p.add_argument("--back-x", type=int, default=80)
     args = p.parse_args()
 
     from stable_baselines3 import PPO
 
     from billy.rl.section_env import SECTION_ACTIONS, SectionEnv
 
-    env = SectionEnv(args.state, goal_x=args.goal_x)
+    env = SectionEnv(args.state, goal_x=args.goal_x, landing_waits=args.landing_waits,
+                     randomize_frames=args.randomize_frames, start_x=args.start_x, back_x=args.back_x)
     model = PPO.load(args.model, device="cpu")
     crosses, reaches = 0, []
     for ep in range(args.episodes):

@@ -16,10 +16,13 @@ Degrades to a no-op if torch/SB3 or the model file is missing (reflex-only build
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 _DEBUG = os.environ.get("BILLY_DEBUG_SECTION", "0") == "1"
+_LIFT_CACHE_PLAN = Path("data/rl/lift_cached.plan.json")
 
 from ..abstractions import Observation, Plan, Step
 from ..systems.nes import controller as C
@@ -35,6 +38,7 @@ class Section:
     goal_x: int          # stop the rollout once across (matches the training goal)
     model_path: str
     max_steps: int = 64  # cap the closed-loop rollout (each step = one held action)
+    landing_waits: int = 0   # post-goal noop waits so airborne crossings land before commit
 
 
 class SectionController:
@@ -72,6 +76,53 @@ class SectionController:
 
     _MIN_GAIN = 40   # only commit a crossing that makes real forward progress
 
+    def _try_cached_plan(self, sec: Section, obs: Observation, session, observe):
+        """Replay a banked frame-level plan (solution cache / lift bootstrap) on a clone."""
+        from ..knowledge.cache import SolutionCache
+
+        plans: list[Plan] = []
+        cache = SolutionCache()
+        entry = cache.get(obs.level_key, obs.progress, obs.elevation)
+        if entry and entry.reach_after > obs.progress + self._MIN_GAIN:
+            plans.append(entry.plan)
+        if _LIFT_CACHE_PLAN.is_file() and "lift" in sec.model_path:
+            try:
+                raw = json.loads(_LIFT_CACHE_PLAN.read_text())
+                plans.append([Step(f, b) for f, b in raw["plan"]])
+            except Exception:
+                pass
+        if not plans:
+            return None
+        snap = session.clone_state()
+        best: tuple[Plan, int] | None = None
+        with session.search_mode():
+            for plan in plans:
+                session.restore(snap)
+                cur = obs
+                for step in plan:
+                    if cur.dead or cur.progress >= sec.goal_x:
+                        break
+                    session.send_plan([step])
+                    cur = observe()
+                for _ in range(24):
+                    if cur.dead or cur.progress >= sec.goal_x:
+                        break
+                    session.send_plan([Step(4, C.mask(C.RIGHT, C.B))])
+                    cur = observe()
+                if not cur.dead and cur.progress > obs.progress + self._MIN_GAIN:
+                    ok = True
+                    if "lift" in sec.model_path:
+                        try:
+                            from ..games.smb.lift_search import lift_cacheable
+                            ok = lift_cacheable(cur.progress)
+                        except ImportError:
+                            pass
+                    if ok and (best is None or cur.progress > best[1]):
+                        best = (plan, cur.progress)
+        session.restore(snap)
+        observe()
+        return best
+
     def cross(self, obs: Observation, session, observe):
         """If Billy is at a registered hazard, roll the sub-policy out CLOSED-LOOP on a clone and,
         if it survives and makes real forward progress, return (plan, reach). This rollout IS the
@@ -85,6 +136,9 @@ class SectionController:
         if match is None:
             return None
         sec, model = match
+        cached = self._try_cached_plan(sec, obs, session, observe)
+        if cached is not None:
+            return cached
         snap = session.clone_state()
         plan: list[Step] = []
         reach = obs.progress
@@ -102,9 +156,55 @@ class SectionController:
                 plan.append(step)
                 cur = observe()
                 reach = max(reach, cur.progress)
+            # Tree-top crossings often end mid-arc; coast with waits so Mario lands on the
+            # long platform before we bank the sequence (else the live replay falls into the pit).
+            if not dying and sec.landing_waits and cur.progress >= sec.goal_x:
+                for _ in range(sec.landing_waits):
+                    step = Step(4, C.mask_from_names([]))
+                    session.send_plan([step])
+                    plan.append(step)
+                    cur = observe()
+                    reach = max(reach, cur.progress)
+                    if cur.dead:
+                        dying = True
+                        break
+                    if getattr(cur.raw, "on_ground", False):
+                        break
+        # Lift section: coast after rollout so a mid-arc crossing can land alive past the pit.
+        if not dying and "lift" in sec.model_path:
+            for _ in range(24):
+                step = Step(4, C.mask_from_names([]))
+                session.send_plan([step])
+                plan.append(step)
+                cur = observe()
+                reach = max(reach, cur.progress)
+                if cur.dead:
+                    dying = True
+                    break
+            if not dying:
+                for _ in range(24):
+                    step = Step(4, C.mask_from_names(["right", "B"]))
+                    session.send_plan([step])
+                    plan.append(step)
+                    cur = observe()
+                    reach = max(reach, cur.progress)
+                    if cur.dead:
+                        dying = True
+                        break
         session.restore(snap)                  # leave the live state exactly as we found it
         observe()
-        ok = (not dying) and plan and reach > obs.progress + self._MIN_GAIN
+        landed = not sec.landing_waits or getattr(cur.raw, "on_ground", True)
+        ok = (not dying) and landed and plan and reach > obs.progress + self._MIN_GAIN
+        if ok and "lift" in sec.model_path:
+            try:
+                from ..games.smb.lift_search import lift_cacheable, verified_alive
+                ok = lift_cacheable(reach)
+                if ok and plan:
+                    vok, vreach = verified_alive(session, observe, plan, goal_x=sec.goal_x)
+                    ok = vok
+                    reach = max(reach, vreach)
+            except ImportError:
+                pass
         if _DEBUG:
             print(f"[section] fired @{obs.level_label} x={obs.progress} -> {len(plan)} steps, "
                   f"reach={reach}, dying={dying}, commit={bool(ok)}", flush=True)
@@ -112,8 +212,16 @@ class SectionController:
 
 
 def default_smb_sections() -> list[Section]:
-    """The hazards we've trained sub-policies for. 1-3's tree-top platform/lift chain (x~120-700)."""
-    return [
+    """Hazard-scoped sub-policies wired into Billy's section controller."""
+    sections = [
+        # Tree-top platform hops (x~120-700). landing_waits: land on the long platform past it.
         Section(label="1-3", x_lo=100, x_hi=560, goal_x=700,
-                model_path="data/rl/section_1_3"),
+                model_path="data/rl/section_1_3", landing_waits=8),
     ]
+    # Moving-lift gap (x~700-860 → goal past the lift). Model is optional — if missing or
+    # unloadable the controller degrades to search-only at this band (see SectionController._load).
+    lift = Section(label="1-3", x_lo=560, x_hi=860, goal_x=900,
+                   model_path="data/rl/section_1_3_lift", max_steps=96, landing_waits=2)
+    if os.path.isfile(f"{lift.model_path}.zip") or os.path.isfile(lift.model_path):
+        sections.append(lift)
+    return sections

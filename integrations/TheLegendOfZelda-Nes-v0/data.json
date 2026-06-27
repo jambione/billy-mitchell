@@ -1,0 +1,40 @@
+{
+  "info": {
+    "health": {
+      "address": 102,
+      "type": "|u1"
+    },
+    "max_health": {
+      "address": 103,
+      "type": "|u1"
+    },
+    "rupees": {
+      "address": 108,
+      "type": "|u1"
+    },
+    "bombs": {
+      "address": 66,
+      "type": "|u1"
+    },
+    "link_x": {
+      "address": 134,
+      "type": "|u1"
+    },
+    "link_y": {
+      "address": 152,
+      "type": "|u1"
+    },
+    "map_x": {
+      "address": 104,
+      "type": "|u1"
+    },
+    "map_y": {
+      "address": 105,
+      "type": "|u1"
+    },
+    "game_state": {
+      "address": 245,
+      "type": "|u1"
+    }
+  }
+}

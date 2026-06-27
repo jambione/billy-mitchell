@@ -18,7 +18,7 @@ class SmbGame(Game):
         # so the engine never sees the 0xFFFF overflow (x=65535 / "256-256" garbage).
         self._last_good: tuple[int, str, tuple] = (0, "1-1", (0, 0, 0))
 
-    def observe(self, frame: int, ram: bytes) -> Observation:
+    def observe(self, frame: int, ram: bytes, rgb=None) -> Observation:
         s = build_scene(ram, frame)
         if s.in_play:
             # level_key includes the AREA (0x0760): a level like 1-2 has multiple areas joined by
@@ -45,6 +45,10 @@ class SmbGame(Game):
 
     def make_reflex(self) -> ReflexPolicy:
         return SmbReflex()
+
+    def hazard_hooks(self):
+        from .hazard_hooks import SmbHazardHooks
+        return SmbHazardHooks()
 
     def boot(self, session: Session) -> Observation:
         """Bring the game to a controllable in-play state and return the first observation.

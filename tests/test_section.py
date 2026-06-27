@@ -16,7 +16,7 @@ from billy.rl.section_policy import (  # noqa: E402
 
 def test_section_actions_wellformed():
     """Every action is (button-names tuple, positive hold-frames); jumps hold A for an arc."""
-    assert N_SECTION_ACTIONS == len(SECTION_ACTIONS) >= 4
+    assert N_SECTION_ACTIONS == len(SECTION_ACTIONS) >= 7
     for names, hold in SECTION_ACTIONS:
         assert isinstance(names, tuple)
         assert isinstance(hold, int) and hold > 0
@@ -27,6 +27,8 @@ def test_section_actions_wellformed():
 def test_default_sections_cover_1_3():
     secs = default_smb_sections()
     assert any(s.label == "1-3" and s.x_lo < s.goal_x for s in secs)
+    tree = [s for s in secs if s.model_path.endswith("section_1_3") and s.x_hi <= 600]
+    assert tree and tree[0].landing_waits > 0
 
 
 def test_controller_degrades_without_model():
@@ -47,6 +49,24 @@ def test_controller_degrades_without_model():
     # No registered model -> never matches, never touches the session.
     assert ctrl._match(_Obs()) is None
     assert ctrl.cross(_Obs(), session=None, observe=None) is None
+
+
+def test_section_env_landing_waits():
+    """Airborne savestates can land with landing_waits before the first policy step."""
+    import os
+    state = "data/rl/states/smb_1_3_lift.state"
+    if not os.path.isfile(state):
+        return
+    from billy.rl.section_env import SectionEnv
+    env0 = SectionEnv(state, goal_x=900, landing_waits=0, randomize_frames=0)
+    obs0, _ = env0.reset()
+    x0 = env0._observe().progress
+    env0.close()
+    env1 = SectionEnv(state, goal_x=900, landing_waits=1, randomize_frames=0)
+    obs1, _ = env1.reset()
+    x1 = env1._observe().progress
+    env1.close()
+    assert x1 >= x0
 
 
 def test_match_respects_label_range_and_ground():

@@ -21,19 +21,23 @@ STATE = "data/rl/states/smb_1_3_section.state"
 GOAL_X = 700
 
 
-def make_env(state: str, goal_x: int, seed: int = 0):
+def make_env(state: str, goal_x: int, seed: int = 0, *, landing_waits: int = 0,
+             randomize_frames: int = 36, max_steps: int = 220, start_x: int = 126,
+             back_x: int = 80, milestones: tuple[tuple[int, float], ...] = ((300, 20.0), (500, 50.0))):
     from billy.rl.section_env import SectionEnv
 
     def _init():
-        env = SectionEnv(state, goal_x=goal_x)
+        env = SectionEnv(state, goal_x=goal_x, landing_waits=landing_waits,
+                         randomize_frames=randomize_frames, max_steps=max_steps,
+                         start_x=start_x, back_x=back_x, milestones=milestones)
         env.reset(seed=seed)
         return env
     return _init
 
 
-def build_vec_env(n_envs: int, state: str, goal_x: int):
+def build_vec_env(n_envs: int, state: str, goal_x: int, **env_kw):
     from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
-    fns = [make_env(state, goal_x, seed=i) for i in range(n_envs)]
+    fns = [make_env(state, goal_x, seed=i, **env_kw) for i in range(n_envs)]
     vec = DummyVecEnv(fns) if n_envs == 1 else SubprocVecEnv(fns, start_method="spawn")
     return VecMonitor(vec)
 
@@ -74,17 +78,33 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Train a hazard-scoped section-crossing sub-policy.")
     p.add_argument("--timesteps", type=int, default=400_000)
     p.add_argument("--n-envs", type=int, default=8)
-    p.add_argument("--state", default=STATE)
+    p.add_argument("--state", default=STATE,
+                   help="savestate path, or comma-separated list for multi-phase training")
     p.add_argument("--goal-x", type=int, default=GOAL_X)
     p.add_argument("--out", default="data/rl/section_1_3")
     p.add_argument("--device", default="cpu", choices=["cpu", "mps", "auto"])
     p.add_argument("--resume", default="")
+    p.add_argument("--landing-waits", type=int, default=0,
+                   help="wait actions on reset so airborne savestates land before training")
+    p.add_argument("--randomize-frames", type=int, default=36,
+                   help="random cruise on reset (0 = fixed entry, good for lift timing)")
+    p.add_argument("--max-steps", type=int, default=220)
+    p.add_argument("--start-x", type=int, default=126)
+    p.add_argument("--back-x", type=int, default=80)
     args = p.parse_args()
 
     from stable_baselines3 import PPO
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    vec = build_vec_env(args.n_envs, args.state, args.goal_x)
+    milestones = ((300, 20.0), (500, 50.0))
+    if "lift" in args.out or args.landing_waits:
+        milestones = ((760, 25.0), (800, 45.0), (850, 70.0), (900, 100.0))
+    states = [s.strip() for s in args.state.split(",") if s.strip()]
+    vec = build_vec_env(args.n_envs, states if len(states) > 1 else states[0], args.goal_x,
+                        landing_waits=args.landing_waits,
+                        randomize_frames=args.randomize_frames,
+                        max_steps=args.max_steps, start_x=args.start_x, back_x=args.back_x,
+                        milestones=milestones)
     report = _Report()
 
     if args.resume:

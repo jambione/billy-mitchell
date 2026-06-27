@@ -63,6 +63,7 @@ class PlatformerView(Protocol):
     def air_landing_target(self) -> "int | None": ...
     def enemy_ahead(self, within: int = ...) -> bool: ...
     def nearest_powerup(self, within: int = ...) -> "tuple[int, int] | None": ...   # optional
+    def pipe_entry_spot(self, max_tiles: int = ...) -> "int | None": ...           # optional
 
 
 # --- candidate builders (also reused by the Skill layer to instantiate transferable tactics) ----
@@ -93,6 +94,15 @@ def wall_jumper() -> list[Plan]:
     c = controller
     return [c.jump_right(run_frames=14, jump_frames=24), c.jump_right(run_frames=24, jump_frames=30),
             [Step(10, controller.LEFT)] + c.jump_right(run_frames=18, jump_frames=30)]
+
+
+def pipe_entry_candidates() -> list[Plan]:
+    """Centre on a pipe mouth and hold DOWN (1-2 exit pipe, warp zone → worlds 4/5/6)."""
+    c = controller
+    enter = [(c.run_right(n, sprint=False) if n else []) + [Step(h, controller.DOWN)]
+             for n in (0, 6, 12, 18, 24) for h in (24, 40, 56)]
+    enter += [c.run_left(n, sprint=False) + [Step(48, controller.DOWN)] for n in (6, 12, 20)]
+    return enter
 
 
 class PlatformerReflex(ReflexPolicy):
@@ -161,12 +171,16 @@ class PlatformerReflex(ReflexPolicy):
         """Focused escape spread — pits, enemies AND tall obstacles, with patience + running/back-up
         jumps so a flush-against-a-pipe spot can actually be cleared."""
         c = controller
-        return [
+        cands = [
             c.jump_right(jump_frames=28),
             c.jump_right(jump_frames=34),
             *enemy_stomper(),
             *wall_jumper(),
         ]
+        spot = getattr(obs.raw, "pipe_entry_spot", lambda: None)()
+        if spot is not None:
+            cands.extend(pipe_entry_candidates())
+        return cands
 
     def _jump_candidates(self, base: int, width: int) -> list[Plan]:
         return gap_jumper(width, self.p)
@@ -197,14 +211,7 @@ class PlatformerReflex(ReflexPolicy):
         # up unblocks a jump that no standing/short run-up could make.
         backup = [c.run_left(b, sprint=False) + c.jump_right(run_frames=r, jump_frames=h)
                   for b in (8, 16, 24) for r in (14, 24) for h in (28, 34)]
-        # ENTER-PIPE: get centred on a pipe and hold DOWN. Some levels (e.g. 1-2) only exit via a pipe;
-        # a pure-movement grid can never discover this, so Billy runs at the pipe forever. We try
-        # lining up from the LEFT (walk right onto it) AND from the right (he overshot -> step back
-        # left onto it), then hold DOWN. The search rejects it where it does nothing (Mario just
-        # ducks) and banks it where it warps him.
-        enter_pipe = [(c.run_right(n, sprint=False) if n else []) + [Step(h, controller.DOWN)]
-                      for n in (0, 6, 12, 18, 24) for h in (24, 40)]
-        enter_pipe += [c.run_left(n, sprint=False) + [Step(40, controller.DOWN)] for n in (6, 12, 20)]
+        enter_pipe = pipe_entry_candidates()
         # RETREAT / drop off a dead-end: when a wall ahead reaches the ceiling (impassable at this
         # level), the way on is BELOW — go back left and off the ledge so the lower path can be
         # found. These travel left a real distance; the search's long post-coast (run-right) then
@@ -293,6 +300,17 @@ class PlatformerReflex(ReflexPolicy):
         if scene.enemy_ahead():
             self._last_scene = scene
             return Decision(controller.jump_right(jump_frames=20), note="hop enemy")
+
+        # PIPE ENTRY: 1-2's exit pipe and warp-zone pipes (→ 4/5/6) need DOWN, not forward x.
+        # x stalls while ducking — that is progress, not stuck.
+        pipe_align = getattr(scene, "pipe_entry_spot", lambda: None)()
+        if pipe_align is not None and gap is None:
+            self._last_scene = scene
+            self._frames_stuck = 0
+            if pipe_align > 10:
+                return Decision(controller.run_right(p.reflex_step_frames, sprint=False),
+                                note=f"align pipe {pipe_align}px")
+            return Decision([Step(48, controller.DOWN)], note="enter pipe")
 
         # BALANCED power-up handling (survival-first: every hazard above is resolved before this).
         # 1) If a power-up is already out, COLLECT it (don't sprint past the slow-emerging mushroom).

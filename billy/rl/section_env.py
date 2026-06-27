@@ -42,6 +42,8 @@ SECTION_ACTIONS: list[tuple[tuple[str, ...], int]] = [
     (("right",), 4),                # walk right (precise approach)
     (("left", "B"), 4),             # back up to re-line a jump
     ((), 4),                        # wait a beat (let a moving platform come)
+    ((), 12),                       # longer wait (lift cycle timing)
+    ((), 20),                       # extended wait (ride the lift platform)
 ]
 N_SECTION_ACTIONS = len(SECTION_ACTIONS)
 
@@ -51,15 +53,18 @@ class SectionEnv(gym.Env):
 
     metadata = {"render_modes": []}
 
-    def __init__(self, state_path: str, level_label: str = "1-3", start_x: int = 126,
+    def __init__(self, state_path: str | list[str], level_label: str = "1-3", start_x: int = 126,
                  goal_x: int = 700, max_steps: int = 220,
                  progress_w: float = 0.1, death_penalty: float = 40.0,
                  cross_bonus: float = 150.0, time_penalty: float = 0.01,
                  back_x: int = 80, randomize_frames: int = 36,
+                 landing_waits: int = 0,
                  milestones: tuple[tuple[int, float], ...] = ((300, 20.0), (500, 50.0))) -> None:
         super().__init__()
         os.environ.setdefault("BILLY_HEADLESS", "1")
-        self.state_path = state_path
+        paths = [state_path] if isinstance(state_path, str) else list(state_path)
+        self.state_paths = paths
+        self.state_path = paths[0]
         self.level_label = level_label
         self.start_x, self.goal_x, self.back_x = start_x, goal_x, back_x
         self.max_steps = max_steps
@@ -67,6 +72,9 @@ class SectionEnv(gym.Env):
         # positions/velocities/enemy-phases (not one fixed savestate) — that's what makes it robust
         # to wherever Billy actually arrives at the hazard live, instead of overfitting one trajectory.
         self.randomize_frames = randomize_frames
+        # For savestates captured mid-arc (e.g. end of a tree-top crossing): N wait actions on reset
+        # so Mario lands on solid ground before the policy's first real decision.
+        self.landing_waits = landing_waits
         # Latched checkpoint bonuses (x_threshold -> one-time reward) densify the path to the cross
         # so the policy isn't crushed into the "never jump -> never die" idle optimum.
         self.milestones = tuple(sorted(milestones))
@@ -75,8 +83,11 @@ class SectionEnv(gym.Env):
 
         self.game = SmbGame()
         self.session = self.game.system.connect()
-        with open(state_path, "rb") as f:
-            self._snapshot = f.read()
+        self._snapshots = []
+        for p in paths:
+            with open(p, "rb") as f:
+                self._snapshots.append(f.read())
+        self._snapshot = self._snapshots[0]
 
         self.action_space = spaces.Discrete(N_SECTION_ACTIONS)
         self.observation_space = spaces.Box(low=-1.0, high=1.0,
@@ -89,20 +100,25 @@ class SectionEnv(gym.Env):
         st = self.session.read_state()
         return self.game.observe(st.frame, st.ram)
 
-    def _restore(self):
+    def _restore(self, snapshot: bytes | None = None):
         self.session.reset()
-        self.session.env.em.set_state(self._snapshot)
+        self.session.env.em.set_state(snapshot if snapshot is not None else self._snapshot)
         self.session._refresh_ram()
 
     # --- gym API ------------------------------------------------------------------------
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+        if len(self._snapshots) > 1:
+            idx = int(self.np_random.integers(0, len(self._snapshots)))
+            self._snapshot = self._snapshots[idx]
         self._restore()
         if self.randomize_frames:
             # Cruise a random spell to diversify the entry state (stay on the start ground).
             n = int(self.np_random.integers(0, self.randomize_frames + 1))
             if n:
                 self.session.send_plan([Step(n, C.mask_from_names(["right", "B"]))])
+        for _ in range(self.landing_waits):
+            self.session.send_plan([Step(4, C.mask_from_names([]))])
         obs = self._observe()
         self._steps = 0
         self._best_x = obs.progress

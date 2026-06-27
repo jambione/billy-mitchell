@@ -41,6 +41,45 @@ def test_danger_candidates_shape_is_stable():
     assert all(isinstance(c, list) and c for c in cands)
 
 
+def test_danger_candidates_adds_pipe_entry_at_pipe_mouth():
+    class _PipeScene:
+        mario_x = 100
+        size = 0
+        enemies = []
+
+        @property
+        def on_ground(self):
+            return True
+
+        def gap_info(self, max_tiles=8):
+            return None
+
+        def nearest_enemy(self, within=72):
+            return None
+
+        def obstacle_ahead(self, max_tiles=3):
+            return None
+
+        def block_above_ahead(self, max_tiles=2):
+            return 8
+
+        def air_landing_target(self):
+            return None
+
+        def enemy_ahead(self, within=48):
+            return False
+
+        def nearest_powerup(self, within=80):
+            return None
+
+        def pipe_entry_spot(self, max_tiles=2):
+            return 8
+
+    r = PlatformerReflex(tuning.PROFILE)
+    cands = r.danger_candidates(_obs(_PipeScene()))
+    assert len(cands) > 7
+
+
 def _floor_ram():
     ram = bytearray(0x800)
     ram[0x03B8] = 100  # mario_y -> 116, floor row below
