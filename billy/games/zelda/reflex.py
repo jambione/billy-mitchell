@@ -16,16 +16,39 @@ from .curiosity import (
     requires_start_cave_inspection,
     start_cave_inspection_action,
 )
+from .dungeon_nav import dungeon_combat_decision, dungeon_explore_decision, dungeon_key_decision
+from .east_march import (
+    EAST_SCROLL_SETTLE_FRAMES,
+    east_march_active,
+    east_march_approach_decision,
+    east_march_at_lip,
+
+    east_march_combat_decision,
+    east_march_cross_decision,
+    east_march_decision,
+    east_march_lane_decision,
+    east_march_needs_cross,
+    east_march_on_west_entry,
+    east_march_entry_guard_decision,
+    east_march_post_settle_macro,
+    east_march_route_commit,
+    east_march_scroll_settle_decision,
+)
 from .explore import pick_explore_direction
 from .perception import Scene
+from .items import walk_toward
 from .start_cave import (
+    ENTER_PLAN,
+    POST_CAVE_REPOSITION_PLAN,
     cave_attempt_exhausted,
     cave_quest_active,
     has_wooden_sword,
     interior_phase,
-    phase_plan,
+    remaining_interior_plan,
 )
+from .tuning import START_SCREEN
 from .tuning import (
+    SCREEN_EDGE_HI,
     ATTACK_RANGE,
     BACKTRACK_MEMORY,
     REFLEX_FRAMES,
@@ -98,6 +121,11 @@ class ZeldaReflex(ReflexPolicy):
         self._macro_idx = 0
         self._macro_stuck_frames = 0
         self._macro_last_progress = 0
+        self._cave_repositioned = False
+        self._dungeon_visited: set[int] = set()
+        self._east_cross_tick = 0
+        self._east_scroll_settle = 0
+        self._east_screen_frames = 0
 
     def reset(self, obs: Observation) -> None:
         self._best = obs.progress
@@ -114,21 +142,37 @@ class ZeldaReflex(ReflexPolicy):
         self._macro_idx = 0
         self._macro_stuck_frames = 0
         self._macro_last_progress = obs.progress
+        self._cave_repositioned = False
+        self._dungeon_visited.clear()
+        self._east_cross_tick = 0
+        self._east_scroll_settle = 0
+        self._east_screen_frames = 0
 
     def note_level_advance(self, obs: Observation) -> None:
         self._best = obs.progress
         self._frames_stuck = 0
         self._recent_screens.append(obs.raw.map_location)
         self._commit_btn = None
+        self._east_cross_tick = 0
+        if east_march_active(obs.raw, visited=set(obs.raw.visited_screens)):
+            loc = obs.raw.map_location
+            settle = EAST_SCROLL_SETTLE_FRAMES
+            if loc >= START_SCREEN + 5:
+                settle += 32
+            elif loc >= START_SCREEN + 4:
+                settle += 16
+            self._east_scroll_settle = settle
+            self._east_screen_frames = 0
+        if obs.raw.in_dungeon:
+            self._dungeon_visited.add(obs.raw.map_location)
 
     def advance_plan(self, obs: Observation) -> Plan:
         scene: Scene = obs.raw
         if scene.in_cave and not self._cave_gave_up:
             phase = interior_phase(scene)
-            plan = phase_plan(phase)
+            plan = remaining_interior_plan(phase)
             if plan:
-                idx = min(self._macro_idx, len(plan) - 1)
-                return [plan[idx]]
+                return list(plan)
         visited = set(scene.visited_screens)
         btn, _, _ = pick_explore_direction(
             scene.map_location, visited, recent=self._recent_screens,
@@ -196,7 +240,6 @@ class ZeldaReflex(ReflexPolicy):
         if phase == "overworld":
             return None
 
-        plan = phase_plan(phase)
         if phase != self._macro_phase:
             self._macro_phase = phase
             self._macro_idx = 0
@@ -212,29 +255,66 @@ class ZeldaReflex(ReflexPolicy):
         if self._macro_stuck_frames >= CAVE_MACRO_STUCK_FRAMES:
             return Decision([], needs_billy=True, note="cave-macro-stuck")
 
-        if self._macro_idx >= len(plan):
-            if phase == "exit":
-                if scene.in_cave:
-                    return Decision([Step(16, c.DOWN)], note="cave-macro-exit-continue")
-                return None
-            self._macro_idx = 0
+        plan = remaining_interior_plan(phase)
+        if not plan:
+            return None
 
-        step = plan[self._macro_idx]
-        self._macro_idx += 1
-        return Decision([step], note=f"cave-macro-{phase}")
+        if (phase == "exit" and scene.in_cave and has_wooden_sword(scene.sword_level)
+                and self._macro_idx >= len(plan)):
+            # EXIT_PLAN's long DOWN may need a short nudge before overworld mode clears.
+            return Decision([Step(16, c.DOWN)], note="cave-macro-exit-continue")
+
+        self._macro_idx = len(plan)
+        return Decision(list(plan), note=f"cave-macro-{phase}-full")
 
     def step(self, obs: Observation) -> Decision:
         scene: Scene = obs.raw
 
+        if has_wooden_sword(scene.sword_level) and not has_wooden_sword(self._last_sword_level):
+            self._commit_btn = None
+            self._commit_label = ""
+            self._last_sword_level = scene.sword_level
+
+        if (has_wooden_sword(scene.sword_level) and not scene.in_cave
+                and scene.map_location == START_SCREEN and not self._cave_repositioned
+                and scene.link_y >= 180):
+            self._cave_repositioned = True
+            self._last_scene = scene
+            return Decision(list(POST_CAVE_REPOSITION_PLAN), note="post-cave-reposition-full")
+
+        visited = set(scene.visited_screens)
+        marching_east = east_march_active(scene, visited=visited)
+
         if obs.progress > self._best:
             self._frames_stuck = 0
             self._best = obs.progress
-        else:
+        elif not (marching_east and self._east_scroll_settle > 0):
             self._frames_stuck += REFLEX_FRAMES
 
         if scene.health < self._last_health:
             self._last_health = scene.health
             self._last_scene = scene
+            if marching_east:
+                invuln = [Step(24, c.NEUTRAL)]
+                if (scene.map_location >= START_SCREEN + 4
+                        and east_march_needs_cross(scene)):
+                    cross = east_march_cross_decision(
+                        scene, tick=self._east_cross_tick,
+                        screen_frames=self._east_screen_frames)
+                    if cross is not None:
+                        self._east_cross_tick += max(1, len(cross.plan))
+                        return Decision(
+                            invuln + list(cross.plan),
+                            note=f"east-march-after-hit-cross ({scene.health} hearts)",
+                        )
+                fight = east_march_combat_decision(scene)
+                if fight is not None:
+                    return Decision(invuln + list(fight.plan),
+                                    note=f"east-march-after-hit ({scene.health} hearts)")
+                return Decision(
+                    invuln + _walk(c.RIGHT, REFLEX_FRAMES * 2),
+                    note=f"east-march-after-hit ({scene.health} hearts)",
+                )
             return Decision([], needs_billy=True, note=f"enemy damage ({scene.health} hearts)")
 
         cave_step = self._cave_interior_step(scene, obs)
@@ -251,7 +331,6 @@ class ZeldaReflex(ReflexPolicy):
             self._last_scene = scene
             return Decision(_walk(btn, REFLEX_FRAMES), note=f"walk-item ({dx},{dy})")
 
-        visited = set(scene.visited_screens)
         mouths = scene.cave_mouths
         inspecting_cave = requires_start_cave_inspection(
             scene.map_location, visited, self._recent_screens,
@@ -260,7 +339,8 @@ class ZeldaReflex(ReflexPolicy):
 
         if inspecting_cave:
             if needs_cave_approach(scene.map_location, scene.link_x, scene.link_y,
-                                   cave_mouths=mouths):
+                                   cave_mouths=mouths, sword_level=scene.sword_level,
+                                   cave_gave_up=self._cave_gave_up, cave_frames=self._cave_frames):
                 approach = cave_approach_button(
                     scene.map_location, scene.link_x, scene.link_y, cave_mouths=mouths)
                 if approach is not None:
@@ -270,14 +350,32 @@ class ZeldaReflex(ReflexPolicy):
             btn, label, dest = start_cave_inspection_action(
                 scene.link_x, scene.link_y, cave_mouths=mouths)
             self._commit_btn, self._commit_label = btn, label
-            if btn == c.UP and scene.at_top_edge:
-                btn = c.mask(c.UP, c.LEFT)
-                label = "walkthrough-enter-nw-cave"
+            if label == "walkthrough-enter-nw-cave":
+                self._last_scene = scene
+                return Decision(list(ENTER_PLAN), note="cave-enter-full")
             self._last_scene = scene
             return Decision(_walk(btn, REFLEX_FRAMES * 2), note=label)
 
-        near = scene.nearest_enemy(within=ATTACK_RANGE)
-        if near is not None:
+        if scene.in_dungeon:
+            key_step = dungeon_key_decision(scene)
+            if key_step is not None:
+                self._last_scene = scene
+                return key_step
+            fight = dungeon_combat_decision(scene)
+            if fight is not None:
+                self._last_scene = scene
+                return fight
+            self._dungeon_visited.add(scene.map_location)
+            if scene.enemy_count() == 0:
+                dung_step = dungeon_explore_decision(
+                    scene, self._dungeon_visited, self._recent_screens)
+                if dung_step is not None:
+                    self._last_scene = scene
+                    return dung_step
+
+        combat_range = ATTACK_RANGE
+        near = scene.nearest_enemy(within=combat_range)
+        if near is not None and not marching_east:
             dx, dy = near
             self._last_scene = scene
             if scene.health <= RETREAT_HEALTH and abs(dx) + abs(dy) < ATTACK_RANGE:
@@ -292,7 +390,8 @@ class ZeldaReflex(ReflexPolicy):
             return Decision([], needs_billy=True, note=f"stuck {self._frames_stuck}f")
 
         if needs_cave_approach(scene.map_location, scene.link_x, scene.link_y,
-                               cave_mouths=mouths):
+                               cave_mouths=mouths, sword_level=scene.sword_level,
+                               cave_gave_up=self._cave_gave_up, cave_frames=self._cave_frames):
             approach = cave_approach_button(
                 scene.map_location, scene.link_x, scene.link_y, cave_mouths=mouths)
             if approach is not None:
@@ -301,7 +400,11 @@ class ZeldaReflex(ReflexPolicy):
                 return Decision(_walk(btn, REFLEX_FRAMES), note=note)
 
         prefer_dungeons = len(visited) >= 2
-        if self._commit_btn is None:
+        if marching_east:
+            btn, label = east_march_route_commit()
+            dest = scene.map_location + 1
+            self._commit_btn, self._commit_label = btn, label
+        elif self._commit_btn is None:
             btn, label, dest = pick_explore_direction(
                 scene.map_location, visited,
                 recent=self._recent_screens, prefer_dungeons=prefer_dungeons,
@@ -313,7 +416,67 @@ class ZeldaReflex(ReflexPolicy):
         else:
             btn, label, dest = self._commit_btn, self._commit_label, scene.map_location
 
-        if not inspecting_cave:
+        if not inspecting_cave and marching_east:
+            screen_frames = self._east_screen_frames
+            settle = east_march_scroll_settle_decision(
+                scene, frames_left=self._east_scroll_settle)
+            if settle is not None:
+                self._east_scroll_settle = max(0, self._east_scroll_settle - REFLEX_FRAMES * 2)
+                self._east_screen_frames += REFLEX_FRAMES * 2
+                self._last_scene = scene
+                return settle
+            lane = east_march_lane_decision(scene, btn)
+            if lane is not None:
+                self._east_screen_frames += REFLEX_FRAMES * 2
+                self._last_scene = scene
+                return lane
+            guard = east_march_entry_guard_decision(scene, screen_frames=screen_frames)
+            if guard is not None:
+                self._east_screen_frames += sum(s.frames for s in guard.plan)
+                self._last_scene = scene
+                return guard
+            macro = east_march_post_settle_macro(scene, screen_frames=screen_frames)
+            if macro is not None:
+                self._east_screen_frames += 400
+                self._last_scene = scene
+                return macro
+            crossing = (not east_march_at_lip(scene, screen_frames=screen_frames)
+                        and (east_march_needs_cross(scene)
+                             or (scene.enemy_count() > 0
+                                 and scene.link_x < SCREEN_EDGE_HI)))
+            if crossing:
+                cross = east_march_cross_decision(
+                    scene, tick=self._east_cross_tick, screen_frames=screen_frames)
+                if cross is not None:
+                    self._east_cross_tick += max(1, len(cross.plan))
+                    self._east_screen_frames += sum(s.frames for s in cross.plan)
+                    self._last_scene = scene
+                    return cross
+            skip_fight = (scene.map_location >= START_SCREEN + 4
+                          and east_march_needs_cross(scene))
+            if scene.enemy_count() > 0 and not skip_fight:
+                fight = east_march_combat_decision(scene)
+                if fight is not None:
+                    self._east_screen_frames += REFLEX_FRAMES * 4
+                    self._last_scene = scene
+                    return fight
+            approach = east_march_approach_decision(scene, btn)
+            if approach is not None:
+                self._east_screen_frames += REFLEX_FRAMES * 2
+                self._last_scene = scene
+                return approach
+            hop = east_march_decision(scene, btn, label, screen_frames=screen_frames)
+            if hop is not None:
+                self._east_screen_frames += REFLEX_FRAMES * 12
+                self._last_scene = scene
+                return hop
+            self._last_scene = scene
+            self._east_screen_frames += REFLEX_FRAMES
+            if east_march_at_lip(scene, screen_frames=screen_frames):
+                return Decision(_walk(c.RIGHT, REFLEX_FRAMES), note="east-march-lip-walk")
+            return Decision(_walk(c.RIGHT, REFLEX_FRAMES), note=f"east-march-walk {label}")
+
+        if not inspecting_cave and not marching_east:
             edge = self._edge_transition(btn, scene, label)
             if edge is not None:
                 self._last_scene = scene

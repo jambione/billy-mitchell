@@ -198,8 +198,15 @@ def needs_cave_approach(
     link_y: int,
     *,
     cave_mouths: tuple[tuple[int, int], ...] = (),
+    sword_level: int = 0,
+    cave_gave_up: bool = False,
+    cave_frames: int = 0,
 ) -> bool:
     """True when Link should walk to the black-square cave mouth first."""
+    if not cave_quest_active(
+            here, sword_level, in_cave=False,
+            cave_frames=cave_frames, cave_gave_up=cave_gave_up):
+        return False
     mouth = _mouth_target(here, link_x, link_y, cave_mouths)
     if mouth is None:
         return False

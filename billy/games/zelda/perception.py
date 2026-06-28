@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from .items import GroundItem, nearest_item, read_ground_items
 from .tuning import SCREEN_EDGE_HI, SCREEN_EDGE_LO
 
-# Normal overworld/dungeon play, screen scroll, and cave/shop interiors.
-IN_PLAY_MODES = (5, 7, 11)
+# Normal play + scroll/transition modes (4/10/16) and dungeon (9/12).
+IN_PLAY_MODES = (4, 5, 7, 9, 10, 11, 12, 16)
 CAVE_INTERIOR_MODES = (11, 16)
+DUNGEON_MODES = (9, 12)
 N_ENEMIES = 6
 
 
@@ -52,6 +53,7 @@ class Scene:
     enemies: list[Enemy] = field(default_factory=list)
     items: list[GroundItem] = field(default_factory=list)
     ram: bytes = b""
+    dungeon: object = None   # DungeonState | None when in_dungeon
 
     @property
     def realm(self) -> str:
@@ -75,7 +77,7 @@ class Scene:
 
     @property
     def in_dungeon(self) -> bool:
-        return self.current_level > 0
+        return self.current_level > 0 or self.game_mode in DUNGEON_MODES
 
     @property
     def at_right_edge(self) -> bool:
@@ -119,14 +121,17 @@ class Scene:
         return len(self.items)
 
     def objective_score(self) -> int:
-        """Monotonic-ish frontier signal for cache / metrics (higher = more progress)."""
+        """Monotonic frontier signal for cache / metrics (higher = more progress).
+
+        Uses max_hearts (not current health) so combat damage does not shrink progress
+        and break learn-from-death runway on east-march screens."""
         visited = len(self.visited_screens)
         score = (
             visited * 512
             + self.triforce_pieces * 2048
             + self.sword_level * 1024
             + self.keys * 128
-            + self.health * 16
+            + self.max_hearts * 16
             + (10 if self.in_dungeon else 0)
             + self.rupees * 2
             + self.map_location
@@ -160,11 +165,14 @@ class Scene:
             visited=visited,
             in_cave=self.in_cave,
         )
+        from .dungeon import dungeon_summary
+        dung = dungeon_summary(self.dungeon) if self.dungeon else ""
+        dung_bit = f" {dung}" if dung else ""
         return (f"{self.room_label} link=({self.link_x},{self.link_y}) "
                 f"hearts={self.health}/{self.max_hearts} rupees={self.rupees} "
                 f"sword={sword} triforce={self.triforce_pieces}/8 "
                 f"visited={len(self.visited_screens)} enemies={self.enemy_count()} "
-                f"items={self.item_count()} {faq}{curious_bit}")
+                f"items={self.item_count()} {faq}{dung_bit}{curious_bit}")
 
     def ascii_view(self) -> str:
         """Tiny 9x7 grid centred on Link for the LLM."""
@@ -223,6 +231,12 @@ def build_scene(ram: bytes, frame: int = 0, rgb=None) -> Scene:
         cave_mouths = tuple(detect_cave_mouths(rgb))
 
     items = read_ground_items(ram)
+    current_level = _u8(ram, 16)
+    keys_held = _u8(ram, 1646)
+    dungeon = None
+    if current_level > 0:
+        from .dungeon import read_dungeon_state
+        dungeon = read_dungeon_state(ram, room_id=_u8(ram, 235), keys_held=keys_held)
 
     return Scene(
         frame=frame,
@@ -230,7 +244,7 @@ def build_scene(ram: bytes, frame: int = 0, rgb=None) -> Scene:
         link_y=_u8(ram, 132),
         direction=_u8(ram, 152),
         game_mode=_u8(ram, 18),
-        current_level=_u8(ram, 16),
+        current_level=current_level,
         map_location=_u8(ram, 235),
         next_location=_u8(ram, 236),
         health=health,
@@ -239,7 +253,7 @@ def build_scene(ram: bytes, frame: int = 0, rgb=None) -> Scene:
         triforce_pieces=_u8(ram, 1649),
         sword_level=_u8(ram, 1623),
         rupees=_u8(ram, 1645),
-        keys=_u8(ram, 1646),
+        keys=keys_held,
         bombs=_u8(ram, 1624),
         scrolling=_u8(ram, 232) != 255,
         visited_screens=_visited_screens(ram),
@@ -247,4 +261,5 @@ def build_scene(ram: bytes, frame: int = 0, rgb=None) -> Scene:
         enemies=_read_enemies(ram, items),
         items=items,
         ram=ram,
+        dungeon=dungeon,
     )

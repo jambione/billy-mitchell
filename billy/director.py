@@ -16,6 +16,7 @@ from collections import deque
 from . import config, metrics
 from .abstractions import Game, Observation, Plan, Step, plan_frames
 from .agents import billy, coach
+from .agents.rolling_memory import RollingGameMemory
 from .commentary import Commentator
 from .hazard_hooks import HazardHooks
 from .knowledge import KnowledgeBase, SolutionCache, SkillLibrary, TapeLibrary
@@ -57,6 +58,7 @@ class Director:
         # clear-time drops as the cache fills) instead of the checkpoint marching forward.
         self.repeat_level = os.environ.get("BILLY_REPEAT_LEVEL", "0") == "1"
         self.recent: deque[str] = deque(maxlen=12)
+        self.memory = RollingGameMemory() if use_llm else None
         self.commentator = Commentator()
         self.best_score = 0
         self.fastest_clear_frames: int | None = None
@@ -534,6 +536,8 @@ class Director:
         self.reflex.reset(obs)
         self.commentator.reset(obs.raw)
         self.recent.clear()
+        if self.memory is not None:
+            self.memory.reset()
         self.cur_level = obs.level_key
         start_level = obs.level_key   # for the frontier metric (cur_level moves on clear)
 
@@ -595,6 +599,8 @@ class Director:
                 self.reflex.reset(obs)
                 self.commentator.reset(obs.raw)
                 self.recent.clear()
+                if self.memory is not None:
+                    self.memory.reset()
                 seg_best, need_checkpoint = obs.progress, False
                 self._learned_buckets.clear()
                 self._last_pit_death_x = 0
@@ -672,6 +678,10 @@ class Director:
                 seg_best = obs.progress
             decision = self.reflex.step(obs)
             self.recent.append(decision.note)
+            if self.memory is not None:
+                self.memory.note(decision.note)
+                if self.memory.should_rollup():
+                    self.memory.rollup()
             # Engage the search (and stall-breaker) not just at enemy/pit hazards but whenever the
             # reflex is STUCK — a wall/dead-end with no enemy or pit (e.g. 1-2's top-right ledge)
             # otherwise never triggers search, so Billy reflex-loops at it forever without ever
@@ -822,8 +832,9 @@ class Director:
                         # it survives AND progresses, BANK it like a search win — so the next pass
                         # replays it instead of re-asking the (slow, inconsistent) LLM. This is what
                         # lets an LLM-cracked wall (e.g. early 1-2) actually compound.
+                        mem = self.memory.prompt_section() if self.memory else ""
                         bd = billy.decide(obs, self.kb.retrieve(obs.summary),
-                                          list(self.recent), self.controller)
+                                          list(self.recent), self.controller, memory=mem)
                         plan = bd.plan
                         billy_calls += 1
                         survived, reach = self._evaluate(plan)
@@ -840,7 +851,9 @@ class Director:
                         action_note = f"search✗ {self._label(plan)}"   # best-effort, not cached
             elif decision.needs_billy and self.use_llm:
                 # Non-danger escalation (stuck, etc.): consult Billy with KB lessons.
-                bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent), self.controller)
+                mem = self.memory.prompt_section() if self.memory else ""
+                bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent),
+                                  self.controller, memory=mem)
                 plan = bd.plan
                 billy_calls += 1
                 action_note = f"BILLY {self._label(plan)}"
@@ -978,7 +991,8 @@ class Director:
     def _reflect(self, trajectory, outcome: str, level_label: str) -> None:
         if not self.use_llm:
             return
-        lesson = coach.reflect(trajectory, outcome, level_label)
+        mem = self.memory.prompt_section() if self.memory else ""
+        lesson = coach.reflect(trajectory, outcome, level_label, memory=mem)
         if lesson:
             self.kb.add(lesson.situation, lesson.tactic, lesson.outcome, level_label)
             print(f"  [coach] lesson: {lesson.situation} -> {lesson.tactic}")

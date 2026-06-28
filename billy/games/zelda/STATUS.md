@@ -1,128 +1,255 @@
-# Zelda adapter — status & path forward
+# Billy Mitchell — Zelda Status & Demo Guide
 
-Last updated: June 2026. FAQ source: `walkthrough/NES/zelda` (Dan Simpson v1.9).
+Last updated: **June 28, 2026**. FAQ route: `walkthrough/NES/zelda` (Dan Simpson v1.9).
 
-## What we accomplished
+This document is the handoff snapshot: **what Billy can do today**, **what compounding looks like
+in practice**, and **what remains** before FAQ screen #127 and Level 1.
 
-### Engine integration (Phase 3C — in progress)
+---
 
-- **`ZeldaGame`** registered in `run.py`; boots via stable-retro experimental integration
-  `LegendOfZeldaPRG0-Nes`.
-- **Same Director loop** as SMB: cache-first replay → reflex → invisible micro-search →
-  learn-from-death. No engine forks required.
-- **17 unit tests** in `tests/test_zelda.py` (ROM-gated boot test skips without ROM).
+## What Billy is (30-second pitch)
 
-### Perception (`perception.py`, `items.py`, `vision.py`)
+Billy is not a frame-by-frame LLM bot. He plays NES games through a **four-tier stack**:
 
-- RAM decoder for Link position, hearts, rupees, screen id, game mode, enemies.
-- **Phantom enemy filter** — slots with `enemy_type == 0` ignored (fixes false combat lock).
-- **Ground items** — drop slots @173–178 decoded separately from enemies; ASCII map uses `I`.
-- **NW cave vision** — scans left half of frame for black-square mouths (not center/top).
-- **Cave interiors** — game mode 11 treated as in-play so progress/learning continue indoors.
-- **`enemy_ahead()`** shim for shared commentary (fixes Director crash on Zelda runs).
+| Tier | Role | Zelda today |
+|------|------|-------------|
+| **Reflex** | Routine movement/combat every frame | Top-down Zelda reflex + ROM-verified cave macro |
+| **SolutionCache** | Exact, position-keyed verified sequences — **discover once, replay forever** | 6 banked overworld solutions (#120–#121) |
+| **Micro-search** | Invisible rollouts on cloned emulator state | East-march combat, lip walks, cave drift recovery |
+| **Learn-from-death** | After a death, search backward for a survivor *past* the death spot and bank it | Active on #121; blocked at #124 until knockback fix is live-tested |
+| **LLM** (optional) | Persona + stuck improvisation | Rolling memory wired; off hot loop with `--no-llm` |
 
-### Walkthrough-driven routing (`walkthrough.py`, `curiosity.py`, `explore.py`)
+The compounding curve is the product demo: **search↓ replay↑ frontier↑** across attempts.
 
-FAQ first-quest phases encoded as screen IDs (origin grid 8,8 = screen 119):
+**Architecture seam (do not break):** game logic stays in `billy/games/zelda/`; never modify
+`billy/director.py` or `billy/knowledge/cache.py`.
 
-| Phase | FAQ step | Target |
-|-------|----------|--------|
-| `wooden_sword` | Get wooden sword in NW cave | Screen 119, stay on map |
-| `east_to_sea` | Head right 8 screens | Screen 127 |
-| `level_1_approach` | Right, up 4, left | Screen 55 (Eagle entrance) |
+---
 
-- Start cave targets **NW mouth** ~(60, 76), not the north screen edge (#103).
-- After sword: march **east** along row 8 per FAQ (not north through #103 first).
+## What Billy can do right now (proven)
 
-### Reflex (`reflex.py`, `hazard_hooks.py`, `start_cave.py`)
+### ✅ Start cave → wooden sword (P0 — done)
 
-- Top-down movement, sword combat, screen-edge transitions.
-- **ROM-verified start-cave macro** (`start_cave.py`) — phase playback: text → climb →
-  pickup (RIGHT → DOWN → DOWN → UP+LEFT → LEFT → A) → exit (long DOWN).
-- Reflex emits one macro step per tick; cave interior is not a special zone during macro
-  (Director uses reflex plan directly). Macro drift falls back to micro-search via
-  `macro_candidates()` in `hazard_hooks.extra_candidates`.
-- **Cave timeout** — after 900 frames without sword, FAQ `east_to_sea` fallback (degraded).
-- Item pickup priority over exploration when no enemies nearby.
-- Cave zones exempt from stall-breaker; expanded micro-search candidates for cave.
+- ROM-verified macro in `start_cave.py`: approach → enter → text → climb → pickup → exit.
+- Reflex commits the **full contiguous interior plan** in one Decision (not one step per tick).
+- Live Director (`--attempts 5`, cache persisted): **search 0 / replay 328** per attempt,
+  `sword_level=1`, reaches overworld **#120**, FAQ phase `east_to_sea`.
 
-### Learning (observed behavior)
+**Demo command:**
+```bash
+BILLY_HEADLESS=1 BILLY_MAX_FRAMES=8000 .venv/bin/python run.py --game zelda --attempts 3 --no-llm
+# Expect: cave clears, sword=1, screen → #120, heavy replay counts
+```
 
-- **Earlier overworld wandering** (before strict FAQ gating): cache compounded — attempt 2 hit
-  **0 searches / 5 replays**, frontier advanced to screen **#72**.
-- **Current bottleneck run**: Director timeouts on screen **#119** looping in cave interior;
-  `sword_level` never increments → FAQ `east_to_sea` phase never starts.
-- Cache entries exist for screen-119 cave wander (~118 solutions) but do not solve sword pickup.
+### ✅ East march compounding (#119 → #121)
 
-## P0 solved — start-cave wooden sword (June 2026)
+Billy marches FAQ row 8 east with ROM-tuned screen hops (`east_march.py`):
 
-Brute-force ROM probing found a reproducible sequence (banked in `start_cave.py`):
+- **70f hop** when 192 ≤ x < 200; **48f edge** at true lip (x ≥ 220).
+- Alternating RIGHT / RIGHT+B cross macros clear combat screens.
+- Lip-walk plans on deep screens (#123+) to avoid multi-screen overshoot.
+- `hazard_hooks.try_frame_search()` rolls combat candidates on clones before banking.
 
-1. **Approach:** LEFT 35, UP 25, LEFT 15, UP 15
-2. **Enter:** UP+LEFT 50, LEFT 40, UP+LEFT 40
-3. **Text:** A × 35 (12 frames each)
-4. **Climb:** UP × 18 (4 frames each) → link ≈ (112, 141)
-5. **Sword pickup:** RIGHT 4 → DOWN 8 → DOWN 16 → UP+LEFT 12 → LEFT 12 → A 8 → `sword_level = 1`
-6. **Exit:** DOWN 120 → overworld mode 5
+**Observed compounding (June 28, 2026 — post replay-fix):**
 
-The old item-walk reflex could not reach drops at y=128 (ceiling at y≈141). The pickup trick
-ducks under the lip with RIGHT/DOWN then UP+LEFT into the old man.
+| Attempt | search | replay | reached_x | furthest screen | notes |
+|---------|--------|--------|-----------|-----------------|-------|
+| 1 (5-attempt cave run) | 0 | 328 | 2440 | #120 | Cave + early east cache |
+| 8 (`--fresh`, pre-fix) | 140 | **0** | 2857 | #121 | All cache treated stale — no replays |
+| 3 (post-fix, cache kept) | 56 | **20** | **2921** | #121 | Replays working; frontier +64px |
 
-**Wired:** reflex phase macro, `macro_candidates()` for Director search, 900-frame cave timeout
-→ FAQ `east_to_sea` fallback. Director treats `stale_cache` as a cache miss (no search storms).
-Pre-sword / in-cave cache on screen 119 is stale so reflex macro owns the route.
+Solution cache entry `overworld #121` bucket 177 has **60 replay hits** — evidence the cache is
+actually driving play, not re-searching every step.
 
-**Validated (June 2026):**
+### ✅ Unit test coverage
 
-- ROM one-shot: `FULL_FROM_APPROACH` → `sword_level=1`, exit → overworld #119.
-- Unit tests: 24 passing (`test_zelda.py` + `test_start_cave.py`).
-- Director 3×25k frames: search 8→1→1, replay 1683→1690, frontier 2208px; still times out on
-  #119 before screen #120 in the frame cap (live phase playback slower than one-shot macro).
+**56 tests** across `test_zelda.py`, `test_zelda_march_dungeon.py`, `test_zelda_fixtures.py`
+(plus `test_start_cave.py`, `test_rolling_memory.py` in broader suite).
 
-## Path forward (priority order)
+Covers: cave macro, east march stale rules, monotonic progress, dungeon combat scaffold, fixtures.
 
-### P1 — East march & learning compounding
+### ✅ B1 fixtures scaffold
 
-- Tune live cave exit (continue DOWN until `in_cave` clears); raise frame cap or bank full macro.
-- Confirm overworld #120+ after sword in multi-attempt runs without `--fresh`.
-- Re-enable overworld exploration learning (combat on #72+ was working).
+| Asset | Path | Purpose |
+|-------|------|---------|
+| RAM map | `ram_map.py` | PRG0 address source of truth |
+| Retro data | `data/zelda/retro_data.json` | Integration UI sync target |
+| State capture | `capture_zelda_state.py` | Named savestates + manifest |
+| Path probe | `probe_zelda_path.py` | JSONL recorder + plan verifier |
+| Named states | `data/zelda/states/manifest.json` | Checkpoint catalog |
 
-### P2 — FAQ milestones after sword
+Captured milestones: `cave_after_enter`, `east_row8_screen_124`, `east_row8_sword`.
 
-- East to sea (#127) → bomb shop (#111) → hearts/Level 1 prep per walkthrough §1.
-- Level 1 dungeon adapter (room keys, keys/bombs, dungeon modes).
+### ✅ B3 LLM rolling memory
+
+`billy/agents/rolling_memory.py` wired into Director → Billy/Coach prompts. Advisory only;
+never touches SolutionCache.
+
+### 🔶 Dungeon adapter (P2 — scaffolded, not live-proven)
+
+- `dungeon.py`, `dungeon_nav.py` — room decode, greedy explore, key-door reflex, combat hook.
+- Wired in `reflex.py` / `hazard_hooks.py` but **not exercised** in a live Director run yet.
+
+---
+
+## Milestone map (FAQ east-to-sea)
+
+Row 8 march: screen **119** (start) → **127** (sea).
+
+| Screen | First life | Retry lives | Status |
+|--------|------------|-------------|--------|
+| #119 cave | Reliable (macro) | Reliable (cache replay) | ✅ Done |
+| #120 | Reliable | Reliable (cross macro + cache) | ✅ Done |
+| #121 | Reaches, dies mid-screen | Reaches, dies @2921 | 🔶 **Current wall** |
+| #122 | — | — | ❌ Not reached (post-fix runs) |
+| #123 | Dies ~3819 (historical) | Reached via replay (historical) | 🔶 Regressing — need to re-march |
+| #124 | — | Reached (historical `progress≈3812`) | 🔶 Blocked on #121; learn-from-death fix ready |
+| #127 `SEA_EAST_SCREEN` | — | — | ❌ Target not reached |
+
+**Best historical retry chain:** `#119 → #120 → #121 → #122 → #123 → #124`, then died at
+`#124@3783` every time (knockback shrank progress → zero learn-from-death runway).
+
+---
+
+## Recent fixes (June 28, 2026)
+
+### 1. Monotonic progress (`game.py`)
+
+Combat knockback drops `link_x`, which shrank `objective_score()` and made death progress **less
+than** entry snapshots → negative learn-from-death runway on #124.
+
+**Fix:** on the same `level_key`, `observe()` keeps `progress = max(raw, frontier)`; resets on
+screen/realm change. Does not touch Director or cache.
+
+### 2. Replay fix (`hazard_hooks.py`)
+
+`stale_cache()` staled **all** plans < 56 frames on every east-march screen — intended to stop
+#119↔#120 lip ping-pong, but it also killed short learn-from-death combat survivors on #121.
+
+**Fix:** only stale short **transition** hops (`is_east_march_plan`); allow short **combat** plans
+on #121+; keep ping-pong guard on #119–#120 only.
+
+**Before → after:** `replay=0` → `replay=20`, `search=140` → `search=56`, `reached_x=2857` → `2921`.
+
+---
+
+## What's left (priority order)
+
+### P1 — Break through #121 → #127 (immediate)
+
+1. **#121 combat death @2921** — banked replays work, but survivor does not clear the death zone
+   or scroll to #122. Tune learn-from-death horizon / combat candidates on row 8; ensure learned
+   pass at ~2745 replays and advances past 2921.
+2. **Re-march to #123–#124** — prior session reached #124 on retry lives; current cache only
+   compounds through #121. Need longer run **without `--fresh`** to rebuild deep-screen cache.
+3. **Validate #124 learn-from-death** — monotonic progress should unlock
+   `learned to pass overworld #124@...` in Director log; then lip-walk chains #125–#127.
+4. **Recapture healthy savestates** — `east_row8_screen_124.state` was snapped at 0 hearts
+   (`in_play=False`); re-capture at full health for fixture/bootstrap use. Snap #123 too.
+5. **#119↔#120 ping-pong guard** — still possible if short edge cache poisons; narrowed stale
+   rules help but watch for regressions.
+
+**Success metrics:**
+- Director log: `learned to pass overworld #124@...`
+- Screen log: `#125`, `#126`, `#127`
+- `visited` includes `SEA_EAST_SCREEN` (127) → phase switches to `pre_level1_hearts`
+
+### P2 — FAQ after sea (#127)
+
+- Bomb shop (#111), heart containers, Level 1 approach (screen #55).
+- **Dungeon adapter live exercise** — keys, doors, boss; hazard-scoped RL optional.
 - Cave text OCR or RAM text buffer for old-man hints.
 
-### P3 — Prove cross-genre transfer
+### B1 — Integration UI (ongoing)
 
-- Run without `--fresh` for compounding: `BILLY_HEADLESS=1 .venv/bin/python run.py --game zelda --attempts 10 --no-llm`
-- Target metric: search↓ replay↑, reach screen 127, then Level 1 entrance (#55 / stairs #6).
+- Refine `data.json` + RAM map via stable-retro Integration UI.
+- Named states per dungeon room for replay verification and RL fixtures.
 
-## Run commands
+### B2 / B3 / B4 (plan Part B — not started on Zelda)
 
+- External benchmark harness (LMGame Bench) — optional scoreboard.
+- Game Boy console adapter — optional cross-console demo.
+- VLM perception assist — only when RAM blocks dungeon progress.
+
+---
+
+## Plan vs delivery (handoff checklist)
+
+| Item | Plan ref | Status |
+|------|----------|--------|
+| **Part A** — cave macro + compounding | P0 | ✅ Done |
+| **B3** — LLM rolling memory | B3 | ✅ Done |
+| **P1** — East march to #127 | P1 | 🔶 Partial — #121 wall, #124 not re-validated |
+| **B1** — Integration UI / fixtures | B1 | 🔶 Partial — scaffold + 3 named states |
+| **P2** — Dungeon adapter | P2 | 🔶 Scaffolded, not live-proven |
+
+---
+
+## How to demo Billy (show the learning curve)
+
+### Quick visual (windowed, 3 attempts)
 ```bash
-# Unit tests (no ROM required except boot test)
-.venv/bin/python -m pytest tests/test_zelda.py -q
-
-# Play (persist cache — omit --fresh)
-BILLY_HEADLESS=1 .venv/bin/python run.py --game zelda --attempts 3 --no-llm
-
-# Quick benchmark (caps frames)
-BILLY_HEADLESS=1 BILLY_MAX_FRAMES=5000 .venv/bin/python run.py --game zelda --attempts 3 --no-llm
+cd repo/billy-mitchell
+.venv/bin/python run.py --game zelda --attempts 3 --no-llm
+# Watch: cave macro → east march → cache replays on repeat passes
 ```
+
+### Benchmark (headless, compounding metrics)
+```bash
+BILLY_HEADLESS=1 BILLY_MAX_FRAMES=400000 .venv/bin/python run.py --game zelda --attempts 8 --no-llm
+# Do NOT pass --fresh if you want cache to compound across attempts
+# Read the "Compounding curve" table at the end: search↓ replay↑ frontier↑
+```
+
+### Capture east-march milestones
+```bash
+BILLY_HEADLESS=1 .venv/bin/python capture_zelda_state.py drive-east --attempts 3
+.venv/bin/python capture_zelda_state.py list
+```
+
+### Unit tests (no ROM for most)
+```bash
+.venv/bin/python -m pytest tests/test_zelda.py tests/test_zelda_march_dungeon.py \
+    tests/test_zelda_fixtures.py tests/test_start_cave.py -q
+```
+
+### What to point at in the log
+
+| Log line | Meaning |
+|----------|---------|
+| `🔍 solved (reach N) — remembered` | Micro-search found a new survivor; banked in cache |
+| `replay …` (in attempt summary `replay=N`) | Cache replay fired N times — **compounding working** |
+| `🧠 learned to pass overworld #X@Y` | Learn-from-death banked a past-death survivor |
+| `🗺️ screen → overworld #N` | Screen transition — frontier advancing |
+| `search=S replay=R` in attempt footer | S should drop, R should rise across attempts |
+
+---
 
 ## File map
 
 | File | Role |
 |------|------|
-| `game.py` | Game adapter, Observation binding |
-| `perception.py` | RAM → Scene |
-| `items.py` | Ground drop decoding |
-| `vision.py` | NW cave mouth RGB detection |
+| `game.py` | Game adapter; **monotonic progress** in `observe()` |
+| `perception.py` | RAM → Scene; `objective_score()` uses `max_hearts` not current health |
 | `walkthrough.py` | FAQ route phases & screen grid |
-| `curiosity.py` | Cave approach & inspection gates |
-| `explore.py` | Direction scoring with FAQ priority |
-| `reflex.py` | Live policy + cave macro playback |
+| `reflex.py` | Live policy + cave macro + east march + dungeon branch |
 | `start_cave.py` | ROM-verified wooden sword macro |
-| `hazard_hooks.py` | Combat/cave zones for Director |
-| `tuning.py` | Constants (START_SCREEN=119, etc.) |
+| `east_march.py` | FAQ row-8 hops, lip-walk, entry guard, cross reps |
+| `hazard_hooks.py` | Combat zones, stale_cache, learn-from-death hooks |
+| `dungeon_nav.py` | Dungeon explore + key doors + combat |
+| `fixtures.py` | Named savestate loader for tests / capture |
+| `capture_zelda_state.py` | CLI for milestone snapshots |
+| `data/zelda/states/` | Named `.state` files + `manifest.json` |
+| `data/solutions.jsonl` | Persisted SolutionCache (the policy) |
+
+---
+
+## SMB (for context — Billy's other proven title)
+
+Billy's original demo game. Hazard-scoped RL (1-3 lift sub-policy), full compounding through
+world 1-3, stuck trainer, section policies. Zelda reuses the **same Director loop** unchanged.
+
+---
+
+*Next engineering session: push #121 past 2921 → #122, rebuild cache to #124, confirm monotonic
+progress unlocks #124 learn-from-death, capture healthy #123/#124 savestates.*

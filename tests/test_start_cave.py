@@ -21,6 +21,7 @@ from billy.games.zelda.start_cave import (  # noqa: E402
     interior_phase,
     macro_candidates,
     phase_plan,
+    remaining_interior_plan,
 )
 from billy.systems.nes import controller as c  # noqa: E402
 
@@ -73,6 +74,13 @@ def test_phase_plan_keys():
     assert phase_plan("text") == TEXT_PLAN
     assert phase_plan("pickup") == SWORD_PICKUP_PLAN
     assert phase_plan("unknown") == []
+
+
+def test_remaining_interior_plan_slices_from_phase():
+    assert remaining_interior_plan("text") == INTERIOR_PLAN
+    assert remaining_interior_plan("climb") == CLIMB_PLAN + SWORD_PICKUP_PLAN + EXIT_PLAN
+    assert remaining_interior_plan("pickup") == SWORD_PICKUP_PLAN + EXIT_PLAN
+    assert remaining_interior_plan("exit") == EXIT_PLAN
 
 
 def test_cave_quest_and_timeout():

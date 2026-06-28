@@ -17,13 +17,21 @@ class ZeldaGame(Game):
     def __init__(self) -> None:
         self.system = NesSystem(self.RETRO_GAME, retro_inttype=Integrations.EXPERIMENTAL)
         self._last_good: tuple[int, str, tuple] = (0, "overworld #119", ("overworld", 119))
+        self._monotone_level_key: tuple | None = None
+        self._monotone_frontier: int = 0
 
     def observe(self, frame: int, ram: bytes, rgb=None) -> Observation:
         s = build_scene(ram, frame, rgb=rgb)
         if s.in_play:
             level_label = s.room_label
             level_key = (s.realm, s.map_location)
-            progress = s.objective_score()
+            raw_progress = s.objective_score()
+            if level_key != self._monotone_level_key:
+                self._monotone_level_key = level_key
+                self._monotone_frontier = raw_progress
+            else:
+                self._monotone_frontier = max(self._monotone_frontier, raw_progress)
+            progress = self._monotone_frontier
             self._last_good = (progress, level_label, level_key)
         else:
             progress, level_label, level_key = self._last_good

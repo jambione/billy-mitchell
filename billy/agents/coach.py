@@ -28,7 +28,8 @@ class CoachLesson:
     outcome: str
 
 
-def reflect(trajectory: list[TrajectoryStep], outcome: str, world_stage: str) -> CoachLesson | None:
+def reflect(trajectory: list[TrajectoryStep], outcome: str, world_stage: str,
+            *, memory: str = "") -> CoachLesson | None:
     """Return a lesson distilled from one attempt, or None if the model can't be reached."""
     if not trajectory:
         return None
@@ -36,9 +37,11 @@ def reflect(trajectory: list[TrajectoryStep], outcome: str, world_stage: str) ->
         f"x={s.x:>4} | {s.event:<11} | did: {s.action:<22} | {s.summary}"
         for s in _thin(trajectory, keep=24)
     )
+    mem = f"PRIOR SESSION MEMORY:\n{memory}\n\n" if memory else ""
     user = (
         f"LEVEL: {world_stage}\nHOW IT ENDED: {outcome}\n"
         f"FARTHEST X REACHED: {max(s.x for s in trajectory)}\n\n"
+        f"{mem}"
         f"REPLAY (one line per sampled moment):\n{replay}\n\n"
         f"Extract ONE concrete lesson for next time. JSON object only."
     )

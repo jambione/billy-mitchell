@@ -48,7 +48,13 @@ SWORD_PICKUP_PLAN: Plan = [
 ]
 
 EXIT_PLAN: Plan = [
+    Step(136, c.DOWN),
+]
+
+# NW cave exit drops Link on the south lip (y≈221); walk to FAQ row-8 corridor before east march.
+POST_CAVE_REPOSITION_PLAN: Plan = [
     Step(120, c.DOWN),
+    Step(21, c.DOWN),
 ]
 
 INTERIOR_PLAN: Plan = TEXT_PLAN + CLIMB_PLAN + SWORD_PICKUP_PLAN + EXIT_PLAN
@@ -100,6 +106,25 @@ def phase_plan(phase: str) -> Plan:
         "pickup": SWORD_PICKUP_PLAN,
         "exit": EXIT_PLAN,
     }.get(phase, [])
+
+
+def remaining_interior_plan(phase: str) -> Plan:
+    """Contiguous interior macro from `phase` through cave exit."""
+    if phase == "text":
+        return INTERIOR_PLAN
+    if phase == "climb":
+        return CLIMB_PLAN + SWORD_PICKUP_PLAN + EXIT_PLAN
+    if phase == "pickup":
+        return SWORD_PICKUP_PLAN + EXIT_PLAN
+    if phase == "exit":
+        return EXIT_PLAN
+    return []
+
+
+def is_cave_macro_plan(plan: Plan) -> bool:
+    """True when `plan` is a ROM-verified start-cave macro (bankable / replayable)."""
+    known = macro_candidates() + [INTERIOR_PLAN, ENTER_PLAN, FULL_FROM_APPROACH]
+    return any(list(plan) == list(candidate) for candidate in known)
 
 
 def macro_candidates() -> list[Plan]:

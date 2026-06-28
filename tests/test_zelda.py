@@ -22,9 +22,13 @@ from billy.games.zelda.vision import detect_cave_mouths  # noqa: E402
 from billy.games.zelda.explore import pick_explore_direction  # noqa: E402
 from billy.games.zelda.hazard_hooks import ZeldaHazardHooks  # noqa: E402
 from billy.games.zelda.perception import build_scene  # noqa: E402
+from billy.games.zelda.reflex import ZeldaReflex  # noqa: E402
+from billy.games.zelda.start_cave import INTERIOR_PLAN  # noqa: E402
+from billy.knowledge.cache import CacheEntry  # noqa: E402
 from billy.games.zelda.walkthrough import (
     LEVEL_1_SCREEN,
     SEA_EAST_SCREEN,
+    current_phase,
     grid_to_screen,
 )  # noqa: E402
 from billy.systems.nes import controller as c  # noqa: E402
@@ -160,6 +164,110 @@ def test_objective_score_weights_exploration():
     assert s2.objective_score() > base
 
 
+def test_observe_monotone_progress_survives_knockback():
+    """Combat knockback drops link_x; progress must not shrink on the same screen."""
+    game = ZeldaGame()
+
+    def ram_at(link_x: int) -> bytearray:
+        ram = bytearray(0x800)
+        ram[112] = link_x
+        ram[132] = 141
+        ram[18] = 5
+        ram[16] = 0
+        ram[235] = 124
+        ram[1647] = 0x22
+        ram[1645] = 5
+        ram[1649] = 1
+        ram[1623] = 1
+        ram[1569] = 124
+        ram[1570] = 125
+        ram[1571] = 126
+        return ram
+
+    peak = game.observe(0, bytes(ram_at(220)))
+    knocked = game.observe(1, bytes(ram_at(180)))
+    assert peak.progress > knocked.raw.objective_score()
+    assert knocked.progress == peak.progress
+    assert knocked.level_key == ("overworld", 124)
+
+    new_screen = bytearray(ram_at(40))
+    new_screen[235] = 125
+    new_screen[1569] = 125
+    advanced = game.observe(2, bytes(new_screen))
+    assert advanced.level_key == ("overworld", 125)
+    assert advanced.progress >= advanced.raw.objective_score()
+
+
+def test_cave_interior_reflex_emits_contiguous_plan():
+    """Pre-sword cave interior must commit the full ROM macro, not one step per tick."""
+    reflex = ZeldaReflex()
+    ram = bytearray(0x800)
+    ram[18] = 11
+    ram[16] = 0
+    ram[235] = 119
+    ram[1647] = 0x22
+    ram[112] = 112
+    ram[132] = 210
+    ram[1623] = 0
+    scene = build_scene(bytes(ram))
+    from billy.abstractions import Observation
+    obs = Observation(
+        frame=1, progress=scene.objective_score(), score=0,
+        level_label=scene.room_label, level_key=("overworld", 119),
+        dead=False, summary="", ascii_map="", raw=scene, elevation=scene.link_y)
+    reflex.reset(obs)
+    decision = reflex.step(obs)
+    assert decision.plan == INTERIOR_PLAN
+    assert len(decision.plan) > 1
+    assert "full" in decision.note
+
+
+def test_post_sword_phase_advances_to_east_to_sea():
+    assert current_phase(
+        map_location=119, sword_level=1, max_hearts=3,
+        visited={119}, in_cave=False) == "east_to_sea"
+
+
+def test_stale_cache_allows_cave_macro_replay_in_cave():
+    hooks = ZeldaHazardHooks()
+    ram = bytearray(0x800)
+    ram[18] = 11
+    ram[16] = 0
+    ram[235] = 119
+    ram[1647] = 0x22
+    ram[112] = 112
+    ram[132] = 210
+    ram[1623] = 0
+    scene = build_scene(bytes(ram))
+    from billy.abstractions import Observation
+    obs = Observation(
+        frame=1, progress=500, score=0, level_label=scene.room_label,
+        level_key=("overworld", 119), dead=False, summary="", ascii_map="",
+        raw=scene, elevation=scene.link_y)
+    cached = CacheEntry(plan=INTERIOR_PLAN, reach_after=1500)
+    assert not hooks.stale_cache(obs, cached)
+
+
+def test_stale_cache_stales_macro_on_pre_sword_overworld():
+    hooks = ZeldaHazardHooks()
+    ram = bytearray(0x800)
+    ram[18] = 5
+    ram[16] = 0
+    ram[235] = 119
+    ram[1647] = 0x22
+    ram[112] = 120
+    ram[132] = 141
+    ram[1623] = 0
+    scene = build_scene(bytes(ram))
+    from billy.abstractions import Observation
+    obs = Observation(
+        frame=1, progress=500, score=0, level_label=scene.room_label,
+        level_key=("overworld", 119), dead=False, summary="", ascii_map="",
+        raw=scene, elevation=scene.link_y)
+    cached = CacheEntry(plan=INTERIOR_PLAN, reach_after=1500)
+    assert hooks.stale_cache(obs, cached)
+
+
 def test_zelda_stale_cache_before_sword():
     hooks = ZeldaHazardHooks()
     ram = bytearray(0x800)
@@ -184,7 +292,8 @@ def test_zelda_stale_cache_before_sword():
         frame=1, progress=1500, score=0, level_label=scene2.room_label,
         level_key=("overworld", 119), dead=False, summary="", ascii_map="",
         raw=scene2, elevation=scene2.link_y)
-    assert not hooks.stale_cache(obs2, cached)
+    # Short partial plans stay stale post-sword (edge ping-pong guard).
+    assert hooks.stale_cache(obs2, cached)
     ram[18] = 11
     scene3 = build_scene(bytes(ram))
     obs3 = Observation(
