@@ -30,19 +30,70 @@ _INTTYPE = os.environ.get("BILLY_RETRO_INTTYPE", "").lower()
 
 
 class _Viewer:
-    """A tiny, best-effort pyglet window to watch Billy. Any failure degrades to headless."""
+    """A tiny, best-effort pyglet window to watch Billy. Any failure degrades to headless.
+
+    Doubles as the teleop keyboard source: while the window has focus it tracks held keys and
+    maps them to an NES button mask (arrows + Z/X = A/B, Tab/RShift = Start/Select). Enter ends
+    a teleop demo; Esc aborts it. `teleop_poll()` is a no-op until a window exists."""
 
     def __init__(self, scale: int = 3) -> None:
         import pyglet
         self._pyglet = pyglet
         self.window = None
         self.scale = scale
+        self._keys: set[int] = set()
+        self._finish = False
+        self._abort = False
+
+    def _bind_keys(self) -> None:
+        key = self._pyglet.window.key
+        self._KEYMAP = {
+            key.UP: controller.UP, key.DOWN: controller.DOWN,
+            key.LEFT: controller.LEFT, key.RIGHT: controller.RIGHT,
+            key.Z: controller.A, key.X: controller.B,
+            key.TAB: controller.START, key.RSHIFT: controller.SELECT,
+            key.LSHIFT: controller.SELECT,
+        }
+        ENTER, ESC = key.ENTER, key.ESCAPE
+
+        @self.window.event
+        def on_key_press(symbol, modifiers):
+            if symbol == ENTER:
+                self._finish = True
+            elif symbol == ESC:
+                self._abort = True
+            elif symbol in self._KEYMAP:
+                self._keys.add(symbol)
+
+        @self.window.event
+        def on_key_release(symbol, modifiers):
+            self._keys.discard(symbol)
+
+    def current_mask(self) -> int:
+        m = 0
+        for sym in self._keys:
+            m |= self._KEYMAP.get(sym, 0)
+        return m
+
+    def teleop_poll(self) -> tuple[int, bool, bool]:
+        """(held-button mask, finish_requested, abort_requested) — pumps window events first."""
+        if self.window is None:
+            return 0, False, False
+        self.window.switch_to()
+        self.window.dispatch_events()
+        return self.current_mask(), self._finish, self._abort
+
+    def reset_teleop(self) -> None:
+        self._keys.clear()
+        self._finish = False
+        self._abort = False
 
     def show(self, frame: np.ndarray) -> None:
         h, w, _ = frame.shape
         if self.window is None:
             self.window = self._pyglet.window.Window(
                 width=w * self.scale, height=h * self.scale, caption="Billy Mitchell", vsync=False)
+            self._bind_keys()
         img = self._pyglet.image.ImageData(w, h, "RGB", frame.tobytes(), pitch=-w * 3)
         self.window.switch_to()
         self.window.dispatch_events()
@@ -113,6 +164,42 @@ class RetroSession:
         self._slots: dict[int, bytes] = {}
         self._done = False
         self._started = False
+
+    # --- teleop (human-in-the-loop demo capture) ----------------------------------------
+    def ensure_viewer(self) -> bool:
+        """Make sure the watch window exists (so it can take keyboard focus). Returns success."""
+        if self._viewer is None:
+            return False
+        if self._rgb is None:
+            try:
+                self._rgb = np.asarray(self.env.render())
+            except Exception:
+                return False
+        prev = self._show
+        self._show = True
+        self._display()
+        self._show = prev
+        return self._viewer is not None and self._viewer.window is not None
+
+    def teleop_poll(self) -> tuple[int, bool, bool]:
+        """(held NES mask, finish?, abort?) from the watch window's keyboard."""
+        if self._viewer is None:
+            return 0, False, False
+        return self._viewer.teleop_poll()
+
+    def teleop_reset(self) -> None:
+        if self._viewer is not None:
+            self._viewer.reset_teleop()
+
+    def teleop_step(self, mask: int) -> None:
+        """Advance ONE frame with a human-held button mask, displayed and paced in real time."""
+        prev_show, prev_rt = self._show, self._realtime
+        self._show, self._realtime = True, True   # pace at 60fps even if BILLY_TURBO is set
+        try:
+            self._step_once(self._action_from_mask(mask))
+        finally:
+            self._show, self._realtime = prev_show, prev_rt
+        self._refresh_ram()
 
     @contextlib.contextmanager
     def search_mode(self):

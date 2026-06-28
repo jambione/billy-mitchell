@@ -133,13 +133,40 @@ on #121+; keep ping-pong guard on #119–#120 only.
 
 ---
 
+## Human-in-the-loop teleop (NEW — learning accelerator)
+
+A wall Billy can't search past, a human can demonstrate once. A demo is just an exact button
+sequence — the same object micro-search produces — so it banks through the normal pipeline with
+no invariant break: **play it → verify it survives AND advances on a clone → bank to the
+SolutionCache keyed to the start node → replayed free forever.**
+
+- Core: `billy/teleop.py` (`TeleopRecorder` RLE, `verify_demo`, `bank_demo`) — game-agnostic.
+- Keyboard capture: `_Viewer` in `systems/nes/retro_session.py` (arrows + Z/X = A/B, Tab/RShift
+  = Start/Select, ENTER = finish, ESC = abort) + `RetroSession.teleop_*` methods.
+- CLI: `teleop_zelda.py` — `capture` (headless: drive Billy to the spot, save state) then
+  `play` (windowed: you play, it verifies + banks). `stale_cache()` now trusts a far-advancing
+  survivor (≥96 progress) so a dodging demo with UP/DOWN actually replays.
+
+```bash
+# 1. capture the stuck-spot state (verified working — reaches #121, hearts=1):
+BILLY_HEADLESS=1 .venv/bin/python teleop_zelda.py capture --screen 121 \
+    --out data/zelda/states/teleop_121.state
+# 2. play through it and bank your demo (windowed; needs a display):
+.venv/bin/python teleop_zelda.py play --from-state data/zelda/states/teleop_121.state --bank
+# 3. watch Billy replay it autonomously:
+.venv/bin/python run.py --game zelda --attempts 3 --no-llm
+```
+
 ## What's left (priority order)
 
 ### P1 — Break through #121 → #127 (immediate)
 
-1. **#121 combat death @2921** — banked replays work, but survivor does not clear the death zone
-   or scroll to #122. Tune learn-from-death horizon / combat candidates on row 8; ensure learned
-   pass at ~2745 replays and advances past 2921.
+1. **#121 combat death @2921 — ROOT CAUSE: Link arrives with 1 heart.** Diagnosed June 2026:
+   he takes 2 hits on #119/#120 and reaches #121 at `hearts=1`, so no combat survivor exists at
+   2921 and learn-from-death banks nothing (`learned to pass` fires 0×; search thrashes
+   2769→2921→die→drop→re-search). **Two fixes:** (a) teleop demo past #121 (above), or (b)
+   autonomous — stop the heart loss on #119/#120 so he arrives at 3 hearts and existing search
+   survives.
 2. **Re-march to #123–#124** — prior session reached #124 on retry lives; current cache only
    compounds through #121. Need longer run **without `--fresh`** to rebuild deep-screen cache.
 3. **Validate #124 learn-from-death** — monotonic progress should unlock

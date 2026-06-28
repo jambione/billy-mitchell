@@ -3,6 +3,11 @@ from __future__ import annotations
 
 from ...abstractions import Observation, Plan
 
+# A cached east-march survivor whose reach exceeds the current node by this many progress units
+# has demonstrably cleared the screen's hazards (within-screen advance ≈150, screen cross is far
+# larger). Trust such an entry instead of staling it for its button shape — this is what lets a
+# human teleop demo (which may dodge with UP/DOWN) replay on later passes.
+_TRUST_ADVANCE_PX = 96
 
 
 class ZeldaHazardHooks:
@@ -166,6 +171,12 @@ class ZeldaHazardHooks:
                     and not is_east_march_plan(cached.plan)
                     and not is_east_march_cross_plan(cached.plan)
                     and not is_east_march_combat_plan(cached.plan)):
+                # A verified survivor that clears well past this node (e.g. a human teleop demo
+                # that dodges octoroks with UP/DOWN) is exactly what we want to replay — trust it.
+                # Ping-pong-prone short edge/cross plans are handled above, so this can't revive
+                # them; the wander rules below only target plans that barely move.
+                if cached.reach_after - obs.progress >= _TRUST_ADVANCE_PX:
+                    return False
                 if buttons & (c.UP | c.DOWN):
                     return True
                 if (buttons & c.LEFT) and not scene.at_left_edge:
