@@ -29,6 +29,29 @@ _GAME = os.environ.get("BILLY_RETRO_GAME", "SuperMarioBros-Nes-v0")
 _INTTYPE = os.environ.get("BILLY_RETRO_INTTYPE", "").lower()
 
 
+def _load_pad_map() -> dict:
+    """Gamepad button-index map (env-overridable; defaults aimed at 8Bitdo SN30 Pro on macOS).
+    Use `teleop.py pad-debug` to read your pad's real indices, then set BILLY_PAD_* if needed."""
+    def _i(name, default):
+        try:
+            return int(os.environ.get(name, default))
+        except ValueError:
+            return default
+    # Defaults calibrated for 8Bitdo SN30 Pro (Bluetooth, macOS) via `teleop.py pad-debug`.
+    # NOTE: this pad's d-pad "hat" never centers (floats at (0,±1)) so it's unusable — movement
+    # comes from the LEFT ANALOG STICK. Buttons: JUMP=2, RUN=1 (verified).
+    return {
+        "A": _i("BILLY_PAD_A", 2),        # NES A (jump / sword)
+        "B": _i("BILLY_PAD_B", 1),        # NES B (run / attack)
+        "SELECT": _i("BILLY_PAD_SELECT", 8),
+        "START": _i("BILLY_PAD_START", 7),
+        "FINISH": _i("BILLY_PAD_FINISH", -1),   # optional pad button to end a teleop demo
+        # hat_x (left/right) centers cleanly at 0, so use it for the d-pad; hat_y (up/down) floats
+        # and is unusable, so vertical stays on the analog stick.
+        "use_hat": os.environ.get("BILLY_PAD_USE_HAT", "1") == "1",
+    }
+
+
 class _Viewer:
     """A tiny, best-effort pyglet window to watch Billy. Any failure degrades to headless.
 
@@ -44,6 +67,63 @@ class _Viewer:
         self._keys: set[int] = set()
         self._finish = False
         self._abort = False
+        self.joystick = None
+        self._joy_map = _load_pad_map()
+
+    def _open_joystick(self) -> None:
+        """Best-effort: open the first gamepad (e.g. 8Bitdo SN30 Pro) for teleop input.
+
+        On macOS, pyglet HID (gamepad) events are NOT delivered by window.dispatch_events();
+        they come through the platform event loop, which we must start and step each frame."""
+        try:
+            sticks = self._pyglet.input.get_joysticks()
+            if sticks:
+                self.joystick = sticks[0]
+                self.joystick.open(window=self.window)
+                self._pyglet.app.platform_event_loop.start()
+        except Exception:
+            self.joystick = None
+
+    def _joy_mask(self) -> int:
+        j = self.joystick
+        if j is None:
+            return 0
+        m = 0
+        dz = 0.4
+        # Movement from the LEFT ANALOG STICK (rests cleanly at 0; up = negative y). The d-pad hat
+        # on this pad never centers, so it's off by default (set BILLY_PAD_USE_HAT=1 to try it).
+        x = getattr(j, "x", 0.0) or 0.0
+        y = getattr(j, "y", 0.0) or 0.0
+        if x < -dz:
+            m |= controller.LEFT
+        if x > dz:
+            m |= controller.RIGHT
+        if y < -dz:
+            m |= controller.UP
+        if y > dz:
+            m |= controller.DOWN
+        if self._joy_map.get("use_hat"):
+            try:
+                if j.hat_x < -0.5:
+                    m |= controller.LEFT
+                if j.hat_x > 0.5:
+                    m |= controller.RIGHT
+            except Exception:
+                pass
+        btns = getattr(j, "buttons", []) or []
+        def pressed(idx):
+            return 0 <= idx < len(btns) and btns[idx]
+        if pressed(self._joy_map["A"]):
+            m |= controller.A
+        if pressed(self._joy_map["B"]):
+            m |= controller.B
+        if pressed(self._joy_map["START"]):
+            m |= controller.START
+        if pressed(self._joy_map["SELECT"]):
+            m |= controller.SELECT
+        if pressed(self._joy_map.get("FINISH", -1)):
+            self._finish = True
+        return m
 
     def _bind_keys(self) -> None:
         key = self._pyglet.window.key
@@ -73,7 +153,7 @@ class _Viewer:
         m = 0
         for sym in self._keys:
             m |= self._KEYMAP.get(sym, 0)
-        return m
+        return m | self._joy_mask()
 
     def teleop_poll(self) -> tuple[int, bool, bool]:
         """(held-button mask, finish_requested, abort_requested) — pumps window events first."""
@@ -81,6 +161,12 @@ class _Viewer:
             return 0, False, False
         self.window.switch_to()
         self.window.dispatch_events()
+        if self.joystick is not None:
+            # Pump HID/gamepad events (not delivered via window.dispatch_events on macOS).
+            try:
+                self._pyglet.app.platform_event_loop.step(0)
+            except Exception:
+                pass
         return self.current_mask(), self._finish, self._abort
 
     def reset_teleop(self) -> None:
@@ -94,6 +180,7 @@ class _Viewer:
             self.window = self._pyglet.window.Window(
                 width=w * self.scale, height=h * self.scale, caption="Billy Mitchell", vsync=False)
             self._bind_keys()
+            self._open_joystick()
         img = self._pyglet.image.ImageData(w, h, "RGB", frame.tobytes(), pitch=-w * 3)
         self.window.switch_to()
         self.window.dispatch_events()
@@ -190,6 +277,20 @@ class RetroSession:
     def teleop_reset(self) -> None:
         if self._viewer is not None:
             self._viewer.reset_teleop()
+
+    def pad_state(self):
+        """Raw gamepad state for calibration: pressed button indices, hat, sticks (or None)."""
+        v = self._viewer
+        if v is None or v.joystick is None:
+            return None
+        j = v.joystick
+        btns = [i for i, b in enumerate(getattr(j, "buttons", []) or []) if b]
+        return {
+            "buttons": btns,
+            "hat": (getattr(j, "hat_x", 0), getattr(j, "hat_y", 0)),
+            "stick": (round(getattr(j, "x", 0.0) or 0.0, 2), round(getattr(j, "y", 0.0) or 0.0, 2)),
+            "name": getattr(j.device, "name", "?"),
+        }
 
     def teleop_step(self, mask: int) -> None:
         """Advance ONE frame with a human-held button mask, displayed and paced in real time."""

@@ -178,6 +178,43 @@ def cmd_play(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pad_debug(args: argparse.Namespace) -> int:
+    """Open a window + gamepad and print live button/hat/stick state, to calibrate the mapping."""
+    os.environ["BILLY_HEADLESS"] = "0"
+    os.environ.setdefault("BILLY_TURBO", "1")
+    from billy.systems.nes import controller as c
+
+    game = _game(args.game)
+    session = game.system.connect()
+    session.wait_until_live()
+    if not session.ensure_viewer():
+        print("[pad-debug] no window (display attached?)")
+        return 2
+    st = session.pad_state()
+    if st is None:
+        print("[pad-debug] no gamepad detected by pyglet — is it paired/awake?")
+        return 1
+    print(f"[pad-debug] gamepad: {st['name']}")
+    print("[pad-debug] press each button; note the index. Ctrl-C to stop.")
+    print("[pad-debug] map with: BILLY_PAD_A=<jump idx> BILLY_PAD_B=<run idx> "
+          "BILLY_PAD_START=<i> BILLY_PAD_SELECT=<i>  (BILLY_PAD_HATY_INV=1 if up/down flipped)")
+    last = None
+    frames = 0
+    while frames < args.max_frames:
+        session.teleop_poll()          # pump window+device events
+        session.teleop_step(c.NEUTRAL) # keep the window alive, no input
+        frames += 1
+        st = session.pad_state()
+        if not st:
+            continue
+        sig = (tuple(st["buttons"]), st["hat"])   # print EVERY change incl. rest (reveals resting hat)
+        if sig != last:
+            print(f"  buttons={st['buttons']} hat={st['hat']} stick={st['stick']}")
+            last = sig
+    session.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Human-in-the-loop teleop demo capture (any game).")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -199,7 +236,13 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--no-auto-finish", dest="auto_finish", action="store_false",
                     help="don't auto-stop on level/screen change (press ENTER yourself)")
 
+    dbg = sub.add_parser("pad-debug", help="Print live gamepad button/hat indices for mapping.")
+    dbg.add_argument("--game", default="smb")
+    dbg.add_argument("--max-frames", type=int, default=3600)
+
     args = p.parse_args(argv)
+    if args.cmd == "pad-debug":
+        return cmd_pad_debug(args)
     if args.cmd == "capture":
         if args.until_level is None and args.until_progress is None:
             print("capture needs --until-level or --until-progress", file=sys.stderr)
