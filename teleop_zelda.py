@@ -96,6 +96,7 @@ def cmd_play(args: argparse.Namespace) -> int:
           f"prog={start_obs.progress} hearts={s.health}")
     print("[teleop] arrows=move  Z=A  X=B  Tab=Start  RShift=Select  ENTER=finish  ESC=abort")
 
+    start_screen = s.map_location
     rec = TeleopRecorder()
     obs = start_obs
     frames = 0
@@ -114,6 +115,11 @@ def cmd_play(args: argparse.Namespace) -> int:
         if obs.dead:
             print(f"[teleop] died at prog={obs.progress} after {frames}f")
             break
+        # Auto-finish the instant you reach the next screen east, ALIVE — no need to press ENTER
+        # in time. This is the success condition (crossed the hazard), so capture it immediately.
+        if args.auto_finish and obs.raw.in_play and obs.raw.map_location > start_screen:
+            print(f"[teleop] auto-finish: crossed to #{obs.raw.map_location} alive at {frames}f")
+            break
 
     if aborted:
         print("[teleop] aborted — nothing banked")
@@ -122,7 +128,14 @@ def cmd_play(args: argparse.Namespace) -> int:
 
     plan = rec.plan()
     print(f"[teleop] captured {len(plan)} steps / {rec.frame_count()} frames")
-    result = verify_demo(session, game, start_state, plan, min_progress=args.min_progress)
+    # Always persist the demo so a good run is never lost (e.g. to a measurement glitch).
+    demo_path = Path(args.from_state).with_suffix(".demo.json")
+    import json
+    demo_path.write_text(json.dumps({"steps": [[s.frames, s.buttons] for s in plan]}))
+    print(f"[teleop] demo saved -> {demo_path}")
+    # Verify with a FRESH observer: the live `game` carries a monotonic progress high-water mark
+    # from this play session, which would mask the demo's gain after we rewind to the start state.
+    result = verify_demo(session, ZeldaGame(), start_state, plan, min_progress=args.min_progress)
     print(f"[teleop] verify: {result.summary()}")
 
     if not result.bankable:
@@ -156,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--bank", action="store_true", help="bank the demo if it verifies")
     pl.add_argument("--max-frames", type=int, default=3600, help="max teleop frames (~60s at 60fps)")
     pl.add_argument("--min-progress", type=int, default=8, help="min progress gain to count as advance")
+    pl.add_argument("--no-auto-finish", dest="auto_finish", action="store_false",
+                    help="don't auto-stop when you cross to the next screen (press ENTER yourself)")
 
     args = p.parse_args(argv)
     if args.cmd == "capture":
