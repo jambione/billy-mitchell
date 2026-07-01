@@ -54,6 +54,11 @@ class _Viewer:
         self._abort = False
         self.joystick = None
         self._joy_map = _load_pad_map()
+        # On-screen overlay (calibration prompts etc.): first line renders big/highlighted.
+        # Labels are rebuilt only when the lines change (per-frame Label construction is slow).
+        self._overlay: tuple[str, ...] = ()
+        self._overlay_key: tuple[str, ...] | None = None
+        self._overlay_widgets: list = []
 
     def _open_joystick(self) -> None:
         """Best-effort: open the first gamepad (e.g. 8Bitdo SN30 Pro) for teleop input.
@@ -75,11 +80,14 @@ class _Viewer:
             return 0
         m = 0
         dz = float(self._joy_map.get("deadzone", 0.4))
-        # Movement from the LEFT ANALOG STICK; up-sign varies per pad/OS backend, so calibration
-        # records `invert_y`. The d-pad hat contributes left/right only when `use_hat` is set
-        # (some pads' hats never center — calibration detects that and turns it off).
+        # Movement from the LEFT ANALOG STICK; either axis's sign can vary per pad/OS backend
+        # (independently), so calibration records `invert_x`/`invert_y`. The d-pad hat
+        # contributes left/right only when `use_hat` is set (some pads' hats never center —
+        # calibration detects that and turns it off).
         x = getattr(j, "x", 0.0) or 0.0
         y = getattr(j, "y", 0.0) or 0.0
+        if self._joy_map.get("invert_x"):
+            x = -x
         if self._joy_map.get("invert_y"):
             y = -y
         if x < -dz:
@@ -183,7 +191,37 @@ class _Viewer:
         tex = img.get_texture()
         tex.width, tex.height = w * self.scale, h * self.scale
         tex.blit(0, 0)
+        if self._overlay:
+            self._draw_overlay(w * self.scale, h * self.scale)
         self.window.flip()
+
+    def set_overlay(self, lines) -> None:
+        """On-screen text banner (e.g. calibration prompts). None/[] clears it."""
+        self._overlay = tuple(str(x) for x in lines) if lines else ()
+
+    def _draw_overlay(self, width: int, height: int) -> None:
+        try:
+            if self._overlay != self._overlay_key:
+                shapes, text = self._pyglet.shapes, self._pyglet.text
+                title, rest = self._overlay[0], self._overlay[1:]
+                band_h = 46 + 22 * len(rest)
+                widgets = [shapes.Rectangle(0, height - band_h, width, band_h,
+                                            color=(0, 0, 0))]
+                widgets[0].opacity = 185
+                widgets.append(text.Label(
+                    title, x=width // 2, y=height - 24, anchor_x="center", anchor_y="center",
+                    font_size=18, bold=True, color=(255, 220, 60, 255)))
+                for i, line in enumerate(rest):
+                    widgets.append(text.Label(
+                        line, x=width // 2, y=height - 48 - 22 * i,
+                        anchor_x="center", anchor_y="center",
+                        font_size=12, color=(235, 235, 235, 255)))
+                self._overlay_widgets = widgets
+                self._overlay_key = self._overlay
+            for wdg in self._overlay_widgets:
+                wdg.draw()
+        except Exception:
+            self._overlay_widgets, self._overlay_key = [], None   # never break the frame loop
 
     def close(self) -> None:
         if self.window is not None:
@@ -284,6 +322,11 @@ class RetroSession:
         """Apply a (freshly calibrated) pad mapping to the live viewer without reconnecting."""
         if self._viewer is not None:
             self._viewer._joy_map = dict(mapping)
+
+    def set_overlay(self, lines) -> None:
+        """Draw a text banner over the game frame (calibration prompts). None clears it."""
+        if self._viewer is not None:
+            self._viewer.set_overlay(lines)
 
     def pad_state(self):
         """Raw gamepad state for calibration: pressed button indices, hat, sticks (or None)."""

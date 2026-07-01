@@ -11,6 +11,7 @@ from billy.systems.nes.pad_map import DEFAULTS, describe, load_pad_map, save_pad
 def test_defaults_when_no_file(tmp_path):
     m = load_pad_map(tmp_path / "missing.json")
     assert m["A"] == DEFAULTS["A"] and m["use_hat"] == DEFAULTS["use_hat"]
+    assert m["invert_x"] is False and m["invert_y"] is False
 
 
 def test_saved_calibration_overrides_defaults(tmp_path):
@@ -28,10 +29,19 @@ def test_env_overrides_saved_map(tmp_path, monkeypatch):
     monkeypatch.setenv("BILLY_PAD_A", "9")
     monkeypatch.setenv("BILLY_PAD_USE_HAT", "0")
     monkeypatch.setenv("BILLY_PAD_DEADZONE", "0.55")
+    monkeypatch.setenv("BILLY_PAD_INVERT_X", "1")
     m = load_pad_map(p)
     assert m["A"] == 9
     assert m["use_hat"] is False
     assert m["deadzone"] == 0.55
+    assert m["invert_x"] is True
+
+
+def test_invert_x_and_invert_y_are_independent(tmp_path):
+    p = tmp_path / "m.json"
+    save_pad_map({"invert_x": True, "invert_y": False}, p)
+    m = load_pad_map(p)
+    assert m["invert_x"] is True and m["invert_y"] is False
 
 
 def test_corrupt_file_falls_back_to_defaults(tmp_path):

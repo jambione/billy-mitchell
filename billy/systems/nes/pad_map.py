@@ -10,8 +10,8 @@ Mapping keys:
   viewer resolves them against the active controller module, so one saved map drives NES and
   SNES titles alike.
   Movement options: "use_hat" (d-pad hat for left/right; some pads' hats never center —
-  calibration detects this), "deadzone" (analog stick), "invert_y" (stick up-sign differs
-  across pads/OS backends).
+  calibration detects this), "deadzone" (analog stick), "invert_x"/"invert_y" (stick sign
+  differs across pads/OS backends — either axis can come in flipped independently).
 """
 from __future__ import annotations
 
@@ -25,13 +25,13 @@ PAD_MAP_FILE = config.DATA_DIR / "pad_map.json"
 
 # Button-index roles a wizard can assign (console extras included; harmless if absent).
 ROLE_KEYS = ("A", "B", "START", "SELECT", "FINISH", "SPIN", "X", "L", "R")
-OPTION_KEYS = ("use_hat", "deadzone", "invert_y")
+OPTION_KEYS = ("use_hat", "deadzone", "invert_x", "invert_y")
 
 DEFAULTS = {
     # 8Bitdo SN30 Pro (Bluetooth, macOS), verified via pad-debug: JUMP=2, RUN=1.
     "A": 2, "B": 1, "SELECT": 8, "START": 7, "FINISH": -1,
     # This pad's hat_y floats (never centers) so vertical comes from the stick; hat_x is fine.
-    "use_hat": True, "deadzone": 0.4, "invert_y": False,
+    "use_hat": True, "deadzone": 0.4, "invert_x": False, "invert_y": False,
 }
 
 
@@ -60,6 +60,8 @@ def load_pad_map(path: str | Path | None = None) -> dict:
             m["deadzone"] = float(os.environ["BILLY_PAD_DEADZONE"])
         except ValueError:
             pass
+    if "BILLY_PAD_INVERT_X" in os.environ:
+        m["invert_x"] = os.environ["BILLY_PAD_INVERT_X"] == "1"
     if "BILLY_PAD_INVERT_Y" in os.environ:
         m["invert_y"] = os.environ["BILLY_PAD_INVERT_Y"] == "1"
     return m
@@ -77,5 +79,5 @@ def describe(mapping: dict) -> str:
     roles = "  ".join(f"{k}={mapping[k]}" for k in ROLE_KEYS
                       if k in mapping and mapping[k] is not None and mapping[k] >= 0)
     opts = (f"use_hat={mapping.get('use_hat')}  deadzone={mapping.get('deadzone')}  "
-            f"invert_y={mapping.get('invert_y')}")
+            f"invert_x={mapping.get('invert_x')}  invert_y={mapping.get('invert_y')}")
     return f"{roles}\n  {opts}"

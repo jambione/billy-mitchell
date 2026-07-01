@@ -239,6 +239,7 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
 
     # -- 1. rest analysis: find buttons that read pressed at rest + resting hat/stick --------
     print("[calibrate] hands off the pad for a moment (reading its resting state)...")
+    session.set_overlay(["HANDS OFF THE PAD", "reading its resting state..."])
     rest_buttons: set[int] = set()
     rest_hats, rest_xs, rest_ys = [], [], []
     for _ in range(90):
@@ -272,12 +273,17 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     if getattr(ctrl, "SPIN", 0):
         roles.insert(2, ("SPIN", "SPIN — SMW spin jump (optional)"))
 
-    mapping: dict = {"use_hat": hat_rests_centered, "invert_y": False,
+    mapping: dict = {"use_hat": hat_rests_centered, "invert_x": False, "invert_y": False,
                      "deadzone": round(min(0.6, max(0.35, abs(rest_x) + 0.2,
                                                     abs(rest_y) + 0.2)), 2)}
     taken: set[int] = set()
+    done_roles: list[str] = []
     for role, label in roles:
         print(f"[calibrate] press the pad button for  {label}   (or keyboard ENTER to skip)")
+        so_far = "assigned: " + ("  ".join(done_roles) if done_roles else "(none yet)")
+        session.set_overlay([f"PRESS:  {label}",
+                             "on your GAMEPAD, press that button now",
+                             "keyboard ENTER = skip   ESC = abort", so_far])
         session.teleop_reset()          # clear any pending finish/abort
         assigned = -1
         prev: set[int] = set(rest_buttons)
@@ -285,6 +291,7 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
             st, fin, ab = pump()
             if ab:
                 print("[calibrate] aborted — nothing saved")
+                session.set_overlay(None)
                 session.close()
                 return 1
             if fin:
@@ -296,6 +303,8 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
                 assigned = min(fresh)
                 taken.add(assigned)
                 print(f"[calibrate]   {role} = button {assigned}")
+                session.set_overlay([f"{role} = button {assigned}  OK",
+                                     "release the button..."])
                 while True:             # wait for release so one press can't claim two roles
                     st, _, _ = pump()
                     if not st or assigned not in st["buttons"]:
@@ -303,11 +312,15 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
                 break
             prev = now
         mapping[role] = assigned
+        done_roles.append(f"{role}={assigned}" if assigned >= 0 else f"{role}=skip")
 
     # -- 3. movement: detect hat vs stick and the stick's up-sign ----------------------------
-    def sample_direction(prompt: str, frames: int = 240):
+    def sample_direction(prompt: str, frames: int = 600):   # ~10s — reading the banner takes time
         """Prompt, then wait for a sustained hat/stick deviation; returns (hat_dx, dx, dy)."""
         print(f"[calibrate] {prompt}")
+        session.set_overlay([prompt.upper().rstrip(" ."),
+                             "hold it steady for a second",
+                             "keyboard ENTER = skip   ESC = abort"])
         session.teleop_reset()
         streak = 0
         for _ in range(frames):
@@ -327,13 +340,22 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     left = sample_direction("hold LEFT (d-pad or stick) ...")
     if left is not None:
         hat_dx, dx, _ = left
-        if hat_rests_centered and abs(hat_dx) > 0.5:
+        used_hat = hat_rests_centered and abs(hat_dx) > 0.5
+        if used_hat:
             mapping["use_hat"] = True
             print("[calibrate]   left/right: d-pad hat works")
+            if hat_dx > 0.5:
+                print("[calibrate]   ⚠ hat reads reversed (LEFT read as RIGHT) — "
+                      "no auto-fix for a reversed hat; set BILLY_PAD_USE_HAT=0 to fall "
+                      "back to the stick instead")
         elif abs(dx) > 0.35:
             print("[calibrate]   left/right: analog stick")
-        if dx > 0.35 or hat_dx > 0.5:
-            print("[calibrate]   ⚠ that read as RIGHT — check the pad orientation")
+            # Engine convention (see _joy_mask): LEFT fires on x < -deadzone. If pushing LEFT
+            # gives a POSITIVE x on this pad/backend, record invert_x so the sign matches —
+            # same fix as invert_y below, just for the horizontal axis.
+            mapping["invert_x"] = dx > 0.35
+            if mapping["invert_x"]:
+                print("[calibrate]   stick left reads positive on this pad — saving invert_x")
     up = sample_direction("now hold UP (stick) ...")
     if up is not None:
         _, _, dy = up
@@ -363,6 +385,10 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
         if names != last:
             print(f"    {names}")
             last = names
+        session.set_overlay(["VERIFY: press buttons and move the stick",
+                             f"reading:  {names}",
+                             "keyboard ENTER = done"])
+    session.set_overlay(None)
     session.close()
     print("[calibrate] done. Play with: "
           f".venv/bin/python teleop.py play --game {args.game} --from-state <state> --bank")
