@@ -3,6 +3,16 @@
 The **tactical** near-term list (finish 1-3 → 1-4 → 2-1 + infra). For the **strategic** direction
 (exponential velocity, objective-aware play, and new games like Zelda) see [ROADMAP.md](ROADMAP.md).
 
+**July 1, 2026 update** (same branch): the exponential-learning infrastructure landed —
+whole-game tape chaining (1-1 re-clears at tape%=100 / search=0 / 0.7s), demo pipeline ×3
+(BC warm-start via `train_section.py --demo`, `teleop.py --tape`, pull-based
+`request_demo`), skill distillation (`knowledge/distill.py`), parallel micro-search
+(`BILLY_PARALLEL_SEARCH=N`), and the SNES/SMW scaffold (`--game smw`, pending ROM — see
+[billy/games/smw/STATUS.md](billy/games/smw/STATUS.md)). **The 1-3 lift below is now the
+designated first demo-teach moment** — a request is already filed in
+`data/demo_requests.jsonl` with the ready-to-run teleop command; one human crossing
+becomes cache entry + BC warm-start for the retrain.
+
 Roadmap as of the hazard-scoped RL sub-policy milestone (branch
 `feat/pipe-entry-and-powerup-perception`, commit `9e364d6`).
 
