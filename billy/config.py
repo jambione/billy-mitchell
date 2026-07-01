@@ -80,6 +80,11 @@ EXPANDED_FALLBACK = (os.environ.get("BILLY_EXPANDED_FALLBACK",
                                     os.environ.get("BILLY_EXPANDED_SEARCH", "1")) == "1")
 EXPANDED_SEARCH = EXPANDED_FALLBACK   # back-compat alias
 
+# --- Parallel micro-search (worker-pool candidate evaluation) ----------------------------
+# N worker subprocesses (one emulator each — stable-retro allows one per process) evaluate
+# search candidates concurrently. 0 = serial (default; the regression-guard baseline).
+PARALLEL_SEARCH = int(os.environ.get("BILLY_PARALLEL_SEARCH", "0"))
+
 # --- Skill distillation (cross-game transfer of banked maneuvers) ------------------------
 # Significant banked crossings are distilled into `sequence` Skills (exact plan + situation
 # embedding) that seed micro-search at SIMILAR hazards anywhere. Search-verified before commit.

@@ -29,6 +29,40 @@ from .stuck_trainer import (
 
 _IDLE: Plan = [Step(2, 0)]   # neutral input — to consume a pending frame or coast a cutscene
 
+# a level/area advance (e.g. entering a pipe) dominates any reach
+_TRANSITION_BONUS = 100_000
+_MIN_PROGRESS_PX = 8   # a "solution" must actually advance, else it's a stall, not an escape
+
+
+def rollout_candidate(session, observe, reflex, game, plan: Plan,
+                      settle: int = config.SEARCH_HORIZON_FRAMES,
+                      *, min_progress: int = _MIN_PROGRESS_PX) -> tuple:
+    """Run one candidate from the CURRENT (already-restored) state, THEN coast forward `settle`
+    frames watching for a delayed death. Module-level so the parallel search workers evaluate
+    candidates with EXACTLY the code the serial path uses (see Director._rollout for the full
+    rationale: post-candidate settle budget, transition bonus, detour horizon)."""
+    start = observe()
+    start_level, base_x = start.level_key, start.progress
+    session.send_plan(plan)
+    obs = observe()
+    reached = obs.progress
+    advanced = game.search_area_advance(start_level, obs.level_key)
+    detour = obs.progress < base_x
+    coasted = 0
+    while coasted < settle and not obs.dead and not advanced:
+        coast = reflex.advance_plan(obs)
+        session.send_plan(coast)
+        obs = observe()
+        advanced = game.search_area_advance(start_level, obs.level_key)
+        reached = max(reached, obs.progress)
+        coasted += max(1, plan_frames(coast))
+        if coasted >= config.SEARCH_HORIZON_FRAMES and (
+                not detour or reached > base_x + min_progress):
+            break
+    if advanced:
+        reached = base_x + _TRANSITION_BONUS
+    return (not obs.dead), reached, obs.progress, obs.elevation
+
 
 class Director:
     def __init__(self, game: Game, kb: KnowledgeBase, use_llm: bool = True,
@@ -52,6 +86,12 @@ class Director:
         # Optional hazard-scoped RL sub-policies: at a registered section they SEED micro-search with
         # a learned crossing candidate (verified+banked like any solution). None = pure reflex/search.
         self.sections = sections
+        # Optional parallel micro-search: N emulator workers evaluate candidates concurrently
+        # (BILLY_PARALLEL_SEARCH=<n>). Serial path is the default and the regression baseline.
+        self.pool = None
+        if config.PARALLEL_SEARCH > 0:
+            from .search_pool import SearchPool
+            self.pool = SearchPool(game, config.PARALLEL_SEARCH)
         self.use_llm = use_llm
         # Eval mode: end each attempt at the FIRST level clear so every attempt is a fresh run of
         # the same starting level. This exposes the compounding curve (search-per-clear falls and
@@ -99,7 +139,7 @@ class Director:
         return self.game.observe(st.frame, st.ram, getattr(st, "rgb", None))
 
     # --- micro-search: evaluate candidates on a CLONE so the live run never visibly rewinds ----
-    _TRANSITION_BONUS = 100_000   # a level/area advance (e.g. entering a pipe) dominates any reach
+    _TRANSITION_BONUS = _TRANSITION_BONUS   # class alias (module constant is the source of truth)
 
     def _rollout(self, plan: Plan, settle: int = config.SEARCH_HORIZON_FRAMES) -> tuple[bool, int]:
         """Run the candidate, THEN coast forward `settle` frames and watch for a delayed death.
@@ -113,38 +153,16 @@ class Director:
         A candidate that ADVANCES the level_key — most importantly entering a pipe, which warps Mario
         to a new area where x resets to a low value — would otherwise look like NO progress (x didn't
         grow). We detect the advance and report a dominating `reached` so the search prefers and banks
-        it; this is what lets Billy take 1-2's mandatory exit pipe instead of running at it forever."""
-        start = self._observe()
-        start_level, base_x = start.level_key, start.progress
-        self.session.send_plan(plan)
-        obs = self._observe()
-        reached = obs.progress
-        advanced = self.game.search_area_advance(start_level, obs.level_key)
-        # A candidate that ended BEHIND its start is a detour (retreat/drop) that needs the long
-        # horizon to recover; anything else is forward and only needs the death-watch window. This
-        # is position-based (no button knowledge), so it stays game-agnostic.
-        detour = obs.progress < base_x
-        coasted = 0
-        while coasted < settle and not obs.dead and not advanced:
-            coast = self.reflex.advance_plan(obs)
-            self.session.send_plan(coast)
-            obs = self._observe()
-            advanced = self.game.search_area_advance(start_level, obs.level_key)
-            reached = max(reached, obs.progress)
-            coasted += max(1, plan_frames(coast))
-            # SPEED: cap forward candidates at SEARCH_HORIZON (their original death-watch window) even
-            # if they didn't progress — a forward stall stays a stall, the long horizon can't save it.
-            # Only a detour that hasn't recovered yet keeps coasting to the full `settle`. This is the
-            # bulk of the cost at a dead-end, where most candidates survive-but-don't-progress.
-            if coasted >= config.SEARCH_HORIZON_FRAMES and (
-                    not detour or reached > base_x + self._MIN_PROGRESS_PX):
-                break
-        if advanced:
-            reached = base_x + self._TRANSITION_BONUS
-        # also report where the candidate ENDS UP (its route node) for dead-end / elevation scoring
-        return (not obs.dead), reached, obs.progress, obs.elevation
+        it; this is what lets Billy take 1-2's mandatory exit pipe instead of running at it forever.
 
-    _MIN_PROGRESS_PX = 8   # a "solution" must actually advance, else it's a stall, not an escape
+        A candidate that ended BEHIND its start is a detour (retreat/drop) that needs the long
+        horizon to recover; forward candidates cap at SEARCH_HORIZON (a forward stall stays a
+        stall). Body lives in module-level `rollout_candidate` so the parallel search workers run
+        exactly this code."""
+        return rollout_candidate(self.session, self._observe, self.reflex, self.game,
+                                 plan, settle, min_progress=self._MIN_PROGRESS_PX)
+
+    _MIN_PROGRESS_PX = _MIN_PROGRESS_PX   # class alias (module constant is the source of truth)
 
     def _micro_search(self, candidates: list[Plan], start_x: int, early_exit: bool = False,
                       settle: int = config.SEARCH_HORIZON_FRAMES,
@@ -166,9 +184,16 @@ class Director:
         best, just a survivor to bank — this keeps the brute-force fallback's cost bounded."""
         snap = self.session.clone_state()
         best_plan, best_score, best_reach = candidates[0], -10 ** 9, start_x
+        # Parallel path: ship the clone + candidates to the worker pool (same rollout code);
+        # scoring below is identical either way. None => serial (pool off/too few/failed).
+        pooled = (self.pool.evaluate(snap, candidates, settle, self._MIN_PROGRESS_PX)
+                  if self.pool is not None else None)
         with self.session.search_mode():
-            for plan in candidates:
-                survived, reached, end_x, end_y = self._rollout(plan, settle)
+            for i, plan in enumerate(candidates):
+                if pooled is not None:
+                    survived, reached, end_x, end_y = pooled[i]
+                else:
+                    survived, reached, end_x, end_y = self._rollout(plan, settle)
                 score = reached if survived else reached - 100_000  # death ≫ worse than short
                 dead = bool(survived and level_key and self.cache.is_dead(level_key, end_x, end_y))
                 if survived:
@@ -180,7 +205,8 @@ class Director:
                         score -= config.ROUTE_DEAD_PENALTY
                 if score > best_score:
                     best_score, best_plan, best_reach = score, plan, reached
-                self.session.restore(snap)
+                if pooled is None:
+                    self.session.restore(snap)
                 if early_exit and survived and not dead and reached > start_x + self._MIN_PROGRESS_PX:
                     break   # good-enough survivor found — stop the expensive grid here
         self.session.restore(snap)   # back to the live pre-search position, nothing shown
@@ -1069,10 +1095,14 @@ class Director:
         self.session.wait_until_live()
         self.boot()
         results = []
-        for n in range(1, attempts + 1):
-            results.append(self.run_attempt(n))
-            if n < attempts:
-                self._maybe_auto_train(n)
+        try:
+            for n in range(1, attempts + 1):
+                results.append(self.run_attempt(n))
+                if n < attempts:
+                    self._maybe_auto_train(n)
+        finally:
+            if self.pool is not None:
+                self.pool.close()
         metrics.print_curve(results)
         return results
 
