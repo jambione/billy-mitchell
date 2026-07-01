@@ -23,7 +23,9 @@ class Step:
     def __post_init__(self) -> None:
         if not (1 <= self.frames <= 0xFFFF):
             raise ValueError(f"step frames out of range: {self.frames}")
-        if not (0 <= self.buttons <= 0xFF):
+        # 16-bit mask: bits 0-7 are the shared NES-layout roles, bits 8+ are console extras
+        # (e.g. SNES SPIN/X/L/R). NES plans never exceed 0xFF, so persisted data is unchanged.
+        if not (0 <= self.buttons <= 0xFFFF):
             raise ValueError(f"step buttons out of range: {self.buttons}")
 
 
@@ -35,15 +37,15 @@ class BootError(RuntimeError):
 
 
 def encode_plan(plan: Plan) -> bytes:
-    """Encode steps as nsteps(u8) then per step dur(u16 LE) + buttonmask(u8). Matches the
-    decoder in each system's bridge. (8-bit masks today; widen per-controller when needed.)"""
+    """Encode steps as nsteps(u8) then per step dur(u16 LE) + buttonmask(u16 LE). Legacy of
+    the external-bridge era (stable-retro runs in-process); kept for tooling round-trips."""
     steps = list(plan)
     if len(steps) > 0xFF:
         raise ValueError(f"too many steps in one plan: {len(steps)} (max 255)")
     out = bytearray([len(steps)])
     for s in steps:
         out += s.frames.to_bytes(2, "little")
-        out.append(s.buttons)
+        out += s.buttons.to_bytes(2, "little")
     return bytes(out)
 
 

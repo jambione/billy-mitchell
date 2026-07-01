@@ -17,10 +17,11 @@ from billy.abstractions import BootError
 from billy.director import Director
 from billy.games.smb import SmbGame
 from billy.games.smb_lost import SmbLostGame
+from billy.games.smw import SmwGame
 from billy.games.zelda import ZeldaGame
 from billy.knowledge import KnowledgeBase, SkillLibrary
 
-GAMES = {"smb": SmbGame, "smb_lost": SmbLostGame, "zelda": ZeldaGame}
+GAMES = {"smb": SmbGame, "smb_lost": SmbLostGame, "zelda": ZeldaGame, "smw": SmwGame}
 
 
 def main(argv: list[str] | None = None) -> int:

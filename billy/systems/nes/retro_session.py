@@ -59,9 +59,10 @@ class _Viewer:
     maps them to an NES button mask (arrows + Z/X = A/B, Tab/RShift = Start/Select). Enter ends
     a teleop demo; Esc aborts it. `teleop_poll()` is a no-op until a window exists."""
 
-    def __init__(self, scale: int = 3) -> None:
+    def __init__(self, scale: int = 3, controller_mod=None) -> None:
         import pyglet
         self._pyglet = pyglet
+        self._c = controller_mod or controller   # button vocabulary (defaults to NES)
         self.window = None
         self.scale = scale
         self._keys: set[int] = set()
@@ -95,32 +96,32 @@ class _Viewer:
         x = getattr(j, "x", 0.0) or 0.0
         y = getattr(j, "y", 0.0) or 0.0
         if x < -dz:
-            m |= controller.LEFT
+            m |= self._c.LEFT
         if x > dz:
-            m |= controller.RIGHT
+            m |= self._c.RIGHT
         if y < -dz:
-            m |= controller.UP
+            m |= self._c.UP
         if y > dz:
-            m |= controller.DOWN
+            m |= self._c.DOWN
         if self._joy_map.get("use_hat"):
             try:
                 if j.hat_x < -0.5:
-                    m |= controller.LEFT
+                    m |= self._c.LEFT
                 if j.hat_x > 0.5:
-                    m |= controller.RIGHT
+                    m |= self._c.RIGHT
             except Exception:
                 pass
         btns = getattr(j, "buttons", []) or []
         def pressed(idx):
             return 0 <= idx < len(btns) and btns[idx]
         if pressed(self._joy_map["A"]):
-            m |= controller.A
+            m |= self._c.A
         if pressed(self._joy_map["B"]):
-            m |= controller.B
+            m |= self._c.B
         if pressed(self._joy_map["START"]):
-            m |= controller.START
+            m |= self._c.START
         if pressed(self._joy_map["SELECT"]):
-            m |= controller.SELECT
+            m |= self._c.SELECT
         if pressed(self._joy_map.get("FINISH", -1)):
             self._finish = True
         return m
@@ -128,12 +129,18 @@ class _Viewer:
     def _bind_keys(self) -> None:
         key = self._pyglet.window.key
         self._KEYMAP = {
-            key.UP: controller.UP, key.DOWN: controller.DOWN,
-            key.LEFT: controller.LEFT, key.RIGHT: controller.RIGHT,
-            key.Z: controller.A, key.X: controller.B,
-            key.TAB: controller.START, key.RSHIFT: controller.SELECT,
-            key.LSHIFT: controller.SELECT,
+            key.UP: self._c.UP, key.DOWN: self._c.DOWN,
+            key.LEFT: self._c.LEFT, key.RIGHT: self._c.RIGHT,
+            key.Z: self._c.A, key.X: self._c.B,
+            key.TAB: self._c.START, key.RSHIFT: self._c.SELECT,
+            key.LSHIFT: self._c.SELECT,
         }
+        # Consoles with extra buttons contribute additional teleop keys, e.g. SNES
+        # {"C": SPIN, "S": X, "Q": L, "W": R} — controller modules opt in via VIEWER_KEYS.
+        for key_name, bit in getattr(self._c, "VIEWER_KEYS", {}).items():
+            sym = getattr(key, key_name, None)
+            if sym is not None:
+                self._KEYMAP[sym] = bit
         ENTER, ESC = key.ENTER, key.ESCAPE
 
         @self.window.event
@@ -222,12 +229,19 @@ class RetroSession:
     """A stable-retro env presented through the engine's lock-step Session contract."""
 
     def __init__(self, render: bool | None = None, game: str | None = None,
-                 inttype=None) -> None:
+                 inttype=None, controller_mod=None, ram_size: int | None = None) -> None:
         # Watchable by default; set BILLY_HEADLESS=1 for fast benchmarks (no window).
         if render is None:
             render = os.environ.get("BILLY_HEADLESS", "0") != "1"
         game = game or _GAME   # integration id: arg > BILLY_RETRO_GAME env > SMB default
         inttype = _resolve_inttype(inttype)
+        # Console parameterization: this transport is console-agnostic — the button vocabulary
+        # and work-RAM size are the only per-console bits, supplied by the system's controller
+        # module (defaults: NES). SNES passes systems/snes/controller + its WRAM size.
+        self.controller = controller_mod or controller
+        self.ram_size = ram_size or RAM_SIZE
+        # Logical->physical button-name translation (e.g. our logical A/jump is SNES's "B").
+        self._retro_names = getattr(self.controller, "RETRO_NAMES", {})
         # Always render to an offscreen array; WE decide which frames reach the screen, so
         # micro-search frames stay hidden (the live run never visibly rewinds).
         try:
@@ -238,7 +252,7 @@ class RetroSession:
                                       inttype=Integrations.EXPERIMENTAL)
             else:
                 raise
-        self._viewer = _Viewer() if render else None
+        self._viewer = _Viewer(controller_mod=self.controller) if render else None
         self._show = render          # True only while executing committed (live) play
         self._realtime = render and os.environ.get("BILLY_TURBO", "0") != "1"
         # Map our controller button names -> stable-retro action-vector indices.
@@ -246,7 +260,7 @@ class RetroSession:
         self._btn_index = {name.upper(): i for i, name in enumerate(self.env.buttons) if name}
         self._n_buttons = len(self.env.buttons)
         self._frame = 0
-        self._ram = bytes(RAM_SIZE)
+        self._ram = bytes(self.ram_size)
         self._rgb: np.ndarray | None = None
         self._slots: dict[int, bytes] = {}
         self._done = False
@@ -371,8 +385,9 @@ class RetroSession:
     # --- internals ----------------------------------------------------------------------
     def _action_from_mask(self, mask: int) -> np.ndarray:
         act = np.zeros(self._n_buttons, dtype=np.int8)
-        for name in controller.names_from_mask(mask):
-            idx = self._btn_index.get(name.upper())
+        for name in self.controller.names_from_mask(mask):
+            name = name.upper()
+            idx = self._btn_index.get(self._retro_names.get(name, name))
             if idx is not None:
                 act[idx] = 1
         return act
@@ -404,4 +419,4 @@ class RetroSession:
 
     def _refresh_ram(self) -> None:
         ram = self.env.get_ram()
-        self._ram = bytes(np.asarray(ram, dtype=np.uint8)[:RAM_SIZE])
+        self._ram = bytes(np.asarray(ram, dtype=np.uint8)[:self.ram_size])
