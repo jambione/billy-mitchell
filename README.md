@@ -123,6 +123,26 @@ BILLY_HEADLESS=1 .venv/bin/python run.py --attempts 10 --no-llm
 BILLY_HEADLESS=1 BILLY_REPEAT_LEVEL=1 BILLY_MAX_FRAMES=8000 .venv/bin/python -u run.py --attempts 10 --no-llm
 ```
 
+## Teach Billy with a demo (teleop)
+
+When every autonomous tier misses a hazard, Billy files a demo request in
+`data/demo_requests.jsonl` with a ready-to-run command. One playthrough of the spot becomes an
+exact cache entry (+ optionally a tape and a BC warm-start for RL training):
+
+```bash
+# One-time gamepad setup — press each button when prompted; auto-detects stick/hat quirks
+# (drifting hats, inverted stick Y); saves data/pad_map.json; ends with a live verify:
+.venv/bin/python teleop.py calibrate
+
+# Capture a start state, then play through the wall (keyboard or calibrated pad):
+BILLY_HEADLESS=1 .venv/bin/python teleop.py capture --game smb --until-level 1-2 --out data/states/smb_1_2.state
+.venv/bin/python teleop.py play --game smb --from-state data/states/smb_1_2.state --bank
+```
+
+Keyboard: arrows · Z=A · X=B · Tab=Start · RShift=Select · ENTER=finish · ESC=abort.
+Pad mapping precedence: defaults → `data/pad_map.json` (from `calibrate`) → `BILLY_PAD_*` env
+vars. `teleop.py pad-debug` shows raw button indices if you prefer manual mapping.
+
 ## Optional: learned (RL) reflex tier
 
 A PPO policy can replace the hand-crafted reflex as the fast Tier-1 controller, trained against a

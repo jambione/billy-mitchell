@@ -17,6 +17,9 @@ Two steps (separate processes — one emulator per process):
 
 Controls (window must have focus):  arrows = move · Z = A (jump/sword) · X = B (run/attack)
     Tab = Start · RShift = Select · ENTER = finish & verify · ESC = abort
+Gamepad: calibrate once with `teleop.py calibrate` (saves data/pad_map.json — press each
+    button when prompted, auto-detects stick/hat quirks, live-verifies). BILLY_PAD_* env vars
+    override the saved map per-run; `pad-debug` shows the raw indices if you prefer manual.
 Auto-finish: the moment you reach a new level/screen alive (level_key[:2] changes), the demo is
 captured automatically — no need to press ENTER in time.
 """
@@ -200,6 +203,172 @@ def cmd_play(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    """Interactive gamepad calibration: assign each role by pressing it, auto-detect stick/hat
+    behavior, save to data/pad_map.json (loaded by every later teleop), then live-verify."""
+    os.environ["BILLY_HEADLESS"] = "0"
+    os.environ.setdefault("BILLY_TURBO", "1")
+
+    from billy.systems.nes.pad_map import describe, save_pad_map
+
+    game = _game(args.game)
+    session = game.system.connect()
+    session.wait_until_live()
+    if not session.ensure_viewer():
+        print("[calibrate] no window available (display attached? BILLY_HEADLESS=1?)")
+        return 2
+    session.teleop_reset()
+    ctrl = session.controller   # the active console's button module (NES or SNES)
+    neutral = ctrl.NEUTRAL
+
+    def pump() -> tuple:
+        """One frame: pump window+HID events, keep the game alive, read raw pad state.
+        Returns (state|None, finish_pressed, abort_pressed)."""
+        _mask, fin, ab = session.teleop_poll()
+        session.teleop_step(neutral)
+        return session.pad_state(), fin, ab
+
+    st, _, _ = pump()
+    if st is None:
+        print("[calibrate] no gamepad detected — is it paired/awake? (pyglet HID)")
+        session.close()
+        return 1
+    print(f"[calibrate] gamepad: {st['name']}")
+    print("[calibrate] keep the GAME WINDOW focused. ENTER (keyboard) = skip a step, "
+          "ESC = abort.\n")
+
+    # -- 1. rest analysis: find buttons that read pressed at rest + resting hat/stick --------
+    print("[calibrate] hands off the pad for a moment (reading its resting state)...")
+    rest_buttons: set[int] = set()
+    rest_hats, rest_xs, rest_ys = [], [], []
+    for _ in range(90):
+        st, _, ab = pump()
+        if ab:
+            session.close()
+            return 1
+        if st:
+            rest_buttons.update(st["buttons"])
+            rest_hats.append(st["hat"])
+            rest_xs.append(st["stick"][0])
+            rest_ys.append(st["stick"][1])
+    rest_x = sum(rest_xs) / max(1, len(rest_xs))
+    rest_y = sum(rest_ys) / max(1, len(rest_ys))
+    hat_rests_centered = all(h == (0, 0) for h in rest_hats)
+    if rest_buttons:
+        print(f"[calibrate]   note: indices {sorted(rest_buttons)} read pressed at rest "
+              f"(ignored for assignment)")
+    if not hat_rests_centered:
+        print("[calibrate]   note: the d-pad hat does not rest centered on this pad — "
+              "movement will use the analog stick")
+
+    # -- 2. assign button roles by pressing them ---------------------------------------------
+    roles: list[tuple[str, str]] = [
+        ("A", "A — jump / sword"),
+        ("B", "B — run / attack"),
+        ("START", "START"),
+        ("SELECT", "SELECT"),
+        ("FINISH", "FINISH — ends a teleop demo (optional)"),
+    ]
+    if getattr(ctrl, "SPIN", 0):
+        roles.insert(2, ("SPIN", "SPIN — SMW spin jump (optional)"))
+
+    mapping: dict = {"use_hat": hat_rests_centered, "invert_y": False,
+                     "deadzone": round(min(0.6, max(0.35, abs(rest_x) + 0.2,
+                                                    abs(rest_y) + 0.2)), 2)}
+    taken: set[int] = set()
+    for role, label in roles:
+        print(f"[calibrate] press the pad button for  {label}   (or keyboard ENTER to skip)")
+        session.teleop_reset()          # clear any pending finish/abort
+        assigned = -1
+        prev: set[int] = set(rest_buttons)
+        for _ in range(60 * 30):        # up to ~30s per role
+            st, fin, ab = pump()
+            if ab:
+                print("[calibrate] aborted — nothing saved")
+                session.close()
+                return 1
+            if fin:
+                print(f"[calibrate]   {role}: skipped")
+                break
+            now = set(st["buttons"]) if st else set()
+            fresh = now - prev - rest_buttons - taken
+            if fresh:
+                assigned = min(fresh)
+                taken.add(assigned)
+                print(f"[calibrate]   {role} = button {assigned}")
+                while True:             # wait for release so one press can't claim two roles
+                    st, _, _ = pump()
+                    if not st or assigned not in st["buttons"]:
+                        break
+                break
+            prev = now
+        mapping[role] = assigned
+
+    # -- 3. movement: detect hat vs stick and the stick's up-sign ----------------------------
+    def sample_direction(prompt: str, frames: int = 240):
+        """Prompt, then wait for a sustained hat/stick deviation; returns (hat_dx, dx, dy)."""
+        print(f"[calibrate] {prompt}")
+        session.teleop_reset()
+        streak = 0
+        for _ in range(frames):
+            st, fin, ab = pump()
+            if ab or fin or not st:
+                return None
+            hat_dx = st["hat"][0] - (rest_hats[0][0] if rest_hats else 0)
+            dx, dy = st["stick"][0] - rest_x, st["stick"][1] - rest_y
+            if abs(hat_dx) > 0.5 or abs(dx) > 0.35 or abs(dy) > 0.35:
+                streak += 1
+                if streak >= 12:        # ~0.2s sustained — a hold, not a blip
+                    return hat_dx, dx, dy
+            else:
+                streak = 0
+        return None
+
+    left = sample_direction("hold LEFT (d-pad or stick) ...")
+    if left is not None:
+        hat_dx, dx, _ = left
+        if hat_rests_centered and abs(hat_dx) > 0.5:
+            mapping["use_hat"] = True
+            print("[calibrate]   left/right: d-pad hat works")
+        elif abs(dx) > 0.35:
+            print("[calibrate]   left/right: analog stick")
+        if dx > 0.35 or hat_dx > 0.5:
+            print("[calibrate]   ⚠ that read as RIGHT — check the pad orientation")
+    up = sample_direction("now hold UP (stick) ...")
+    if up is not None:
+        _, _, dy = up
+        # Engine convention (see _joy_mask): UP fires on y < -deadzone. If pushing up gives a
+        # POSITIVE y on this pad/backend, record invert_y so the sign matches.
+        mapping["invert_y"] = dy > 0.35
+        if mapping["invert_y"]:
+            print("[calibrate]   stick up reads positive on this pad — saving invert_y")
+
+    # -- 4. save + live verify ----------------------------------------------------------------
+    path = save_pad_map(mapping)
+    print(f"\n[calibrate] saved -> {path}")
+    print(f"[calibrate]   {describe(mapping)}")
+    print("[calibrate] BILLY_PAD_* env vars still override the saved map per-run.\n")
+
+    session.set_pad_map(mapping)
+    session.teleop_reset()
+    print("[calibrate] VERIFY (15s): press things — decoded buttons print below. "
+          "ENTER/ESC to finish.")
+    last = None
+    for _ in range(60 * 15):
+        mask, fin, ab = session.teleop_poll()
+        session.teleop_step(neutral)
+        if fin or ab:
+            break
+        names = "+".join(ctrl.names_from_mask(mask)) or "-"
+        if names != last:
+            print(f"    {names}")
+            last = names
+    session.close()
+    print("[calibrate] done. Play with: "
+          f".venv/bin/python teleop.py play --game {args.game} --from-state <state> --bank")
+    return 0
+
+
 def cmd_pad_debug(args: argparse.Namespace) -> int:
     """Open a window + gamepad and print live button/hat/stick state, to calibrate the mapping."""
     os.environ["BILLY_HEADLESS"] = "0"
@@ -262,11 +431,19 @@ def main(argv: list[str] | None = None) -> int:
                          "(use when --from-state is a level/screen ENTRY; the Director's "
                          "clone-verify gate rejects it harmlessly if the state doesn't match)")
 
-    dbg = sub.add_parser("pad-debug", help="Print live gamepad button/hat indices for mapping.")
+    cal = sub.add_parser("calibrate", help="Interactive gamepad calibration → data/pad_map.json "
+                                           "(press each button when prompted; auto-detects "
+                                           "stick/hat quirks; ends with a live verify).")
+    cal.add_argument("--game", default="smb")
+
+    dbg = sub.add_parser("pad-debug", help="Print live gamepad button/hat indices (raw view; "
+                                           "prefer `calibrate` for setup).")
     dbg.add_argument("--game", default="smb")
     dbg.add_argument("--max-frames", type=int, default=3600)
 
     args = p.parse_args(argv)
+    if args.cmd == "calibrate":
+        return cmd_calibrate(args)
     if args.cmd == "pad-debug":
         return cmd_pad_debug(args)
     if args.cmd == "capture":

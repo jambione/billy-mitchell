@@ -21,12 +21,43 @@ class LLMError(RuntimeError):
     pass
 
 
+_resolved_chat_model: str | None = None
+
+
+def resolve_chat_model() -> str:
+    """The chat model id to actually use: the configured one when the server lists it, else
+    the first loaded non-embedding model — so "whatever you loaded in LM Studio" just works
+    (the UI name, e.g. "Qwen2.5 Coder 7B Instruct (4bit)", rarely matches the API id exactly).
+    Resolved once per process; set BILLY_CHAT_MODEL to pin explicitly."""
+    global _resolved_chat_model
+    if _resolved_chat_model is not None:
+        return _resolved_chat_model
+    want = config.CHAT_MODEL
+    try:
+        r = _session.get(f"{config.LMSTUDIO_BASE_URL}/models", timeout=5)
+        r.raise_for_status()
+        ids = [m.get("id", "") for m in r.json().get("data", [])]
+    except (requests.RequestException, ValueError, KeyError):
+        return want   # server unreachable — don't cache, keep trying the configured id
+    if want in ids:
+        _resolved_chat_model = want
+    else:
+        chat_ids = [i for i in ids if i and "embed" not in i.lower()]
+        if chat_ids:
+            _resolved_chat_model = chat_ids[0]
+            print(f"[llm] configured chat model '{want}' not loaded in LM Studio; "
+                  f"using '{_resolved_chat_model}' (set BILLY_CHAT_MODEL to pin)")
+        else:
+            _resolved_chat_model = want   # nothing loaded; the 500 will say so clearly
+    return _resolved_chat_model
+
+
 def chat(messages: list[dict[str, str]], *, model: str | None = None,
          temperature: float = 0.6, max_tokens: int = 512,
          response_json: bool = False) -> str:
     """Return the assistant message text for a chat completion."""
     body: dict[str, Any] = {
-        "model": model or config.CHAT_MODEL,
+        "model": model or resolve_chat_model(),
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,

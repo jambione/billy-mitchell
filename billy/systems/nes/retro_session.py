@@ -30,26 +30,10 @@ _INTTYPE = os.environ.get("BILLY_RETRO_INTTYPE", "").lower()
 
 
 def _load_pad_map() -> dict:
-    """Gamepad button-index map (env-overridable; defaults aimed at 8Bitdo SN30 Pro on macOS).
-    Use `teleop.py pad-debug` to read your pad's real indices, then set BILLY_PAD_* if needed."""
-    def _i(name, default):
-        try:
-            return int(os.environ.get(name, default))
-        except ValueError:
-            return default
-    # Defaults calibrated for 8Bitdo SN30 Pro (Bluetooth, macOS) via `teleop.py pad-debug`.
-    # NOTE: this pad's d-pad "hat" never centers (floats at (0,±1)) so it's unusable — movement
-    # comes from the LEFT ANALOG STICK. Buttons: JUMP=2, RUN=1 (verified).
-    return {
-        "A": _i("BILLY_PAD_A", 2),        # NES A (jump / sword)
-        "B": _i("BILLY_PAD_B", 1),        # NES B (run / attack)
-        "SELECT": _i("BILLY_PAD_SELECT", 8),
-        "START": _i("BILLY_PAD_START", 7),
-        "FINISH": _i("BILLY_PAD_FINISH", -1),   # optional pad button to end a teleop demo
-        # hat_x (left/right) centers cleanly at 0, so use it for the d-pad; hat_y (up/down) floats
-        # and is unusable, so vertical stays on the analog stick.
-        "use_hat": os.environ.get("BILLY_PAD_USE_HAT", "1") == "1",
-    }
+    """Gamepad mapping: defaults → saved calibration (data/pad_map.json, written by
+    `teleop.py calibrate`) → BILLY_PAD_* env overrides. See systems/nes/pad_map.py."""
+    from .pad_map import load_pad_map
+    return load_pad_map()
 
 
 class _Viewer:
@@ -90,11 +74,14 @@ class _Viewer:
         if j is None:
             return 0
         m = 0
-        dz = 0.4
-        # Movement from the LEFT ANALOG STICK (rests cleanly at 0; up = negative y). The d-pad hat
-        # on this pad never centers, so it's off by default (set BILLY_PAD_USE_HAT=1 to try it).
+        dz = float(self._joy_map.get("deadzone", 0.4))
+        # Movement from the LEFT ANALOG STICK; up-sign varies per pad/OS backend, so calibration
+        # records `invert_y`. The d-pad hat contributes left/right only when `use_hat` is set
+        # (some pads' hats never center — calibration detects that and turns it off).
         x = getattr(j, "x", 0.0) or 0.0
         y = getattr(j, "y", 0.0) or 0.0
+        if self._joy_map.get("invert_y"):
+            y = -y
         if x < -dz:
             m |= self._c.LEFT
         if x > dz:
@@ -113,15 +100,16 @@ class _Viewer:
                 pass
         btns = getattr(j, "buttons", []) or []
         def pressed(idx):
-            return 0 <= idx < len(btns) and btns[idx]
-        if pressed(self._joy_map["A"]):
-            m |= self._c.A
-        if pressed(self._joy_map["B"]):
-            m |= self._c.B
-        if pressed(self._joy_map["START"]):
-            m |= self._c.START
-        if pressed(self._joy_map["SELECT"]):
-            m |= self._c.SELECT
+            return isinstance(idx, int) and 0 <= idx < len(btns) and btns[idx]
+        # Roles are LOGICAL and resolved against the active controller module, so one saved
+        # map serves every console (e.g. "SPIN" only binds when the SNES controller is active).
+        from .pad_map import ROLE_KEYS
+        for role in ROLE_KEYS:
+            if role == "FINISH":
+                continue
+            bit = getattr(self._c, role, 0)
+            if bit and pressed(self._joy_map.get(role, -1)):
+                m |= bit
         if pressed(self._joy_map.get("FINISH", -1)):
             self._finish = True
         return m
@@ -291,6 +279,11 @@ class RetroSession:
     def teleop_reset(self) -> None:
         if self._viewer is not None:
             self._viewer.reset_teleop()
+
+    def set_pad_map(self, mapping: dict) -> None:
+        """Apply a (freshly calibrated) pad mapping to the live viewer without reconnecting."""
+        if self._viewer is not None:
+            self._viewer._joy_map = dict(mapping)
 
     def pad_state(self):
         """Raw gamepad state for calibration: pressed button indices, hat, sticks (or None)."""
