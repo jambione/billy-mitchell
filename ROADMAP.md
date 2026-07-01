@@ -30,17 +30,14 @@ it, and by making each solved thing make the *next* thing faster.
 
 ## Phase 1 — Exponential velocity (priority 1; fastest, lowest-risk, SMB-contained)
 
-**1A. Deterministic whole-trajectory tape — the headline.**
-The emulator is deterministic, so replaying a banked input stream from a checkpoint reproduces a level
-frame-perfectly (every enemy in the same phase). Record the committed input stream from each
-checkpoint (level-entry savestate); on re-entry replay it on a verify-clone, and if it still clears,
-replay it **live with zero search**. Drift → fall back to today's per-`(level,x)` cache. A solved level
-then re-clears in seconds with **search→0** — the visibly exponential compounding.
-- New `billy/knowledge/tape.py` (record/replay/persist, tiny like `data/solutions.jsonl`);
-  `billy/director.py` records the committed stream and tries-tape-first at a checkpoint;
-  `retro_session` already provides `clone_state`/`restore`/`save_state`.
-- Honest caveat: a tape is per entry-checkpoint; mid-level re-entry after a death still uses the
-  per-`(level,x)` cache. Tapes shine on full clean clears.
+**1A. Deterministic whole-trajectory tape — the headline. ✅ SHIPPED (July 2026).**
+`billy/knowledge/tape.py` + tape-first replay in the Director. Since July 2026 tapes also
+**extend instead of self-corrupting** (replayed chunks re-seed the recording, so an exhausted tape
+grows a suffix rather than being replaced by one), **screen-segment tapes chain** (finished on every
+screen change, verified by area-advance), and **timed-out-alive attempts persist a partial tape to
+the frontier** — the next attempt fast-forwards there with zero search and spends its whole budget
+on new ground. Measured: 1-1 re-clears at **tape%=100, search=0, 0.7s wall-clock**.
+- Honest caveat: mid-level re-entry after a death still uses the per-`(level,x)` cache.
 
 **1B. Objective-aware play — best score + level up the character.**
 Today `_micro_search` optimizes reach (progress) only; score and power state are tracked but never
@@ -53,10 +50,22 @@ mushrooms/flowers — perception + grab reflex already exist) so Billy becomes F
   survived/progress, before elevation); the cache keeps the higher-objective plan on ties.
   [billy/games/smb/perception.py](billy/games/smb/perception.py) already exposes `size`/`coins`/`powerups`.
 
-**1C. Visible learning curve — "be blown away."**
-A per-attempt dashboard: search↓ / replay↑ / clear-time↓ / score↑ / frontier↑ (all already in
-[billy/metrics.py](billy/metrics.py) `AttemptResult`). Compact table/sparkline after each attempt
-(optional CSV), so the exponential is legible at a glance.
+**1C. Visible learning curve — "be blown away." ✅ SHIPPED (July 2026).**
+The compounding-curve table now shows search / replay / **tape%** / bank / learn / frontier /
+reached / **time(s)** per attempt plus sparkline trends ([billy/metrics.py](billy/metrics.py)).
+
+**1D. Demo pipeline ×3 + pull-based teaching. ✅ SHIPPED (July 2026).**
+One human demo now produces three artifacts: an exact cache entry, a whole-trajectory tape
+(`teleop.py play --tape`), and a BC warm-start for section sub-policies
+(`train_section.py --demo x.demo.json` — PPO fine-tunes a policy that already knows the crossing).
+And teaching is **pull-based**: when search + pit/frame search + section training ALL miss a hazard,
+`stuck_trainer.request_demo` asks for one demo with a ready-to-run teleop command
+(`data/demo_requests.jsonl`).
+
+**1E. Parallel micro-search. ✅ SHIPPED (July 2026, opt-in).**
+`BILLY_PARALLEL_SEARCH=<n>` spins up n emulator workers ([billy/search_pool.py](billy/search_pool.py))
+that evaluate candidates concurrently with the same rollout code; serial stays the default and the
+regression baseline.
 
 ## Phase 2 — Generalize the engine (the refactor Zelda forces; small, regression-guarded)
 
@@ -67,10 +76,12 @@ learn-from-death key off `progress`+`level_key` unchanged — only the *game* co
 `cache.bucket_of` already keys `(level_key, progress, elevation)`, so Zelda supplies room-id as
 `level_key` and Link x/y via `progress`/`elevation`. SMB behavior identical (regression guard).
 
-**2B. Skill distillation / transfer.** Distill banked solutions/tapes into the Skill layer
-([billy/knowledge/skills.py](billy/knowledge/skills.py), already seeded into `director._candidates`)
-so a solved hazard seeds search at *similar* hazards — within a game and as abstract tactics across
-games. Each game makes the next faster (the cross-game exponential).
+**2B. Skill distillation / transfer. ✅ SHIPPED (July 2026).**
+[billy/knowledge/distill.py](billy/knowledge/distill.py): every *significant* banked maneuver
+(≥60px real gain) auto-distills into a `sequence` Skill — the proven exact plan + an embedding of
+the situation it solved — which seeds micro-search at similar hazards within and across games
+(console-gated; always clone-verified before commit, so the exact-replay invariant holds). Demos
+distill too (the demo's third artifact). `BILLY_DISTILL=0` to disable.
 
 ## Phase 3 — The Legend of Zelda (first target: boot + explore + survive)
 
@@ -87,6 +98,16 @@ hazard_hooks. Remaining: sword pickup macro, dungeon rooms, cave text.
 
 **3C. Prove transfer.** 🔄 Director + cache work without engine changes. Next: FAQ step 1 (sword) →
 east to sea (#127) → Level 1 entrance.
+
+## Phase 4 — SNES / Super Mario World (scaffold ✅ July 2026; live pending ROM)
+
+The cross-console proof. `RetroSession` is now console-parameterized (controller module + RAM
+size); [billy/systems/snes/](billy/systems/snes/) supplies a 12-button controller whose LOGICAL
+names keep the NES bit layout (A=jump→SNES B, B=run→SNES Y, new SPIN=SNES A), so the shared
+platformer reflex and every engine tier (cache/tapes/search/teleop/stuck-trainer) drive SMW with
+zero new engine code. [billy/games/smw/](billy/games/smw/) has WRAM perception + non-linear level
+identity (monotonic events-triggered clear counter). **Blocked on the ROM**: drop it in `roms/`,
+run `probe_smw_ram.py`, follow [billy/games/smw/STATUS.md](billy/games/smw/STATUS.md).
 
 ## Sequencing & honest scope
 

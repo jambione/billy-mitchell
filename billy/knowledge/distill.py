@@ -45,6 +45,8 @@ def distill_solution(skills: SkillLibrary, *, summary: str, level_label: str,
     gained = reach - start_x
     if gained < min_gain or not plan or plan_frames(plan) < 8 or not summary:
         return False
+    if start_x < 16:
+        return False   # x≈0 is a screen-transition artifact, not a real start situation
     sig = plan_signature(plan)
     if skills.has_signature(sig):
         return False

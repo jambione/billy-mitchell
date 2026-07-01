@@ -111,6 +111,8 @@ BILLY_HEADLESS=1 .venv/bin/python run.py --attempts 10 --no-llm
 | `BILLY_MAX_FRAMES=N` | Cap an attempt's length (a ~10-game-minute safety cap by default). |
 | `BILLY_REPEAT_LEVEL=1` | Eval mode: end each attempt at the first clear so the **same** level repeats and the compounding curve is visible. |
 | `BILLY_RETRO_GAME=id` | Override the stable-retro integration id. |
+| `BILLY_PARALLEL_SEARCH=N` | N emulator worker subprocesses evaluate search candidates concurrently (default 0 = serial, the regression baseline). |
+| `BILLY_DISTILL=0` | Disable skill distillation (banked maneuvers → transferable `sequence` skills). On by default. |
 
 > **Watching tip:** without `BILLY_HEADLESS=1` a "Billy Mitchell" window opens and plays in real
 > time. Micro-search runs on an invisible clone, so on screen you only ever see committed forward
