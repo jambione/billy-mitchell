@@ -52,10 +52,24 @@ class Skill:
     description: str
     kind: str                       # dispatch tag into _BUILDERS (keeps the skill serialisable)
     embedding: list[float] = field(default_factory=list)
+    # DISTILLED skills ("sequence" kind) carry a proven exact plan as payload:
+    #   {"plan": [[frames, buttons], ...], "console": "nes", "sig": "<dedupe hash>",
+    #    "gained": <px>, "source": "learn_section|demo|..."}
+    # The plan is only ever offered as ONE MORE SEARCH CANDIDATE (verified on a clone before any
+    # commit) — never blind-replayed — so a mismatched skill costs a rollout, never a death.
+    payload: dict = field(default_factory=dict)
 
     def instantiate(self, view, profile: PhysicsProfile) -> list[Plan]:
+        if self.kind == "sequence":
+            steps = self.payload.get("plan") or []
+            return [[_seq_step(f, b) for f, b in steps]] if steps else []
         builder = _BUILDERS.get(self.kind)
         return builder(view, profile) if builder else []
+
+
+def _seq_step(frames: int, buttons: int):
+    from ..abstractions import Step
+    return Step(frames, buttons)
 
 
 @dataclass
@@ -69,12 +83,18 @@ class SkillLibrary:
         self.path = Path(self.path)
         self._load()
 
-    def add(self, name: str, description: str, kind: str) -> Skill:
+    def add(self, name: str, description: str, kind: str,
+            payload: dict | None = None) -> Skill:
         skill = Skill(name=name, description=description, kind=kind,
-                      embedding=_safe_embed(f"{name}. {description}"))
+                      embedding=_safe_embed(f"{name}. {description}"),
+                      payload=payload or {})
         self.skills.append(skill)
         self._save()
         return skill
+
+    def has_signature(self, sig: str) -> bool:
+        """Dedupe check for distilled sequence skills (same plan → same sig → skip)."""
+        return any(s.payload.get("sig") == sig for s in self.skills)
 
     def seed_starter(self) -> "SkillLibrary":
         """Populate the standard transferable platformer tactics (idempotent by name)."""
@@ -92,10 +112,16 @@ class SkillLibrary:
             return self.skills[:k]   # embedder offline -> flat fallback
         return sorted(self.skills, key=lambda s: _cosine(q, s.embedding), reverse=True)[:k]
 
-    def candidates(self, view, profile: PhysicsProfile, summary: str, k: int = 3) -> list[Plan]:
-        """Concrete candidate plans from the top-k situationally-relevant skills (for search)."""
+    def candidates(self, view, profile: PhysicsProfile, summary: str, k: int = 3,
+                   console: str = "") -> list[Plan]:
+        """Concrete candidate plans from the top-k situationally-relevant skills (for search).
+        Distilled sequence skills are console-gated: their button masks only mean the same
+        thing on the console they were recorded on (an NES mask is noise on a SNES pad)."""
         out: list[Plan] = []
         for s in self.retrieve(summary, k):
+            if (s.kind == "sequence" and console
+                    and s.payload.get("console", console) != console):
+                continue
             out.extend(s.instantiate(view, profile))
         return out
 
@@ -115,5 +141,8 @@ class SkillLibrary:
         config.ensure_dirs()
         with self.path.open("w") as f:
             for s in self.skills:
-                f.write(json.dumps({"name": s.name, "description": s.description,
-                                    "kind": s.kind, "embedding": s.embedding}) + "\n")
+                row = {"name": s.name, "description": s.description,
+                       "kind": s.kind, "embedding": s.embedding}
+                if s.payload:
+                    row["payload"] = s.payload
+                f.write(json.dumps(row) + "\n")

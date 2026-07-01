@@ -80,6 +80,11 @@ EXPANDED_FALLBACK = (os.environ.get("BILLY_EXPANDED_FALLBACK",
                                     os.environ.get("BILLY_EXPANDED_SEARCH", "1")) == "1")
 EXPANDED_SEARCH = EXPANDED_FALLBACK   # back-compat alias
 
+# --- Skill distillation (cross-game transfer of banked maneuvers) ------------------------
+# Significant banked crossings are distilled into `sequence` Skills (exact plan + situation
+# embedding) that seed micro-search at SIMILAR hazards anywhere. Search-verified before commit.
+DISTILL = os.environ.get("BILLY_DISTILL", "1") == "1"
+
 # --- Auto-Stuck Trainer (closed-loop self-improvement) ----------------------------------
 AUTO_TRAIN = os.environ.get("BILLY_AUTO_TRAIN", "1") == "1"
 STUCK_DEATH_THRESHOLD = int(os.environ.get("BILLY_STUCK_DEATHS", "4"))
