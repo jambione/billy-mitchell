@@ -25,6 +25,7 @@ RemedyKind = Literal["frame_search", "pit_search", "section_train"]
 
 _STUCK_FILE = config.DATA_DIR / "stuck.json"
 _AUTO_STATE_DIR = config.DATA_DIR / "rl" / "states" / "auto"
+_DEMO_REQUESTS_FILE = config.DATA_DIR / "demo_requests.jsonl"
 
 
 @dataclass(frozen=True)
@@ -357,3 +358,46 @@ def auto_state_path(level_label: str, death_x: int, approach_x: int) -> str:
     label = level_label.replace("-", "_")
     bucket = death_x // config.CACHE_BUCKET_PX
     return str(_AUTO_STATE_DIR / f"{label}_d{bucket}_x{approach_x}.state")
+
+
+def request_demo(game_name: str, remedy: StuckRemedy, record: StuckRecord,
+                 state_paths: list[str], *, requests_file: Path | None = None) -> str | None:
+    """The final remedy: every autonomous tier failed here — ask the human for ONE demo.
+
+    Pull-based teaching: Billy only requests a demo where search, pit/frame search, and section
+    training have ALL missed, so the human's time is spent exactly where it multiplies. Appends a
+    request to data/demo_requests.jsonl (deduped per hazard) and prints the ready-to-run teleop
+    command. A banked demo flows through the same verify gate as any search survivor.
+    """
+    if not state_paths:
+        return None
+    # The furthest approach state gives the human the shortest runway to play.
+    def _approach_x(p: str) -> int:
+        stem = Path(p).stem
+        try:
+            return int(stem.rsplit("_x", 1)[1])
+        except (IndexError, ValueError):
+            return 0
+    state = max(state_paths, key=_approach_x)
+
+    requests_file = requests_file or _DEMO_REQUESTS_FILE
+    key = {"game": game_name, "level_label": remedy.level_label,
+           "death_bucket": StuckTracker.death_bucket(remedy.death_x)}
+    existing = []
+    if requests_file.is_file():
+        for line in requests_file.read_text().splitlines():
+            if line.strip():
+                existing.append(json.loads(line))
+    if any(all(e.get(k) == v for k, v in key.items()) for e in existing):
+        return state   # already requested — don't spam
+    config.ensure_dirs()
+    with requests_file.open("a") as f:
+        f.write(json.dumps({**key, "death_x": remedy.death_x, "deaths": record.deaths,
+                            "state": state}) + "\n")
+    cmd = (f".venv/bin/python teleop.py play --game {game_name} "
+           f"--from-state {state} --bank")
+    print(f"\n  [stuck] 🙋 BILLY REQUESTS A DEMO — {remedy.level_label} x≈{remedy.death_x}: "
+          f"{record.deaths} deaths and self-training hasn't cracked it.")
+    print(f"  [stuck]    Teach him once (a window opens; play past the hazard, it auto-banks):")
+    print(f"  [stuck]    {cmd}\n")
+    return state

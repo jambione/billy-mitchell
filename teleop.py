@@ -172,7 +172,29 @@ def cmd_play(args: argparse.Namespace) -> int:
         key = bank_demo(cache, start_obs, plan, result.end_progress)
         print(f"[teleop] BANKED to {SOLUTIONS_FILE} at key {key} (reach {result.end_progress}). "
               f"Next autonomous run will replay it.")
-    else:
+        # Third artifact from the same demo: a transferable sequence Skill — the maneuver seeds
+        # micro-search at SIMILAR hazards on other levels/games (verified before any commit).
+        from billy.knowledge.distill import distill_solution
+        from billy.knowledge.skills import SkillLibrary
+        if distill_solution(SkillLibrary(), summary=start_obs.summary,
+                            level_label=start_obs.level_label, plan=plan,
+                            start_x=start_obs.progress, reach=result.end_progress,
+                            source="demo", console=getattr(game.system, "name", "nes")):
+            print("[teleop] DISTILLED into a transferable skill — this maneuver now seeds "
+                  "search at similar hazards everywhere.")
+
+    if args.tape and args.bank:
+        # Second artifact from the same demo: a whole-trajectory tape for this level/screen.
+        # cleared=True when the demo ended in a level/screen transition (the auto-finish case).
+        from billy.knowledge.tape import TapeLibrary
+        crossed = tuple(result.end_level_key) != tuple(start_obs.level_key)
+        tapes = TapeLibrary()
+        tapes.put(start_obs.level_key, plan, result.end_progress, clears_level=crossed)
+        print(f"[teleop] TAPED for {start_obs.level_label} "
+              f"(frontier {result.end_progress}, clears={crossed}) — a verified tape replays "
+              f"the whole segment search-free.")
+
+    if not args.bank:
         print("[teleop] dry run (no --bank) — verified bankable but not stored")
     session.close()
     return 0
@@ -235,6 +257,10 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--min-progress", type=int, default=8)
     pl.add_argument("--no-auto-finish", dest="auto_finish", action="store_false",
                     help="don't auto-stop on level/screen change (press ENTER yourself)")
+    pl.add_argument("--tape", action="store_true",
+                    help="also bank the demo as a whole-trajectory tape for its level/screen "
+                         "(use when --from-state is a level/screen ENTRY; the Director's "
+                         "clone-verify gate rejects it harmlessly if the state doesn't match)")
 
     dbg = sub.add_parser("pad-debug", help="Print live gamepad button/hat indices for mapping.")
     dbg.add_argument("--game", default="smb")

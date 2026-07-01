@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[run] seeded {len(skills)} transferable skills.")
 
     game = GAMES[args.game]()
+    game.cli_name = args.game   # for self-describing outputs (e.g. demo-request teleop commands)
     sections = None
     if args.rl_sections:
         # Lazy import (torch/SB3 only needed with RL). Sub-policies seed micro-search at their

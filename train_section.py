@@ -91,6 +91,10 @@ def main() -> int:
     p.add_argument("--max-steps", type=int, default=220)
     p.add_argument("--start-x", type=int, default=126)
     p.add_argument("--back-x", type=int, default=80)
+    p.add_argument("--demo", action="append", default=[],
+                   help="teleop .demo.json to behavior-clone as a warm start (repeatable). "
+                        "One good human crossing turns PPO-from-scratch into fine-tuning.")
+    p.add_argument("--bc-epochs", type=int, default=200)
     args = p.parse_args()
 
     from stable_baselines3 import PPO
@@ -100,6 +104,27 @@ def main() -> int:
     if "lift" in args.out or args.landing_waits:
         milestones = ((760, 25.0), (800, 45.0), (850, 70.0), (900, 100.0))
     states = [s.strip() for s in args.state.split(",") if s.strip()]
+
+    # BC warm-start pass 1: map demos to the action vocabulary and collect on-trajectory
+    # (obs, action) pairs by replaying them in a DETERMINISTIC env (no start randomization).
+    # Done before build_vec_env — stable-retro allows one emulator per process, so the
+    # collection env must be closed before an in-process (n_envs=1) training env exists.
+    bc_pairs = []
+    if args.demo:
+        from billy.rl.bc import collect_bc_pairs, demo_to_actions, load_demo
+        from billy.rl.section_env import SectionEnv
+
+        env = SectionEnv(states[0], goal_x=args.goal_x, landing_waits=args.landing_waits,
+                         randomize_frames=0, max_steps=args.max_steps,
+                         start_x=args.start_x, back_x=args.back_x, milestones=milestones)
+        for demo_path in args.demo:
+            action_idxs = demo_to_actions(load_demo(demo_path))
+            pairs = collect_bc_pairs(env, action_idxs)
+            bc_pairs.extend(pairs)
+            print(f"[section] demo {demo_path}: {len(action_idxs)} actions -> "
+                  f"{len(pairs)} BC pairs")
+        env.close()
+
     vec = build_vec_env(args.n_envs, states if len(states) > 1 else states[0], args.goal_x,
                         landing_waits=args.landing_waits,
                         randomize_frames=args.randomize_frames,
@@ -115,6 +140,11 @@ def main() -> int:
         # must EXPLORE the jump-timing before it ever sees +cross.
         model = PPO("MlpPolicy", vec, device=args.device, verbose=0, n_steps=512,
                     batch_size=256, gae_lambda=0.95, gamma=0.99, ent_coef=0.03)
+    if bc_pairs:
+        from billy.rl.bc import bc_pretrain
+        loss = bc_pretrain(model, bc_pairs, epochs=args.bc_epochs)
+        print(f"[section] BC warm-start on {len(bc_pairs)} pairs (final loss {loss:.3f}) — "
+              f"PPO now fine-tunes a policy that already knows the crossing")
     model.learn(total_timesteps=args.timesteps, callback=report.cb, progress_bar=False)
     model.save(args.out)
     vec.close()
