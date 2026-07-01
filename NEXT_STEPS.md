@@ -8,10 +8,19 @@ whole-game tape chaining (1-1 re-clears at tape%=100 / search=0 / 0.7s), demo pi
 (BC warm-start via `train_section.py --demo`, `teleop.py --tape`, pull-based
 `request_demo`), skill distillation (`knowledge/distill.py`), parallel micro-search
 (`BILLY_PARALLEL_SEARCH=N`), and the SNES/SMW scaffold (`--game smw`, pending ROM — see
-[billy/games/smw/STATUS.md](billy/games/smw/STATUS.md)). **The 1-3 lift below is now the
-designated first demo-teach moment** — a request is already filed in
-`data/demo_requests.jsonl` with the ready-to-run teleop command; one human crossing
-becomes cache entry + BC warm-start for the retrain.
+[billy/games/smw/STATUS.md](billy/games/smw/STATUS.md)). Also shipped: `teleop.py calibrate`
+(interactive gamepad setup → `data/pad_map.json`) and LM Studio chat-model auto-resolution
+(`llm.resolve_chat_model()`).
+
+**1-3 lift, PPO-only ceiling confirmed:** resumed `section_1_3_lift` for 250k more steps from
+4 approach savestates — `cross_rate` plateaued at **20-28%** (avg_reach≈865-878, max_reach≈1013,
+past the goal_x=950 when it does connect). A live 4-attempt `--rl-sections` run at that
+cross_rate did **not** get lucky enough to bank a crossing (still STUCK on 1-3, frontier
+unchanged). PPO alone has hit a local optimum here — more steps from the same states is unlikely
+to move it. **The 1-3 lift is now the designated first demo-teach moment**: a request is
+already filed in `data/demo_requests.jsonl` with the ready-to-run teleop command; one human
+crossing bypasses the plateau entirely (bankable immediately) and gives `train_section.py --demo`
+a real trajectory to warm-start the next retrain from.
 
 Roadmap as of the hazard-scoped RL sub-policy milestone (branch
 `feat/pipe-entry-and-powerup-perception`, commit `9e364d6`).
