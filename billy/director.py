@@ -68,13 +68,26 @@ class Director:
         self.stuck = StuckTracker()
 
     def _bank_solution(self, lk, x: int, plan: Plan, reach: int, *, y: int = 0,
-                       force: bool = False, source: str = "search") -> None:
+                       force: bool = False, source: str = "search",
+                       summary: str = "", level_label: str = "") -> None:
         prev = self.cache.get(lk, x, y)
         prev_reach = prev.reach_after if prev else -1
         self.cache.put(lk, x, plan, reach, y=y, force=force)
         entry = self.cache.get(lk, x, y)
         if entry and (prev is None or entry.reach_after > prev_reach):
             self.ledger.bank(lk, x, reach, source)
+            # Cross-game exponential: a SIGNIFICANT banked maneuver also becomes a transferable
+            # sequence Skill (seeds search at similar situations; never blind-replayed). Callers
+            # that can't provide the plan-start summary simply skip distillation. Transition-bonus
+            # reaches are excluded (the +100k px "gain" is an area-advance sentinel, not distance).
+            if (config.DISTILL and summary and reach - x < self._TRANSITION_BONUS):
+                from .knowledge.distill import distill_solution
+                if distill_solution(self.skills, summary=summary,
+                                    level_label=level_label or str(lk), plan=plan,
+                                    start_x=x, reach=reach, source=source,
+                                    console=getattr(self.game.system, "name", "nes")):
+                    print(f"  [skill] 🧬 distilled {level_label}@{x} (+{reach - x}px) "
+                          f"→ transferable tactic")
 
     def _drop_solution(self, lk, x: int, *, y: int = 0, reason: str = "fail") -> None:
         self.cache.record_fail(lk, x, y)
@@ -205,7 +218,7 @@ class Director:
                         self._approach_trail.append(
                             (obs.progress, obs.elevation, obs.level_key, snap))
                     last_snap_x = obs.progress
-        if record_tape and not self._tape_mode and plan:
+        if record_tape and plan:
             append_plan(self._tape_record, plan)
         return obs, last_snap_x
 
@@ -251,7 +264,9 @@ class Director:
         cands.extend(self.hooks.extra_candidates(obs))
         profile = getattr(self.reflex, "p", None)
         if profile is not None and len(self.skills):
-            cands.extend(self.skills.candidates(obs.raw, profile, obs.summary))
+            cands.extend(self.skills.candidates(
+                obs.raw, profile, obs.summary,
+                console=getattr(self.game.system, "name", "")))
         return cands
 
     def _learn_from_death(self, safe_history, death_x: int,
@@ -291,7 +306,9 @@ class Director:
                     if seg is not None:
                         plan, reach = seg
                         if self.hooks.learn_cacheable(level_label, death_x, reach):
-                            self._bank_solution(lk, x, plan, reach, y=y, source="learn_section")
+                            self._bank_solution(lk, x, plan, reach, y=y, source="learn_section",
+                                                summary=snap_obs.summary,
+                                                level_label=snap_obs.level_label)
                             self._learned_buckets.add(bkey)
                             return x
                 pit_plan, pit_reach = self.hooks.try_pit_search(
@@ -299,7 +316,9 @@ class Director:
                     min_gain=self._MIN_PROGRESS_PX)
                 if pit_plan is not None and self.hooks.learn_cacheable(
                         level_label, death_x, pit_reach):
-                    self._bank_solution(lk, x, pit_plan, pit_reach, y=y, source="learn_pit")
+                    self._bank_solution(lk, x, pit_plan, pit_reach, y=y, source="learn_pit",
+                                        summary=snap_obs.summary,
+                                        level_label=snap_obs.level_label)
                     self._learned_buckets.add(bkey)
                     return x
                 frame_plan, frame_reach, _ = self.hooks.try_frame_search(
@@ -308,7 +327,9 @@ class Director:
                 if frame_plan is not None and self.hooks.learn_cacheable(
                         level_label, death_x, frame_reach):
                     self._bank_solution(lk, x, frame_plan, frame_reach, y=y,
-                                        source="learn_bootstrap")
+                                        source="learn_bootstrap",
+                                        summary=snap_obs.summary,
+                                        level_label=snap_obs.level_label)
                     self._learned_buckets.add(bkey)
                     return x
 
@@ -334,9 +355,11 @@ class Director:
                     if best_plan is not None:
                         break   # cracked it with this set — don't pay for the next (denser) one
             self.session.restore(snap)
-            self._observe()
+            snap_here = self._observe()   # the plan-start situation (for skill distillation)
             if best_plan is not None:
-                self._bank_solution(lk, x, best_plan, best_reach, y=y, source="learn_macro")
+                self._bank_solution(lk, x, best_plan, best_reach, y=y, source="learn_macro",
+                                    summary=snap_here.summary,
+                                    level_label=snap_here.level_label)
                 self._learned_buckets.add(bkey)
                 return x
         return None
@@ -353,27 +376,40 @@ class Director:
         self._tape_mode = False
         self._tape_replay = None
         entry = self.tapes.get(obs.level_key)
-        if entry and self._verify_tape(entry.plan, obs.level_key, entry.frontier):
+        if entry and self._verify_tape(entry.plan, obs.level_key, entry.frontier,
+                                       expect_clear=entry.clears_level):
             self._tape_replay = [Step(s.frames, s.buttons) for s in entry.plan]
             self._tape_mode = True
             self.tapes.record_hit(obs.level_key)
 
-    def _verify_tape(self, plan: Plan, level_key: tuple, min_frontier: int) -> bool:
+    def _verify_tape(self, plan: Plan, level_key: tuple, min_frontier: int,
+                     *, expect_clear: bool = True) -> bool:
         """Clone-check a stored tape before zero-search replay."""
         if not plan:
             return False
         snap = self.session.clone_state()
         start_level = level_key[:2]
+        start_full = tuple(level_key)
+
+        def advanced(obs: Observation) -> bool:
+            # A tape "succeeds by transition" on a LEVEL clear or an in-level AREA/screen change
+            # (pipe warp, Zelda screen cross) — screen-segment tapes end exactly at the boundary.
+            return (obs.level_key[:2] > start_level
+                    or self.game.search_area_advance(start_full, obs.level_key))
+
         with self.session.search_mode():
             self.session.send_plan(plan)
             obs = self._observe()
             coasted = 0
-            while coasted < 180 and not obs.dead and obs.level_key[:2] <= start_level:
+            # The idle coast exists to observe the clear/warp transition fire; a PARTIAL tape ends
+            # mid-level at a frontier, where idling next to a hazard could kill an otherwise good
+            # tape — its gate is position-only, so skip the coast.
+            while expect_clear and coasted < 180 and not obs.dead and not advanced(obs):
                 self.session.send_plan([Step(4, 0)])
                 obs = self._observe()
                 coasted += 4
         ok = (not obs.dead
-              and (obs.level_key[:2] > start_level
+              and (advanced(obs)
                    or obs.progress >= min_frontier - config.CACHE_BUCKET_PX))
         self.session.restore(snap)
         self._observe()
@@ -543,7 +579,7 @@ class Director:
 
         trajectory: list[coach.TrajectoryStep] = []
         billy_calls = frames = levels_cleared = fastest_in_attempt = 0
-        search_calls = replay_calls = 0          # compounding-curve telemetry
+        search_calls = replay_calls = tape_frames = 0   # compounding-curve telemetry
         frames_to_frontier = 0                    # frames to re-reach last attempt's furthest x
         bucket_visits: dict = {}                  # per-spot visit counter (stall breaker)
         respawns = config.RESPAWNS_PER_ATTEMPT
@@ -651,6 +687,10 @@ class Director:
             # --- screen / sub-area change (SMB pipe warp, Zelda new screen, etc.) ----------
             if self.game.screen_changed(self.cur_level, obs.level_key):
                 self.reflex.note_level_advance(obs)
+                # Crossing INTO the next screen completes the previous screen's tape — persist it
+                # (cleared=True: it ends in a verified transition) so screen-segment tapes chain
+                # into a whole-level, then whole-game, fast-forward.
+                self._tape_finish_level(tape_frontier, cleared=True)
                 self.cur_level = obs.level_key
                 self._tape_begin_level(obs)
                 tape_frontier = obs.progress
@@ -662,9 +702,13 @@ class Director:
                 tape_plan = self._tape_consume()
                 if tape_plan:
                     replay_calls += 1
+                    tape_frames += plan_frames(tape_plan)
                     self.ledger.replay()
-                    obs, last_snap_x = self._commit(tape_plan, safe_history, last_snap_x,
-                                                    record_tape=False)
+                    # record_tape stays ON: the consumed chunks re-seed _tape_record, so when the
+                    # tape exhausts mid-level the continuing live play EXTENDS the tape (prefix +
+                    # new suffix) instead of replacing it with just the suffix — the frontier on a
+                    # level's tape only ever grows, until the tape clears the level outright.
+                    obs, last_snap_x = self._commit(tape_plan, safe_history, last_snap_x)
                     frames += plan_frames(tape_plan)
                     seg_best = max(seg_best, obs.progress)
                     tape_frontier = max(tape_frontier, obs.progress)
@@ -761,7 +805,8 @@ class Director:
                     search_calls += 1
                     if self.hooks.section_bankable(obs, reach):
                         self._bank_solution(lk, obs.progress, plan, reach, y=ey,
-                                            force=cached is not None, source="section")
+                                            force=cached is not None, source="section",
+                                            summary=obs.summary, level_label=obs.level_label)
                         action_note = f"section✓ {self._label(plan)}"
                         print(f'  [attempt {n}] {obs.progress} 🤖 section-policy crossed '
                               f'(reach {reach}) — remembered')
@@ -791,7 +836,8 @@ class Director:
                         search_calls += 1
                         src = "lift_frame" if zone_plan else "pit_frame"
                         self._bank_solution(lk, obs.progress, plan, reach, y=ey,
-                                            force=cached is not None, source=src)
+                                            force=cached is not None, source=src,
+                                            summary=obs.summary, level_label=obs.level_label)
                         tag = "lift-frame✓" if zone_plan else "pit-frame✓"
                         action_note = f"{tag} {self._label(plan)}"
                         reach_str = (f"reach {reach}" if not zone_cross
@@ -822,7 +868,8 @@ class Director:
                         # replaces the one that just failed verify (else we'd re-search it forever).
                         src = "research" if cached is not None else "search"
                         self._bank_solution(lk, obs.progress, plan, reach, y=ey,
-                                            force=cached is not None, source=src)
+                                            force=cached is not None, source=src,
+                                            summary=obs.summary, level_label=obs.level_label)
                         tag = "research✓" if cached is not None else "search✓"
                         action_note = f"{tag} {self._label(plan)}"
                         reach_str = "→ pipe/area" if reach >= self._TRANSITION_BONUS else f"reach {reach}"
@@ -840,7 +887,9 @@ class Director:
                         survived, reach = self._evaluate(plan)
                         if survived and reach > obs.progress + self._MIN_PROGRESS_PX:
                             self._bank_solution(lk, obs.progress, plan, reach, y=ey,
-                                                force=cached is not None, source="llm")
+                                                force=cached is not None, source="llm",
+                                                summary=obs.summary,
+                                                level_label=obs.level_label)
                             action_note = f"BILLY✓ {self._label(plan)}"
                             print(f'  [attempt {n}] {obs.progress} 🎮 Billy: "{bd.trash_talk}" — '
                                   f'cracked it (reach {reach}), remembered')
@@ -885,6 +934,7 @@ class Director:
                 x=replay_x, summary=obs.summary, action=action_note, event=decision.note))
             frames += plan_frames(plan)
             seg_best = max(seg_best, obs.progress)
+            tape_frontier = max(tape_frontier, obs.progress)
             final_score = max(final_score, obs.score)
             if frames_to_frontier == 0 and self._prev_best_x > 0 and obs.progress >= self._prev_best_x:
                 frames_to_frontier = frames   # re-reached last attempt's furthest point
@@ -901,6 +951,13 @@ class Director:
             if quip:
                 print(f'  🎤 Billy: "{quip}"')
 
+        # Frontier march: an attempt that timed out ALIVE still recorded a valid trajectory to its
+        # frontier — persist it as a partial (non-clearing) tape so the next attempt fast-forwards
+        # to the frontier with zero search and spends its whole budget on NEW ground. (Deaths and
+        # dead-end "stuck" endings are not banked: their trails end badly / were just rerouted.)
+        if outcome == "timeout" and not obs.dead:
+            self._tape_finish_level(tape_frontier, cleared=False)
+
         hi = ""
         if final_score > self.best_score:
             self.best_score = final_score
@@ -913,7 +970,7 @@ class Director:
             attempt=n, outcome=outcome, max_x=seg_best, frames=frames, billy_calls=billy_calls,
             world_stage=furthest, levels_cleared=levels_cleared, score=final_score,
             fastest_clear_frames=fastest_in_attempt, duration_s=round(time.monotonic() - t0, 2),
-            search_calls=search_calls, replay_calls=replay_calls,
+            search_calls=search_calls, replay_calls=replay_calls, tape_frames=tape_frames,
             frontier_x=self.cache.solved_frontier(start_level), frames_to_frontier=frames_to_frontier,
             banks=learn.banks, drops=learn.drops, learns=learn.learns,
             level_frontier=learn.level_frontier)
@@ -987,6 +1044,11 @@ class Director:
                 print("  [auto-train] reloaded section sub-policies")
         else:
             print("  [auto-train] no verified crossing yet — will retry after more deaths")
+            # Every autonomous tier missed here — the FINAL remedy is a human demo. Pull-based:
+            # the request fires only at a wall that search + self-training could not crack.
+            from .stuck_trainer import collect_auto_states, request_demo
+            request_demo(getattr(self.game, "cli_name", "smb"), remedy, record,
+                         collect_auto_states(remedy.level_label, record))
 
     def _reflect(self, trajectory, outcome: str, level_label: str) -> None:
         if not self.use_llm:

@@ -42,10 +42,13 @@ class TapeLibrary:
         key = tuple(level_key)
         steps = [Step(s.frames, s.buttons) for s in plan]
         existing = self.entries.get(key)
-        replace = (existing is None
-                   or clears_level and not existing.clears_level
-                   or frontier > existing.frontier
-                   or (clears_level and frontier >= existing.frontier))
+        if existing is not None and existing.clears_level and not clears_level:
+            replace = False   # a partial (frontier) tape never displaces a full clear
+        else:
+            replace = (existing is None
+                       or clears_level and not existing.clears_level
+                       or frontier > existing.frontier
+                       or (clears_level and frontier >= existing.frontier))
         if replace:
             self.entries[key] = TapeEntry(
                 level_key=key, plan=steps, frontier=frontier,
@@ -92,6 +95,10 @@ class TapeLibrary:
 
 
 def append_plan(record: list[Step], plan: Plan) -> None:
-    """Extend a tape recording with a committed plan."""
+    """Extend a tape recording with a committed plan, merging adjacent same-button steps so a
+    tape replayed in small chunks re-records to the same compact stream (no step-count bloat)."""
     for s in plan:
-        record.append(Step(s.frames, s.buttons))
+        if record and record[-1].buttons == s.buttons:
+            record[-1] = Step(record[-1].frames + s.frames, s.buttons)
+        else:
+            record.append(Step(s.frames, s.buttons))
