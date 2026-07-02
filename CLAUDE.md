@@ -33,7 +33,11 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
 2. **Tapes** — `knowledge/tape.py`; whole-trajectory input streams per level/screen, tape-first replay
    after a clone-verify (`tape%` column). Tapes EXTEND when exhausted (replayed chunks re-seed the
    recording — never replace a tape with a suffix), chain across screens, and persist partials to the
-   frontier on a timed-out-alive attempt.
+   frontier on a timed-out-alive attempt. A clearing tape may carry an **entry-state anchor**
+   (`entry_state` sidecar) restored at level begin — this is what makes a MOVING hazard (1-3's lift,
+   phase-set at level load) reproduce: the input stream only replays from that exact state. Anchored
+   tapes are never dropped on a verify miss (a miss means the live approach differed, not that the
+   tape is wrong). This cleared 1-3 → Billy now marches into World 2.
 3. **SolutionCache** — `knowledge/cache.py`; exact verified sequences keyed `(level_key, x_bucket)`.
    The compounding memory. Persisted tiny (button steps only) to `data/solutions.jsonl`.
    **Reachback**: on a miss (or weak hit), a HIGH-reach entry a few buckets behind is clone-verified
@@ -79,9 +83,11 @@ demos/search bank on combat-walled screens.
   curve (the regression guard).
 
 ## Known limits (honest)
-- Within-level compounding is **partial**: static geometry caches+replays; moving enemies re-search
-  each pass (position-bucketed replay is timing-sensitive → replay-verify falls back to live-search).
-  Billy still clears 1-1 every attempt. Search→0 would need whole-trajectory determinism.
+- Within-level compounding is **partial** for POSITION-KEYED cache entries: static geometry
+  caches+replays; moving enemies re-search each pass (position-bucketed replay is timing-sensitive →
+  replay-verify falls back to live-search). The **whole-level tape** (esp. entry-state-anchored) is the
+  answer where it exists — it reproduces the whole trajectory incl. moving lifts deterministically
+  (this is how 1-3 clears). Search→0 within a level needs that whole-trajectory determinism.
 - Cross-game transfer: the **shared reflex** is the primary carry-forward (SMB2-Japan plays with zero
   new reflex code). The **Skill layer** adds candidate diversity that can unblock a hazard (seeded run
   reached further on Lost Levels 1-1), at the cost of more rollouts.

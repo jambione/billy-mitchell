@@ -584,24 +584,41 @@ class Director:
             print(f'  [attempt {attempt}]   human segment made no progress '
                   f'(+{gained}px) — nothing banked')
 
-    def _tape_begin_level(self, obs: Observation) -> None:
-        """Start recording a level trajectory; try a verified tape replay if one exists."""
+    def _tape_begin_level(self, obs: Observation) -> Observation:
+        """Start recording a level trajectory; try a verified tape replay if one exists.
+
+        Returns the current observation — which DIFFERS from the argument when an anchored
+        tape restored its entry savestate, so callers must use the return value."""
         self._tape_key = obs.level_key
         self._tape_record = []
         self._tape_mode = False
         self._tape_replay = None
         entry = self.tapes.get(obs.level_key)
         if entry:
+            # Entry-state anchor: a whole-level tape only reproduces a MOVING hazard (1-3's
+            # lift) if it starts from the exact state that set the hazard's phase. Restore that
+            # savestate before verify/replay — it's the level start, so the snap is imperceptible
+            # (Mario is at the entry either way) and it makes the lift deterministic.
+            if entry.entry_state is not None:
+                self.session.restore(entry.entry_state)
+                self.session.save_state(0)   # respawns this life align to the anchored entry
+                obs = self._observe()
+                self._tape_key = obs.level_key
             if self._verify_tape(entry.plan, obs.level_key, entry.frontier,
                                  expect_clear=entry.clears_level):
                 self._tape_replay = [Step(s.frames, s.buttons) for s in entry.plan]
                 self._tape_mode = True
                 self.tapes.record_hit(obs.level_key)
-            else:
+            elif entry.entry_state is None:
                 # A tape that keeps failing verify no longer matches reality — drop it after
                 # FAIL_LIMIT misses so an honest new recording can take its slot (corrupt or
-                # drifted tapes with inflated frontiers must not squat forever).
+                # drifted tapes with inflated frontiers must not squat forever). An ANCHORED tape
+                # is never dropped on a verify miss: it replays from its own saved entry, so a
+                # miss means the live approach differed, not that the tape is wrong.
                 self.tapes.record_fail(obs.level_key)
+        # Remember the entry state so a self-recorded clear of this level anchors future replays.
+        self._tape_entry_state = self.session.clone_state()
+        return obs
 
     def _verify_tape(self, plan: Plan, level_key: tuple, min_frontier: int,
                      *, expect_clear: bool = True) -> bool:
@@ -654,11 +671,18 @@ class Director:
                 self._tape_replay[0] = Step(step.frames - take, step.buttons)
         return chunk or None
 
-    def _tape_finish_level(self, frontier: int, *, cleared: bool) -> None:
-        """Persist a recorded trajectory when a level ends well."""
+    def _tape_finish_level(self, frontier: int, *, cleared: bool,
+                           anchor: bool = False) -> None:
+        """Persist a recorded trajectory when a level ends well.
+
+        `anchor` (only at a true world/stage clear) stores the entry savestate with the tape so
+        its replay reproduces a moving hazard (the lift) deterministically. Screen/area-change
+        tapes pass anchor=False — restoring their entry mid-level would snap the player."""
         if not self._tape_record:
             return
-        self.tapes.put(self._tape_key, self._tape_record, frontier, clears_level=cleared)
+        entry_state = getattr(self, "_tape_entry_state", None) if (cleared and anchor) else None
+        self.tapes.put(self._tape_key, self._tape_record, frontier,
+                       clears_level=cleared, entry_state=entry_state)
         self._tape_record = []
 
     # --- boot ---------------------------------------------------------------------------
@@ -892,7 +916,7 @@ class Director:
         last_snap_x = obs.progress
         self._learned_buckets.clear()
         self._reachback_miss.clear()
-        self._tape_begin_level(obs)
+        obs = self._tape_begin_level(obs)
         tape_frontier = obs.progress
 
         while frames <= config.MAX_ATTEMPT_FRAMES:
@@ -944,7 +968,7 @@ class Director:
                                      self.session.clone_state()))
                 self._learned_buckets.clear()
                 self._last_pit_death_x = 0
-                self._tape_begin_level(obs)
+                obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
                 continue
 
@@ -953,7 +977,7 @@ class Director:
             # own bucket region), but an internal area boundary inside a level — e.g. 1-2's joined
             # areas — is NOT a level clear and must not over-count or trip the per-attempt cap.
             if self.game.level_cleared(self.cur_level, obs.level_key):
-                self._tape_finish_level(max(tape_frontier, seg_best), cleared=True)
+                self._tape_finish_level(max(tape_frontier, seg_best), cleared=True, anchor=True)
                 self.routes.record(self.cur_level, obs.level_key, "clear",
                                    at=max(tape_frontier, seg_best), dst_label=obs.level_label)
                 levels_cleared += 1
@@ -979,7 +1003,7 @@ class Director:
                 self._seg_level_key = obs.level_key[:2]
                 seg_best, need_checkpoint = obs.progress, True
                 last_snap_x = obs.progress   # x re-based in the new level — re-arm snapshots
-                self._tape_begin_level(obs)
+                obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
                 if levels_cleared >= config.MAX_LEVELS_PER_ATTEMPT:
                     outcome = "clear"
@@ -1001,7 +1025,7 @@ class Director:
                 self.routes.record(self.cur_level, obs.level_key, "screen",
                                    at=max(tape_frontier, seg_best), dst_label=obs.level_label)
                 self.cur_level = obs.level_key
-                self._tape_begin_level(obs)
+                obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
                 last_snap_x = obs.progress   # x re-based in the new area — re-arm snapshots
                 print(f'  [attempt {n}] 🗺️ screen → {obs.level_label} '

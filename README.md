@@ -74,7 +74,10 @@ Advice flows down, verified truth flows up — the walkthrough says what to *try
   is **game-agnostic**.
 - **Tapes** (`knowledge/tape.py`) — whole-trajectory input streams per level/screen. A verified tape
   re-clears a level in wall-clock seconds with zero search; tapes self-heal (repeated verify
-  failures drop a stale tape so an honest one takes the slot).
+  failures drop a stale tape so an honest one takes the slot). A clearing tape can carry an
+  **entry-state anchor** — the savestate it was recorded from, restored at level begin — so a level
+  with a *moving* hazard (1-3's lift, whose phase is set at level load) replays deterministically.
+  This is what lets Billy march past 1-3 into World 2.
 - **Skill library** (`knowledge/skills.py` + `knowledge/distill.py`) — *abstract* tactics carried as
   embeddings, **auto-distilled** from every significant banked win and human demo. On a new game the
   cache is empty, but skills retrieved by situation-similarity **seed the search** with
