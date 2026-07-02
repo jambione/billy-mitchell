@@ -23,8 +23,8 @@ class BillyDecision:
 
 
 def decide(obs: Observation, lessons: list[Lesson], recent_events: list[str],
-           controller: Controller) -> BillyDecision:
-    user = _build_prompt(obs, lessons, recent_events)
+           controller: Controller, *, memory: str = "") -> BillyDecision:
+    user = _build_prompt(obs, lessons, recent_events, memory=memory)
     try:
         data = llm.chat_json(
             [{"role": "system", "content": BILLY_SYSTEM}, {"role": "user", "content": user}],
@@ -43,7 +43,8 @@ def decide(obs: Observation, lessons: list[Lesson], recent_events: list[str],
     )
 
 
-def _build_prompt(obs: Observation, lessons: list[Lesson], recent_events: list[str]) -> str:
+def _build_prompt(obs: Observation, lessons: list[Lesson], recent_events: list[str],
+                  *, memory: str = "") -> str:
     # Rank lessons by quality (impact per use) and show effectiveness
     if lessons:
         sorted_lessons = sorted(lessons, key=lambda l: l.quality(), reverse=True)
@@ -56,9 +57,11 @@ def _build_prompt(obs: Observation, lessons: list[Lesson], recent_events: list[s
         lesson_block = "- (none yet; start building your knowledge base)"
 
     events = ", ".join(recent_events[-6:]) or "just started"
+    memory_block = f"{memory}\n\n" if memory else ""
     return (
         f"GAME STATE:\n{obs.summary}\n\n"
         f"MAP (M=you, E=enemy, #=solid, space=air):\n{obs.ascii_map}\n\n"
+        f"{memory_block}"
         f"RECENT EVENTS: {events}\n\n"
         f"YOUR BEST LESSONS (ranked by effectiveness):\n{lesson_block}\n\n"
         f"Your next move: apply a high-quality lesson if it fits, or adapt as needed. JSON object only."

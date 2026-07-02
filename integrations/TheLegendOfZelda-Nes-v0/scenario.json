@@ -1,0 +1,21 @@
+{
+  "done": {
+    "condition": "any",
+    "variables": {
+      "health": {
+        "op": "equal",
+        "reference": 0
+      }
+    }
+  },
+  "reward": {
+    "variables": {
+      "rupees": {
+        "reward": 1
+      }
+    }
+  },
+  "actions": {
+    "START": 1
+  }
+}

@@ -118,7 +118,7 @@ def test_observe_reuses_last_good_on_death_frame():
     o2 = game.observe(1, bytes(death))
     assert o2.progress == 200              # reused last good, NOT 65535
     assert o2.level_label == "1-1"         # NOT "256-256"
-    assert o2.level_key == (0, 0)
+    assert o2.level_key == (0, 0, 0)       # (world, stage, area) — area-aware key
     assert o2.dead is True                  # death is still reported
 
 

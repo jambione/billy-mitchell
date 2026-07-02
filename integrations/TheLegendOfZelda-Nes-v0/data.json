@@ -1,0 +1,52 @@
+{
+  "info": {
+    "link_x": {
+      "address": 112,
+      "type": "|u1"
+    },
+    "link_y": {
+      "address": 132,
+      "type": "|u1"
+    },
+    "game_mode": {
+      "address": 18,
+      "type": "|u1"
+    },
+    "current_level": {
+      "address": 16,
+      "type": "|u1"
+    },
+    "map_location": {
+      "address": 235,
+      "type": "|u1"
+    },
+    "sword_level": {
+      "address": 1623,
+      "type": "|u1"
+    },
+    "keys": {
+      "address": 1646,
+      "type": "|u1"
+    },
+    "bombs": {
+      "address": 1624,
+      "type": "|u1"
+    },
+    "rupees": {
+      "address": 1645,
+      "type": "|u1"
+    },
+    "hearts": {
+      "address": 1647,
+      "type": "|u1"
+    },
+    "room_state": {
+      "address": 249,
+      "type": "|u1"
+    },
+    "room_state2": {
+      "address": 250,
+      "type": "|u1"
+    }
+  }
+}

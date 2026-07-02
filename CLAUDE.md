@@ -19,6 +19,10 @@ BILLY_HEADLESS=1 BILLY_REPEAT_LEVEL=1 BILLY_MAX_FRAMES=8000 .venv/bin/python -u 
 Game-agnostic engine talks only to contracts in `billy/abstractions.py`:
 `Session` (7 methods) · `Game` (observe/boot/make_reflex) · `Observation` (generic `progress`,
 `level_key`) · `ReflexPolicy`. A new console = `systems/<x>/`; a new title = `games/<y>/`.
+The retro transport (`systems/nes/retro_session.py`) is console-parameterized (controller module +
+RAM size); `systems/snes/` + `games/smw/` ride it with LOGICAL buttons (A=jump→SNES B, B=run→SNES Y
+via `RETRO_NAMES`) so the shared reflex carries across consoles. SMW is scaffold-only until a ROM
+lands — bring-up checklist in `billy/games/smw/STATUS.md`.
 
 Decision flow per hazard (in `director.py` `run_attempt`):
 **cache-hit → verify on clone → replay** ⚡; else **micro-search on a clone (invisible) → bank** 🔍;
@@ -26,11 +30,29 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
 
 ## Tiers
 1. **Reflex** — `games/common/platformer.py` `PlatformerReflex(PhysicsProfile)`; routine play, no LLM.
-2. **SolutionCache** — `knowledge/cache.py`; exact verified sequences keyed `(level_key, x_bucket)`.
+2. **Tapes** — `knowledge/tape.py`; whole-trajectory input streams per level/screen, tape-first replay
+   after a clone-verify (`tape%` column). Tapes EXTEND when exhausted (replayed chunks re-seed the
+   recording — never replace a tape with a suffix), chain across screens, and persist partials to the
+   frontier on a timed-out-alive attempt.
+3. **SolutionCache** — `knowledge/cache.py`; exact verified sequences keyed `(level_key, x_bucket)`.
    The compounding memory. Persisted tiny (button steps only) to `data/solutions.jsonl`.
-3. **Micro-search** — `director.py` `_micro_search`/`_rollout`; runs on `session.clone_state()` under
-   `search_mode()` so frames never display (no visible rewind). Candidates = reflex spread + Skills.
-4. **LLM (Billy/Coach)** — only when search finds nothing / persona. Off the hot loop.
+   **Reachback**: on a miss (or weak hit), a HIGH-reach entry a few buckets behind is clone-verified
+   from the live state before replay — demos bind to their exact state, so verify decides honestly.
+4. **Micro-search** — `director.py` `_micro_search`/`rollout_candidate`; runs on
+   `session.clone_state()` under `search_mode()` so frames never display (no visible rewind).
+   Candidates = reflex spread + Skills, incl. distilled `sequence` skills (`knowledge/distill.py` —
+   significant banks auto-become transferable, console-gated, search-seeded only).
+   `BILLY_PARALLEL_SEARCH=N` fans candidates out to N emulator workers (`search_pool.py`).
+5. **Human demos** — PULL: when search + stuck-training all miss, `stuck_trainer.request_demo`
+   files a teleop command (`data/demo_requests.jsonl`). PUSH: **T in the watch window** = live
+   takeover (`director._human_takeover`) — the segment banks from Billy's own live state (the
+   durable carrier; mid-level savestate demos often fail verify from shifted approaches).
+   One demo = cache entry + tape (`teleop.py --tape`) + distilled skill + BC warm-start
+   (`train_section.py --demo`, `billy/rl/bc.py`).
+6. **Walkthrough guide** — `knowledge/guide.py`; a text FAQ at `walkthrough/<SYSTEM>/<game>` is
+   ingested once (LLM read merged with heuristic parse → `data/guides/`). Seeds search candidates
+   + LLM prompt context. Advice only, never authority.
+7. **LLM (Billy/Coach)** — only when search finds nothing / persona. Off the hot loop.
 
 ## Invariants — do not break
 - **Exact-replay only.** The cache replays the *exact* button sequence from the same state. Embeddings

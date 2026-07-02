@@ -1,0 +1,2691 @@
+_______________________________________________________________________________
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+      ___
+     -   ---___- ,,                _-_-                             |\
+        (' ||    ||                 /,             _                 \\
+       ((  ||    ||/\\  _-_         ||      _-_   / \\  _-_  \\/\\  / \\
+      ((   ||    || || || \\       ~||     || \\ || || || \\ || || || ||
+       (( //     || || ||/          ||     ||/   || || ||/   || || || ||
+         -____-  \\ |/ \\,/        (  -__, \\,/  \\_-| \\,/  \\ \\  \\/
+                   _/                             /  \
+                                                 '----`
+
+                         /\       _-___       ,,  |\
+                        ||            /       ||   \\    _
+                  /'\\ =||=          /   _-_  ||  / \\  < \,
+                 || ||  ||         =/=  || \\ || || ||  /-||
+                 || ||  ||         /    ||/   || || || (( ||
+                 \\,/   \\,       /-__- \\,/  \\  \\/   \/\\
+
+________________________________________________________________________________
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+
+                             The Legend of Zelda
+                           The Complete Walkthrough
+                        a wee Guide for the Perplexed
+
+                                 June 8, 2001
+                                  Version 1.9
+
+                      Written by:  Dan Simpson
+                           Email:  manymoose@hotmail.com)
+
+
+                                Email Policy:
+                                ¯¯¯¯¯¯¯¯¯¯¯¯¯
+         If you are going to email me about this game, please put
+         The Legend of Zelda as the subject.  Or just Zelda.  Also please
+         realize that I am not hiding cheats or any other information,
+         i.e. everything I know about Zelda is in this guide.
+
+         If you see any mistakes, or have anything that you want to add
+         please email me!  I will, of course, give you full credit for
+         your addition, and be eternally grateful to you.
+
+
+______________________________________Notes____________________________________
+The latest version of this FAQ can be found at:
+  http://www.gamefaqs.com/
+
+If you need a copy of Zelda to play, might I suggest heading over to:
+
+  http://www.zeldaclassic.com/
+
+If you are a webmaster and wish to post this on your web page, please email
+me first.  And if you do post this FAQ on your site, please make an attempt
+to keep it up to date.  There is nothing worse than getting emails from
+people who saw an old version asking about things that are already in the
+newer versions.  Well, maybe there are worse things, but it IS annoying!
+
+The maps were made by me and as such, they don't look all that great.  It
+certainly doesn't help that they are nothing more than ASCII text!
+Hopefully, you will be able to see the meaning there.  If the maps and the
+ASCII text look like gibberish, set your FONT to Courier New, or any other
+Fixed Width font.
+
+This Walkthrough is Copyright 1999-2001 by Dan Simpson
+The Legend of Zelda is Copyright by Nintendo
+
+I am not affiliated with Nintendo or anyone who had anything to do with the
+creation of this game.  This FAQ may be posted on any site so long as
+NOTHING IS CHANGED and you EMAIL ME telling me that you are posting it.  You
+may not charge for, or in any way profit from this FAQ.
+_______________________________________________________________________________
+
+__________________
+What's New in 1.9:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+    Added more information on Zelda Classic (PC).
+
+  For a complete Version History, check out the Final Words Section at the end
+  of the FAQ.
+
+
+-------------------------------------------------------------------------------
+Table of Contents:
+-------------------------------------------------------------------------------
+
+
+        i.   Introduction
+        ii.  Items
+        iii. Hyrule Map
+
+        iv.  Zelda Classic (PC)
+
+      FIRST QUEST:
+        1.   Before you hit Level One...
+        2.   Level One
+        3.   Level Two
+        4.   Level Three
+        5.   Something to do Before Level Four
+        6.   Level Four
+        7.   Things to do with a Stepladder...
+        8.   Level Five
+        9.   Level Six
+        10.  Level Seven
+        11.  Level Eight
+        12.  Level Nine
+
+      SECOND QUEST:
+        13.  Pre-Level One
+        14.  Level One
+        15.  White Sword Revisited
+        16.  Level Two
+        17.  Play that funky Music...
+        18.  Level Three
+        19.  Level Four
+        20.  Rafting...
+        21.  Level Five
+        22.  Magic Sword Returns
+        23.  Level Six
+        24.  The Final Heart
+        25.  Level Seven
+        26.  Level Eight
+        27.  Level Nine
+
+      APPENDICES:
+        A.   Secrets
+        B.   Monsters and Bosses
+        C.   Game Genie Codes
+        D.   Online Resources
+        E.   Acknowledgments
+
+
++=============================================================================+
+| i. Introduction                                                             |
++=============================================================================+
+
+  A long, long time ago the World was in an age of Chaos. In the middle
+  of this chaos, in a little kingdom in the land of Hyrule, a legend was
+  being handed down from generation to generation, the legend of the
+  "Triforce"; golden triangles possessing mystical powers.
+
+  One day, an evil army attacked this peaceful little kingdom and stole
+  the Triforce of Power. This army was led by Gannon, the powerful
+  Prince of Darkness who sought to plunge the World into fear and
+  darkness under his rule. Fearing his wicked rule, Zelda, the princess
+  of this kingdom, split up the Triforce of Wisdom into eight fragments
+  and hid them throughout the realm to save the last remaining Triforce
+  from the clutches of the evil Gannon. At the same time, she commanded
+  her most trustworthy nursemaid, Impa, to secretly escape into the land
+  and go find a man with enough courage to destroy the evil Gannon.
+  Upon hearing this, Gannon grew angry, imprisoned the princess, and sent
+  out a party in search of Impa.
+
+  Braving forests and mountains, Impa fled for her life from her
+  pursuers. As she reached the very limit of her energy she found
+  herself surrounded by Gannon's evil henchmen. Cornered! What could
+  she do? ... But wait!
+
+  All was not lost. A young lad appeared. He skillfully drove off
+  Gannon's henchmen, and saved Impa from a fate worse than death.
+  His name was Link. During his travels he had come across Impa and
+  Gannon's henchmen. Impa told Link the whole story of the princess Zelda
+  and the evil Gannon. Burning with a sense of justice, Link resolved to
+  save Zelda, but Gannon was a powerful opponent. He held the Triforce of
+  Power. And so, in order to fight off Gannon, Link had to bring the
+  scattered eight fragments of the Triforce of Wisdom together to
+  rebuild the mystical Triangle.
+
+  If he couldn't do this, there would be no chance Link could fight his
+  way into Death Mountain where Gannon lived. Can Link really destroy
+  Gannon and save the Princess Zelda? Only your skill can answer that
+  question. Good luck. Use the Triforce wisely.
+        -- from the LEGEND OF ZELDA Manual -- 
+
+  Zelda is really two games for the price of one, there is the first Quest, and
+  a second Quest--which is accessed by winning the first quest.  An alternate 
+  way to play the second question is to name your character 'zelda', or 
+  anything that starts with 'zelda'--i.e. 'zelda 9'. (there does not need to be 
+  a space)  You'll know if you are in the second quest because Link will hold 
+  up a sword.  The only other thing happening on this screen is when you get a 
+  Blue or Red ring your Link will change colors.
+
+  The number on the character screen is the total of times you have died.
+
+
++=============================================================================+
+| ii. Items                                                                   |
++=============================================================================+
+
+Container Hearts:  (There are 5 exterior, 8 interior)
+  First Quest:  2 require bombing (12, 8) and (13, 3)
+                1 requires burning (8, 5)
+                1 requires the Stepladder (16, 6)
+                1 requires the Raft (16, 3)
+  Second Quest: 2 requires fluting (11, 4) (6, 1)
+                1 requires pushing a grave (1, 3)
+                1 requires the Stepladder (16, 6)
+                1 requires the Raft (16, 3)
+                -- more detailed directions are in the Walkthrough below --
+
+Swords:  Wooden - in cave at the start of the game (8, 8) -1x power-
+         White - on top of the waterfall (11, 1) -requires 5 hearts, 2x power-
+         Magic - 1 - in a tombstone (2, 3) -requires 12 hearts, 4x power-
+               - 2 - under a stone to the north (10, 1)
+
+Magic Shield:  can block fireballs, bought at various shops (90)
+
+Rings:   Blue - bought in a shop (250) cuts hits in 1/2
+         Red - found in Level Nine cuts hits to 1/4 (or 1/2 of Blue Ring hits)
+
+Candles: Used to burn bushes, or to light up dark rooms in dungeons.
+         Blue - bought in a shop (60), can only be used once per screen
+         Red - found in Level Seven, can be used "willy nilly"
+             
+Bombs: Blows up enemies, and some walls.
+       can either be bought, or found after killing an enemy (20)
+
+Bow: - 1 - found in Level One
+     - 2 - found in Level Five
+     Arrow - must be bought, everytime you shoot an arrow it costs 1 rupee (80)
+     Silver Arrow - found in Level Nine
+
+Potions: there are 2 kinds, and each restores all of your hearts
+         Red - bought in potion shops (show letter to the old woman) Red can be
+               used twice
+         Blue - same as red, but can only be used once
+
+Boomerang: The Boomerang is the ideal weapon for slaying Bats, and retrieving
+           items that other monsters drop.  It can also stun monsters.
+           - found in Level One
+          
+Magical Boomerang: - 1 - found in Level Two
+                   - 2 - found in Level Three
+
+Bait: used in dungeons, when a monster says "Grumble, Grumble"
+      must be bought (60)
+
+Raft: used to cross bodies of water, from a dock.
+      - 1 - found in Level Three
+      - 2 - found in Level Four
+
+Stepladder: can be used to cross small bodies of water
+            - 1 - found in Level Four
+            - 2 - found in Level Six
+
+Flute: On the overworld summons a Warp Tornado, also annoys the Digdogger.
+       - 1 - found in Level Five
+       - 2 - found in Level Two
+
+Magic Wand: fires magic bolts
+            - 1 - found in Level Six
+            - 2 - found in Level Eight
+
+Magic Key: a skeleton key, opens all locked doors
+           - found in Level Eight
+           
+Magic Book: changes the magic wand so that the magic bolts turn to fire
+            - 1 - found in Level Eight
+            - 2 - found in Level Four 
+
+OTHER ITEMS:
+      Rupees - your basic money source, they come in both the 1 and 5 variety
+      Magic Clock - freezes the enemies on the screen
+      Bracelet - can push rocks with it
+      little Heart - refills your life 1 heart
+      Map and Compass - show you the entire level, and where the boss is
+      Fairies - refill more life
+
+
++=============================================================================+
+| iii. Map of Hyrule                                                          |
++=============================================================================+
+
+Note: These maps don't list every single secret in the game, only the 
+      "important" things.
+
+FIRST QUEST:
+        X 1   2   3   4   5   6   7   8   9   10  11  12  13  14  15  16
+     Y   ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___
+     1  |___|___|___|___|___|_9_|___|___|___|___|_W_|_5_|___|___|_L_|_$_|
+     2  |___|___|___|___|___|___|___|___|___|___|___|___|___|___|___|___|
+     3  |___|_M_|_6_|___|_B_|___|___|___|___|___|___|___|_H_|___|___|_H_|
+     4  |___|___|___|___|_R_|___|___|_1_|___|___|___|___|_2_|___|___|___|
+     5  |___|___|_7_|___|___|_4_|_S_|_H_|___|___|___|___|___|___|___|___|
+     6  |___|___|___|___|___|___|___|___|___|___|___|___|___|___|___|_H_|
+     7  |___|___|_$_|___|___|___|___|___|___|___|___|_$_|___|_8_|___|___|
+     8  |___|___|___|___|_3_|___|___|_X_|___|___|___|_H_|___|___|___|___|
+
+SECOND QUEST:
+        X 1   2   3   4   5   6   7   8   9   10  11  12  13  14  15  16
+     Y   ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___ ___
+     1  |_9_|___|___|___|___|___|_H_|___|___|_M_|_W_|___|___|___|___|_R_|
+     2  |___|_L_|___|___|___|___|___|___|___|_8_|___|_4_|___|___|___|___|
+     3  |_H_|___|___|___|_B_|___|___|___|___|___|___|___|___|___|___|_H_|
+     4  |_6_|___|___|___|_2_|___|___|_1_|___|___|_H_|___|_3_|___|___|___|
+     5  |___|___|___|___|___|_5_|_S_|___|___|___|___|___|___|___|___|___|
+     6  |___|___|___|_$_|___|___|___|___|___|___|___|___|___|___|___|_H_|
+     7  |___|___|___|___|___|___|___|___|___|___|___|___|_7_|___|___|___|
+     8  |___|___|___|___|___|___|___|_X_|___|___|___|___|___|___|___|___|
+
+Key:
+      1-9 : Levels            W : White Sword      S : Magic Shield
+      H : Heart Container     M : Magic Sword      R : Blue Ring
+      X : Where you start     B : Bracelet         $ : 100 Rupees
+      L : Letter
+
+
++=============================================================================+
+| iv. Zelda Classic                                                           |
++=============================================================================+
+
+  Want to play Zelda for free on your home PC?  Then wander over to this link,
+  download the program, and away you go:
+
+    http://www.zeldaclassic.com/
+
+  This is not a NES emulator, or any such program.  It is a PC remake.  
+  (I would guess that he started with the Zelda ROM and went from there)
+
+  Zelda Classic has a number of interesting features that makes it in many
+  ways superior to the original:
+
+    Has more quests, not only right now, but since ZC is expandable, there will
+    always be more coming.
+
+    Can use enhanced graphics (if you ever saw the BS Zelda, you have some idea
+    of what this is)
+
+  FAQ:  How do I cheat in Zelda Classic (PC)?
+
+    A:  Cheats are only enabled in certain quests.  For example, the default
+        first quest does not allow for cheating.  If you want to cheat in the
+        first quest, you'll need to load the Example_1st.qst instead.
+
+
+  FAQ:  How do I get to these custom quests, anyway?
+
+    A:  From the character selection screen, go to your character and press A
+        (however you have your keyboard options set up... my 'A' is actually
+        Z).  This will take you to the quest options menu.
+
+        I found the bs1st.qst to be the most entertaining quest, since it is
+        the 1st Quest, but with much improved graphics (the BS Zelda graphics,
+        which are somewhere just below the SNES Zelda level).
+
+
+  FAQ:  How do I make my own quests?
+
+    A:  Using the zquest.exe program in the C:\Zelda Classic\ directory.
+        This program is very difficult to use and includes very little in the
+        way of documentation.
+
+        There is a pretty good tutorial out there that can help you out:
+
+        http://www.personal.psu.edu/users/r/m/rmg157/zquesttutorial/index.html
+
+
+  FAQ:  I checked, and I don't have the ZQUEST.EXE file, where is it?
+
+    A:  Chances are that you either missed seeing it, or downloaded an earlier
+        version that didn't carry it.  Go to http://www.zeldaclassic.com to
+        get the updated version.  Install that and you should find it.
+
+
+  +=========================================================================+
+ +---------------------------------------------------------------------------+
+|                          FIRST QUEST WALKTHROUGH:                           |
+ +---------------------------------------------------------------------------+
+  +=========================================================================+
+
++=============================================================================+
+| 1. Before you Hit Level One...                                              |
++=============================================================================+
+
+Itinerary:  Pick up 3 hearts, the White Sword, the Letter, the Blue Candle, the
+            Magic Shield and the Blue Ring
+
+HEART 1:
+  * Get the wooden sword in the cave.
+
+  * Head right 8 screens (half the length of Hyrule) until you reach the sea,
+    killing everything and getting money.  If you also get bombs from the 
+    enemies then you can skip the next step.
+
+  * Go up one screen, into the cave, and buy -=BOMBS=- (20 rupees)
+
+  * Go down and then left 4 screens.  There is a path to the north here, place
+    your bomb on the wall to the left of the path, the 2nd tile from the right.
+
+    ________________
+   |BBBBBBBBBBB   BB|         Map:  Location of -=HEART=- 1
+   |BBBBBBBBB.B   BB|         Key:  B - Stone
+   |BBBBBBB         |               . - Bomb Here!
+   |BBBBBB          |               ~ - Water
+   |BBBBB           |
+   |                |     
+   |BBBBB  ~~~~~~~~~|  
+   |BBBBBB ~~~~~~~~~|     * Go in the cave and get your -=HEART=-!
+   |BBBBBBB~~~~~~~~~|
+    ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+
+HEART 2:
+  * Head north 5 screens (or until you can't go north anymore)
+
+  * Go right 1 screen.  There is a big rock in the center of the screen.  Bomb
+    the rock again 2nd from the right side.  (note: notice the diagonal rocks
+    by on the edge of the big rock, those can't ever be bombed, but they still
+    count when I say "2nd from right")
+
+    ________________
+   |BBB=BBBBBBBBBBBB|         Map:  Location of -=HEART=- 2
+   |BBB=BBBBBBBBBBBB|         Key:  B - Stone
+   |            BBBB|               . - Bomb Here!
+   |      BBBB  BBBB|               = - Ladder
+   |     BBBBBB BBBB|
+   |     BBBBBB     |
+   |     \BBB./     |
+   |                |     * Again into the cave and get the 2nd -=HEART=-!
+   |BBBBBBBBBBBBBBBB|
+    ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+
+LETTER:
+  * Go right 1, bomb by the north path 2nd from right, go in the cave for 30
+    rupees.
+
+  * Go up, then right, then up the ladder and into the cave to get the 
+    -=LETTER=-!  Now you can buy potions from the Old Woman!
+
+100 RUPEES, WOW!:
+  * Go back down the ladder and head right again.
+
+  * You should be at a place with an opening in a tree surrounded by other
+    trees (that is one of the gambling places in Hyrule).
+
+  * Walk to the right side of the large tree and walk straight up, and 
+    hopefully, through the illusionary wall to the North.
+
+  * Go in and grab your 100 rupees.
+
+BLUE CANDLE:
+  * Go back down the ladder and back through the illusion, from there go left
+    twice, and down twice.  Touch the statue on the right, he'll run off  
+    revealing a staircase!  Inside is 30 rupees!
+
+  * Go back up, then left twice, then down 5 times, then left 4 times and 
+    you're back where you started!  If you're not there, then find you're way 
+    there.
+
+  * Head north, and place a bomb on the north wall 2 tiles to the left of the
+    protrusion on the wall, go in and get 30 rupees!  You should be rolling in
+    dough now!
+
+  * Go to the left and into the cave, and buy the -=BLUE CANDLE=- (60)
+    There is a Magic Shield there, but don't buy it, we can get it for cheaper
+    elsewhere!
+
+MAGIC SHIELD:
+  * Now go left, then up, then to the right.  In the center are 6 bushes, burn 
+    the lower left bush and go in to get 10 rupees!
+
+  * Go up.  Burn the bush on the corner of all the bushes, go in the shop and 
+    buy the -=MAGIC SHIELD=- (90).  Told you we'd find a cheaper one!
+
+HEART 3:
+  * Go right 1 screen.  Burn the 5th bush from the right side and go in and
+    grab your -=HEART=-!
+
+WHITE SWORD:
+  * Now is the time to trade in your beat up old Wooden Sword for the
+    White Sword.
+
+  * Go right 1 screen, and burn the top bush on the right side, go in and get
+    30 rupees!
+
+  * Go up 2 screens, then burn the lower right of the green bushes, for another 
+    30 rupees note:  if you are at 150 rupees or higher, you don't need anymore 
+    until the next 100 a little later, and if you're not, then kill enemies!
+
+  * Now go left, up, and then right 3 times.  Don't get hit by those falling
+    rocks now!
+
+  * Head up the ladder, avoid that blue guy, and go into the cave to get your
+    -=WHITE SWORD=-
+
+BLUE RING:
+  * Return to the where you started the game (that would be: DOWN, LEFT 3, 
+    DOWN, RIGHT, DOWN 5, and LEFT)
+
+  * Go up, and then to the left 3 and go into the cave.  Show the old woman the
+    LETTER and she will (as will every old woman in the game) sell potions.
+    Only buy the Red kind, since you can use it twice, but don't buy any now
+    unless you have more than 210 rupees.
+     
+  * Left twice more.  There will be a thin layer of bushes in the middle, burn
+    the top bush, go in and get 100 more rupees!
+
+    ________________
+   |bbbbb  bb     bb|          Map:  Location of 2nd 100 Rupees
+   |bbbbb  bb     bb|          Key:  b - Bush
+   |bbbbb   .     bb|                . - Burn Here!
+   |bbbbb   b       |
+   |        b       |
+   |        b       |
+   |        b       |
+   |bbbbbb  bbbbbb  |
+   |bbbbbb  bbbbbbbb|
+    ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+
+  * Go up.  If you're still short of 250 rupees, go left and burn the lower 
+    right bush to get 10 more, otherwise head right twice, and then up twice.
+    (if you're STILL short, then check the SECRETS section to find more 
+    rupees)
+
+  * Touch the top middle statue to reveal stairs, go in and buy the 
+    -=BLUE RING=-, note:  this is also one of the best places to buy the 
+    -=BAIT=-, but you don't need to do that until before Level Seven.
+
+OTHER THINGS TO DO:
+  * Get 80 rupees and buy the Arrow.  This isn't necessary right now, but will
+    be by Level Six.  I'd do it later, but if you want, it's for sale all
+    sorts of places.
+
+
++=============================================================================+
+| 2. Level One, "The Eagle"                                                   |
++=============================================================================+
+
+Location:  from the origin - go right, up 4, then left
+           x,y - (8,4)
+
+Treasure: Boomerang, Bow, 1 Heart, 1 Triforce
+
+Map:
+
+            _   _
+           |X|=|k|
+            ¯   =       _   _      Key:    E - the Entrance   B - Boss
+               |k|     |B|-|^|             k - Key            ^ - Triforce
+        _   _   |   _   =   ¯              C - compass        = - locked door
+       |w|~| |-|m|=|z|-|k|                 m - map            ~ - sealed door
+        ¯   =   :   _   ¯                  w - Wise Man       : - bombable wall
+           |_|-|k|-|C|                     X - -=BOW=-
+            _   =   _                      z - -=BOOMERANG=-
+           |k|-|E|-|k|
+            ¯   ¯   ¯
+           
+Walkthrough:
+  * Go right kill all the Stalfos (skeletons) one of them will drop a key. 
+    Then go left twice, kill all the keeses (bats), and another key will 
+    appear.
+
+  * Go back to the right.  Open the locked door to the north and go up 2
+    screens, kill all the enemies to get the third key.
+
+  * Go to the right and pick up the compass.
+
+  * Go left, here you can either bomb up, or head left again.  Assuming you
+    head left, unlock the door then head north.
+
+  * Push the block to open the sealed door to the left, inside is a Wise Man,
+    who says: "Eastmost Peninsula is the Secret"
+
+  * Go right, you'll be in the room north of where you could have bombed.  The
+    Map is here.
+
+  * Now go north, kill all the Stalfos and get their key and open the door to
+    the north.
+
+  * Go north again, kill the Goriya's (boomerang goons) and get yet another
+    key, open the door to the left.
+
+  * Go left and run in quickly to avoid the trap, then go to near the bottom of
+    the screen so that you can fake the trap out and get by.  Then on the left 
+    side push the far left block up (or down) to get to the stairs, and the
+    -=BOW=-!
+
+  * Return to where the map was, open the locked door to the right, go right,
+    kill the Goriyas and get their -=BOOMERANG=-!
+
+  * Go to the right, and stay near the door, wait for the hands to come out of
+    the wall, and kill them.  They're a good source of money.  But don't let 
+    them touch you, or you have to start the level over.  Then go pick up the
+    key and open the northern door.
+
+  * Go north, and you will be at the BOSS.
+
+BOSS:  Aquamentus (Dragon) - 3 hits with the White Sword
+            Stand across the room and throw your sword at the dragon's head,
+            letting your shield stop the fireballs.  Or alternately, just
+            bomb him.  Just three short hits with your sword, and you have
+            beat your first boss!  
+
+
++=============================================================================+
+| 3. Level Two, "The Moon"                                                    |
++=============================================================================+
+
+Location:   from Level One - right, down 2, right 5, up, left, up
+            from the origin - right, up 2, right 5, up, left, up
+            x,y - (13,4)
+
+Notes:  Level Two is by far the best non-"secret to everyone" way to get money.
+        Just go in, kill a bunch of those little Ropes (snakes), and watch
+        the money pour in.
+
+Treasure: Magic Boomerang, 1 Heart, 1 Triforce
+
+Map:    _   _
+       |^|-|B|
+        ¯   ~   _
+           |b| |w|     Key:   k - a key               ~ - Sealed door
+            ~   |             E - the entrance        : - bombable wall
+           | |=|$|            C - compass             ^ - Triforce
+            |   :             m - Map                 = - locked door
+           |k|-|b|            w - Wise Man
+            |   :             b - bombs
+           |k|-|X|            $ - 5 rupees
+            ~   :             B - Boss
+           | |=|m|            X - -=MAGIC BOOMERANG=-
+    _   _   |   :
+   |k|~| |-| |=|C|
+    ¯   |   |
+       |E|-|k|
+        ¯   ¯
+Walkthrough:
+  * Go up, kill the Ropes (snakes) and the sealed door to the left will open
+
+  * Go to the left and pick up the key, then go back to the right, then right
+    again, go down pick up another key, and then back up, and open the door
+    to the right
+
+  * Pick up the Compass and bomb the wall to the north, and go through it
+
+  * Pick up the Map and again bomb the wall to the north, and again go through
+    the hole in the wall
+
+  * You'll find yourself in a room with 4 statues in the corners spitting fire-
+    balls, and 3 blue Goriyas.  Kill them and they'll leave the
+    -=MAGIC BOOMERANG=-
+
+  * Head left, kill the Ropes and collect the key, it will also open the
+    sealed door to the south.  There's nothing down there so don't bother.
+
+  * Go up, kill the two Moldorm (giant worms) and get their key.
+
+  * Then go right, don't get the bombs first, but bomb the north wall, then
+    get the bombs and go up
+
+  * Pick up the 5 rupees and continue up to the Wise Man
+
+  * Go back down twice and then to the left, go up and kill all the Ropes to
+    open the sealed door to the north
+
+  * Go up, kill the Goriya and get their bombs, then head north to the BOSS!
+
+BOSS: Dodongo (rhinosaurus looking thing) - 2 bombs in its mouth
+            Dodongo is the easiest boss of all, just walk in front of him, and
+            put a bomb in his mouth, wait for a second then put down another
+            bomb he'll eat that one and die.  Or if you want a challenge, place
+            a bomb so that when it explodes it is directly on his back (not as
+            easy as it sounds), which will stun him; and you can then finish
+            him off with your trusty sword.
+
+
++=============================================================================+
+| 4. Level Three, "The Manji"                                                 |
++=============================================================================+
+
+Location: from Level Two - down, right, down, left 5, down, left 5, down, right
+          from origin - up, left 4, down, right
+          x,y - (5,8)
+
+Notes:  On your way to Level Three you might want to buy a red potion, that is
+        if you have 68 saved up.
+
+Treasure:  Raft, 1 Heart, 1 Triforce
+
+Map:
+        _   _
+       |k|-|w|          Key:  k - a key         ^ - the Triforce
+        ¯   ~       _         m - the Map       : - bombable wall
+           | |     |^|        C - the Compass   ~ - sealed door
+    _   _   =   _   |         b - bombs         = - locked door
+   |k|-|b|=| |=|m|:|B|        E - the Entrance
+    |   |   |   |   ~         w - Wise Man
+   | |=|C|-|b|:|_|~|$|        $ - 5 rupees
+    ~       |       ¯         X - the -=RAFT=-
+   |X|     |k|                B - Manhandla (the Boss)
+    ¯       |   _
+           |k|-|E|
+            ¯   ¯
+Walkthrough:
+  * Enter the level and go immediately to the left, kill the Zol (blobs) and
+    take the key.
+
+  * Go north take out those Zol and take their key too.
+
+  * To the north you'll find 3 Darknuts (knights), they are only vulnerable
+    in their back or in their side, when they die they leave bombs.  You can
+    bomb to the right, but head to the left instead.
+
+  * Kill the Keeses (the bats) and get the compass.  Open the locked door,
+    and continue left.
+
+  * The room will be stuffed full of knights, kill them and the south door will
+    open.
+
+  * Go south, avoid all those knights and go down the staircase to get your
+    wonderful wonderful -=RAFT=-
+
+  * Go north twice, and pick up the key.  Avoid the Bubbles (flashy things),
+    they steal your sword... temporarily.
+
+  * Head right, kill the Keeses, and get yet another key, continue right
+    through the locked door.
+
+  * Then go through the locked door to the north.
+
+  * Kill the Zol, and push the left stone to open the door, and continue 
+    north where you will find a Wise Man who reminds us to get the White Sword.
+
+  * Head left and get the key, kill the Keeses to reopen the door.
+
+  * Then go south twice and then through the locked door to the right.
+
+  * Get the map.  There's an easy way, and a harder way, to reach the BOSS.
+    The easy way is to bomb to the right, the hard is to go down, right, up.
+
+BOSS: Manhandla - 2 sword strikes on each "claw", or 1 well placed bomb
+            There are 2 ways to beat Manhandla, an easy way and a hard way.  
+            The easy way is to drop a bomb and blow him up, the hard way is to              
+            attack him with your sword.  As you take off each claw, he will 
+            move faster and faster.
+
+
++=============================================================================+
+| 5. Something to do Before Level Four                                        |
++=============================================================================+
+
+Itinerary: 1 Heart
+
+HEART 4:
+  * from the origin, head ALL the way to the right. (from level 3 to the origin
+    is: left, up, right 4, and down)
+
+  * Go up 4 more times and then raft across from the dock to an island.
+
+  * Go in and grab your fourth HEART! (you should now have 10 total, 8 on the
+    bottom row and 2 on the top)
+
+
++=============================================================================+
+| 6. Level Four, "The Snake"                                                  |
++=============================================================================+
+
+Location:   from Level 3 - left, up , right 2, up 2
+            from the origin - up, left 2, up 2
+            x,y - (6,5)
+
+Note: Level Four is on an island and requires the Raft to reach
+
+Treasure: Stepladder, 1 Heart, 1 Triforce
+
+Map:     _   _   _   _
+        |w|=|k|-| | |^|
+         ~   :   |   |
+        |M|:|S|:|_|~|B|   Key:      k - a key
+         |   :       ¯              E - the entrance
+        | |-|m|                     m - the Map
+         =   =   _                  C - the Compass
+        | |=|_|~|X|                 X - the -=STEPLADDER=-
+         |       ¯                  w - a Wise Man
+        |k|                         M - Manhandla
+         |   _                      S - Secret!
+        |_|-|k|                     B - Boss
+             |   _                  ^ - Triforce
+            | |=|C|                 = - Locked Door
+         _   |   ¯                  ~ - Sealed Door
+        |k|-|E|                     : - Bombable wall
+         ¯   ¯
+Walkthrough:
+  * Enter the level, go immediately to the left, kill all the Keeses and 
+    they'll leave a key, go back to the right and then up.
+
+  * You'll find yourself in a room with 3 odd monsters called Vire, stab them
+    and they become 2 red bats.
+
+  * Open the locked door to the right, go into the dark room and light a candle
+    get the compass, then come back out.
+
+  * Go north, kill all the Keeses and grab another key.
+
+  * Continue to the left into another darkened room.  Again use the candle to
+    see, and then go north.
+
+  * You'll be in yet another dark room, this time there are Zol (blobs) and a
+    key here.  Get the key and continue north. 
+
+  * Yes another dark room, but this time don't light a candle or kill the 
+    enemies, go straight through the locked door to the right.
+
+  * Kill all the baddies to open the door to the right, and go that way.  Don't
+    bother with the door to the north, it doesn't lead anywhere.
+
+  * Kill all the monsters here, and push the left stone to open up a stairway.
+    Do not let those orange monsters (they're called Like Likes) hit you!!
+    They'll steal your Magic Shield permanently!  Go down the stairs to get 
+    the -=STEPLADDER=-!  You can now step across small bodies of water!
+
+  * Go back to the left twice to the darkened room.  Light it up and you'll see
+    that there is a little moat blocking you from the locked door to the north.
+    Well walk right over it!  Your stepladder will do the rest. Then go through
+    the door to the north.
+
+  * Head right to pick up the map.  You should then bomb the north wall and
+    go through it.  You will be in a blackened area on the map, and its full
+    of money!  Get the money.  You can bomb in all directions here.  There's a
+    Manhandla (Level 3's boss) to the left, so instead, go north.
+
+  * Pick up the key, and kill the Keeses.  Don't bother opening the door to the
+    left, since its just a wise man who says "Walk into the waterfall", so
+    instead, go back down the bomb hole, and from there go right through
+    another bomb hole.
+
+  * Kill the monsters and push the left stone to get to the BOSS!
+
+BOSS: Gleeok (Multi Headed Dragon) - 8 hits with the White Sword, give or take
+            He cannot be hurt by bombs, so you have to walk up to his heads,
+            and stab them.  After several hits, the head will fly off and shoot
+            fireballs at you (which your Magic Shield for some reason won't
+            block).  Cut both of his heads off to beat him.
+
+
++=============================================================================+
+| 7. Things to do with a Stepladder...                                        |
++=============================================================================+
+
+Itinerary: 1 Heart, The Magic Sword, the Bracelet
+
+HEART 5:
+  * Go back off the island of Level 4, then down again, and right 2 times, and
+    the down (back at the origin)
+
+  * From the origin go all the way to the right.  Then go up, go in the cave
+    and buy the -=ARROW=- (if you haven't already, 80 rupees).  Then go up,
+    walk across the platforms with your stepladder and get the last -=HEART=-
+
+MAGIC SWORD:
+  * Return to the Origin (down 2, left 8)
+
+  * Go up, left 4, down, and then left along the lower path, and then left 
+    again.
+
+  * Go up, and you will be in the "Lost Forest".  From here go UP, LEFT, DOWN,
+    and LEFT again to get out of the Forest.
+
+  * Go north twice and you will be in the Graveyard.  Right and up twice to 
+    get to the right part.  Then push the grave on the middle row, third column
+    Push it from either the bottom or the top.  Then go in and get your
+    -=MAGIC SWORD=-
+
+    ________________
+   |BBBBBBBBBBBBBBbb|         Map:  Location of the Magic Sword
+   |BBBBBBBBBBBBBBbb|         Key:  B - Rock
+   |              bb|               b - bush
+   |   +  +  +  + bb|               + - Grave
+   |              bb|               X - Push this grave, from either the top
+   |   +  +  X  + bb|                   or the bottom
+   |              bb|
+   |   +  +  +  + bb|
+   |              bb|
+   |BB            bb|
+    ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+
+BRACELET:
+  * Go down, right 2, up, and right.
+
+  * There will be 2 lines of statues, touch the top right one, he'll walk away,
+    and leave a -=BRACELET=- behind!
+
+
++=============================================================================+
+| 8. Level Five, "The Lizard"                                                 |
++=============================================================================+
+
+Location:   from the Bracelet - up, right 7, up 4
+            from the origin - right, up 5, left, up, right 4, up 4
+            x,y - (12,1)
+
+Notes: Just before you reach level 5, (the up 4 part) you will be in the "Lost
+       Hills" the only way out is to go left, or go up 4 times to reach Level
+       Five.  Plus before you go in, make sure to have all 8 bombs, and at
+       least 100 rupees.
+
+Treasure: Flute, Bomb Capacity Increase (100 rupees), 1 Heart, 1 Triforce
+
+Map:
+     _   _
+    |X|=|i|
+ _   _   =   _          Key:  k - a key
+|^| |w| |k|:|W|               E - the entrance
+ ~   :   _   _                i - tunnel (i connects to i)
+|B|=|_|-|k|=|k|               m - Map
+ |       ¯   |                C - Compass
+|_|         |C|               D - 3 Dodongos
+         _   |                b - bombs
+        |m|-|k|               w - Wise Man
+     _   =   |                W - Wise Man who increases Bomb Capacity
+    |k|~|D|-|$|               $ - 5 rupees
+ _   ~   ~   _                X - -=FLUTE=-
+|i|:|b|:|k|=|w|               B - Digdogger (boss)
+ ¯   ¯   |   :                ^ - Triforce
+        |E|-|k|               : - bombable wall
+         ¯   ¯                = - locked door
+                              ~ - sealed door
+
+Walkthrough:
+  * Go right, and use your bow to kill the hopping bunny heads (the bow can 
+    kill them in 1 hit, the Magic Sword can't) and get their key.
+
+  * Bomb to the north, walk through and listen to the Wise Man "Digdogger hates
+    certain kind of Sound", go back down and left, back to the entrance.
+
+  * Now go north, light a candle, kill the Mummies and take their key, don't
+    go to the right (we've already been there!) so go up.
+
+  * You'll find yourself facing THREE Dodongo's (Level Two's monster), kill 
+    them and the door to the left will open, and they'll leave you 4 bombs.
+
+  * Go up, grab the map, come back down, and go left.
+
+  * Kill the monsters, grab the key, and go down.  The door will close behind
+    you, kill all the mummies and they'll leave some bombs.  Bomb both the left
+    and the right walls, and go left.
+
+  * Kill all the Blue Knights, and push the stone on the far left side to go
+    down the stairs, you'll come out at the top of the map.
+
+  * Go through the locked door to the left, kill the knights, and push the
+    stone then go down and get the -=FLUTE=-
+
+  * Go back to the right, then through the locked door to the south.
+
+  * Kill the bats, get the key, and bomb the right wall.  Go through the hole
+    and spend 100 rupees to increase your bomb capacity to 12.
+
+  * Go left, up and back through the stairs, then go right twice and up and 
+    then to the right.
+
+  * Kill the blobs and get their 5 rupees.  Wow.  Go up.
+
+  * Eliminate the mummies and they'll leave a key.  Go up again.
+
+  * There are three red knights here, but they're no match for your Magic 
+    Sword, grab the compass and go up again.
+
+  * There is a key in here, get it.  Also there is a hodge podge of monsters,
+    kill the mummies with your sword, the bunnies with your bow, and the bats
+    with either the boomerang or the sword.  Open the door and go left.
+
+  * Kill the mummies to get another key, continue left.
+
+  * Ignore the bunnies for now, and bomb up to talk to the Wise Man "Secret 
+    Power is said to be in the Arrow", go back down and shoot the bunnies with
+    your bow.  Go left.
+
+  * You may notice that door to the south, but there's nothing but mummies down
+    there so don't be fooled, and take that BOSS down!
+
+BOSS: Digdogger (Giant Eye) - 2 Hits with Magic Sword
+            First play your flute, which will turn Digdogger into a mini
+            Digdogger, then just whack the little Digdogger twice and you're 
+            done!
+
+
++=============================================================================+
+| 9. Level Six, "The Dragon"                                                  |
++=============================================================================+
+
+Location: from Level Five - down, left 6, down, left 2, down, left, up
+          from the Origin - right, up 5, left, up, left 2, down, left 2, down,
+                            left, up
+          x,y - (3,3)
+
+Treasures: Magic Wand, 1 Heart, 1 Triforce
+
+Map:
+         _   _   _   _
+        |X|:| |:|w| |^|       Key:  k - a key
+     _   =   |   ~   ~   _          E - the entrance
+    |G|~|m|-|k|-|_| |B| |i|         $ - 5 rupees
+     |   =   ¯       =   |          b - bombs
+    |$|:|k|         | |-|k|         X - -=MAGIC WAND=-
+     ~   |   _       |   ¯          w - Wise Man
+    | | |_|~|i|     |b|             m - the Map
+     |       ¯       ¯              C - the Compass
+    | |                             G - Gleeok (multi headed dragon)
+     ~                              i - (tunnel, i connects to i)
+    |k|                             B - Gohma (BOSS)
+     |       _                      ^ - Triforce
+    |C|     |w|                     : - bombable wall
+     |   _   =                      ~ - sealed door
+    |b|=|E|-|k|                     = - locked door
+     ¯   ¯   ¯
+Walkthrough:
+  * Go to the right.  Light up the room, and kill the Wizzrobes.  You can block
+    their magic with your Magic Shield, and kill them with your Magic Sword.
+    Get the Key.  Go up.  (if you only have one key DO NOT GO UP!)
+
+  * The wise man will say "Aim at the eyes of Gohma" An odd thing to say since
+    Gohma only has one eye.  Return to the entrance.
+
+  * Now go through the locked door to the left, kill the Wizzrobes there and
+    they'll leave you some bombs, how nice.  Go up.
+
+  * Kill all the blobs, and they'll leave the compass.  Continue up.
+
+  * You'll be in a room with a sealed door to the north, and full of bats.  
+    Kill all the bats and they'll leave a key, and open the door.  Again go up.
+
+  * Dash past the 3 traps in the room and go up yet again.
+
+  * You'll find yourself in the hardest room of the game (so far).  It has 2
+    Wizzrobes (not hard), 2 Blue Wizzrobes (harder), 2 Sword Stealers (hard),
+    and 2 Shield Eaters (very hard).  So avoid touching the sword stealers, and
+    the shield stealers, while killing all the enemies.  Oh and did I mention
+    that the door closes behind you?  Once they're dead push the left stone to
+    open the doors.  Go up.
+
+  * Don't bother trying to kill the enemies, and don't go up either, bomb the
+    right wall and go that way.
+
+  * Ignore these Wizzrobes as well, grab the key in the center of the room and
+    go up.
+
+  * Kill the monsters, and get the map.  Go up through the locked door.
+
+  * Kill the Wizzrobes, and push the left stone and go down the stairs to get
+    the -=MAGIC WAND=-.  Go back down, and then to the right.
+
+  * Grab the key in the center of the room, and go back to the left, then down,
+    and then down again.
+
+  * Kill all the bouncing guys (1 hit with the Magic Sword!) and the doors will
+    open.  Go right.
+
+  * Kill all these enemies, push the stone, and a staircase will open.  Go down
+    the stairs.
+
+  * You'll arrive in the top corner of the map, now go down.
+
+  * Kill the 3 hoppers and get another key.  Go left.
+
+  * Don't bother going down, it's only bombs down there, and don't bother 
+    killing the enemies here, so unlock that door to the north and fight the
+    BOSS!
+
+BOSS: Gohma (Giant Spider) - 1 arrow right in the eye
+            Have your bow equipped, and when he opens his eye, shoot him in the
+            aforementioned eye.  Easy.
+
+
++=============================================================================+
+| 10. Level Seven, "The Demon"                                                |
++=============================================================================+
+
+Location:   from Level Six - down, left, down, left, down 2, right 2, up 2
+            from the Origin - up, left 4, up, left, up
+            x,y - (3,5)
+            Level Seven is under the lake, to make the stairs to it appear,
+            play the flute.
+
+Notes: Be sure to have purchased -=BAIT=- before coming to this level, also
+       have 100 rupees on hand to buy the second Bomb Capacity Increase.
+       (Bait can be obtained from the same shop where you got the Blue Ring,
+       for 60 rupees, from Level Seven its down, right 2, up 2)
+
+Treasures: Red Candle, Bomb Capacity Increase (100 rupees), 1 Heart, 1 Triforce
+
+Map:
+  _   _   _   _   _   _     Key:  k - a key             : - bombable wall
+ |S|:|$|~|k| |b| |D|:|i|          E - the entrance      ~ - sealed door
+  :   ~   _   =   ~   ¯           S - a Secret          = - locked door
+ |m|=|_|:|X|:|b|=|F|              X - -=RED CANDLE=-
+  |   _   _   _   ¯               b - bombs
+ |T| |i|:|B|~|^|                  D - Dodongo's
+  =   _   _   ¯                   F - Digdogger
+ |$|-|F|:|k|                      w - Wise Man
+  _   ~   ¯                       W - Bomb Capacity Increase
+ |W| | |                          C - the Compass
+  =   |   _   _                   m - the Map
+ |D|-| |~|C| |w|                  T - Monster (needs -=BAIT=-)
+  |   :   :   ~   _   _           $ - 5 rupees
+ |b|:|b|-| |-|_|-|F|-|k|          i - tunnel (i connects to i)
+  |   |   |       ¯   ¯           B - Aquamentus (BOSS)
+ |k| |E|-|b|                      ^ - Triforce
+  ¯   ¯   ¯
+Walkthrough:
+  * Once in the level, go immediately to the right, kill the Moldorms (worms)
+    and get their bombs.  Go up.
+ 
+  * Bomb the north wall, but don't go that way yet, go right.
+
+  * Kill the enemies to open the door to the north (there's a wise man up 
+    there) and go right again.
+
+  * There's a Digdogger here, if you kill him he leaves bombs, continue right.
+
+  * Kill all the Stalfos (skeletons) to get a key.  Head left 4 times.
+
+  * Kill the Goriya's (boomerang goons), don't get the bombs yet, first bomb up
+    and to the left.  Then get the bombs and go left.
+
+  * Kill the Keeses (bats) to get yet more bombs.  Head down.
+
+  * Grab the key, and head back up, then up again.
+
+  * Don't bother killing the Dodongo's (they only leave 5 rupees), and continue
+    through the locked door to the north.
+
+  * You'll find the second (and final) bomb capacity increase wise man.  For
+    a measly 100 rupees you can carry 4 extra bombs.  If you can buy it!  Then
+    go back down and then to the right.
+
+  * Killing the Goriya's here will open the door to the right, go that way.
+
+  * Kill all the Stalfos (Skeletons) and grab the compass, then back to the 
+    left and then up.
+
+  * Kill the enemies to open the door then go up again.
+
+  * You'll find yourself facing another Digdogger.  So play your flute, but
+    this time he becomes THREE little Digdoggers.  Kill them as soon as they
+    become small.  Then bomb the right wall and go right.
+
+  * Kill the Moldorm, and take the key.  Head left twice.
+
+  * The door will close behind you as you enter the room.  Kill the enemies
+    and not only will the door open up again, but you'll get 5 rupees for your
+    trouble.  Wow.  Go north through the locked door.
+
+  * Here you'll see a monster who says "Grumble Grumble".  Just use the bait
+    and he'll go away.  Go north.
+
+  * Get the map, kill the enemies, and bomb to the north.  Go up.
+
+  * You've found the secret!  Wow!  Grab the rupees, and then bomb to the 
+    right.  Go right.
+
+  * Kill the Goriya's to open the doors and get your 5 rupees.  Go right.
+
+  * Kill the Goriya's (again) and get the key.  Go back to the left, and then
+    go down.
+
+  * Bomb right and go that way.
+
+  * Kill all the enemies (to get the ones inside the stones, use your wand),
+    and push the left stone out of the way, go down and get your -=RED CANDLE=-
+
+  * Bomb and go to the right, kill the enemies to get some more bombs.  If you 
+    need more bombs go north and kill the Moldorm to get bombs, otherwise go 
+    right.
+
+  * Kill the Digdogger (again there are 3 mini digdoggers) to open the door to
+    the north.
+
+  * Don't bother with the Dodongo's (rhino's) they only leave bombs, so just
+    bomb to the right and go right.
+
+  * In this room you need to kill all the Wall Masters (giant hands) before you
+    can push the stone that opens the staircase.  Complicating things are the
+    Bubbles (sword stealers).  So stand by a wall, kill the Wall Masters and 
+    avoid the Bubbles.  Then push the middle stone on the right side, and go
+    down the stairs.
+
+  * Bomb to the right, head that way and to the BOSS!
+
+BOSS: Aquamentus (Dragon) - 2 Hits with Magic Sword
+            The same as Level One.  Just hit him twice with your Magic Sword
+            and he's dead!
+
+
++=============================================================================+
+| 11. Level Eight, "The Lion"                                                 |
++=============================================================================+
+
+Location: from Level Seven - down, right, down, right 8, up, right, down, right       
+          from the Origin - right, up, right 4, up, right, down, right
+          x,y - (14,7)
+
+Notes: Level Eight is under a suspicious looking bush in the middle of a path.
+
+Treasures: Magic Book, Magic Key, 1 Heart, 1 Triforce
+
+Map:         _
+            |b|       Key:  k - a key
+         _   ~   _          b - bombs
+        |b|:|G|~|X|         w - Wise Man
+     _   |   =   ¯          z - -=MAGIC BOOK=-
+    |^| |S|:|m|             m - the Map
+ _   ~   _   :   _          C - the Compass
+|w| |B| |w| | |~|i|         M - Manhandla
+ |   :   ~   =   ¯          S - Secret
+|k|~|i| |G|=|$|             G - Blue Gohma
+ ¯   _   |   ~   _          $ - 5 rupees
+    |k|-|k|~|k|=|C|         X - -=MAGIC KEY=-
+     ¯   ¯   :   ¯          i - tunnel (i connects to i)
+            |M|             B - Gleeok (BOSS)
+     _   _   |   _          ^ - Triforce
+    |z|~|M|-|E|-|k|         : - bombable wall
+     ¯   ¯   ¯   ¯          ~ - sealed door
+                            = - locked door
+
+Walkthrough:
+  * Go right, grab the key, and return left, and then left again.
+
+  * There's a Manhandla here, bomb him, kill him to open the door to the left
+    and get 5 rupees.  Go left.
+
+  * Kill the monsters, push the stone, go down the stairs and get the Magic
+    Book!  Return to the Entrance and go up.
+
+  * There's another Manhandla here, kill him (or don't) to get 5 rupees, then
+    bomb up, and go that way.
+
+  * You'll be in a room full of Blue Knights, kill them all to open the top and
+    the left doors, and to get the key.  Go right first.
+
+  * There will be a room full of Pols Voice (bunnies) shoot them with your bow
+    and collect the compass.  Go back to the left.
+
+  * Go left again, kill the monsters, and get the key.  Then go left again, and
+    kill the 3 knights and get their key.  Then back to the right, and right
+    again.
+
+  * Go up.  Don't bother fighting the monsters, just continue up through the
+    locked door.
+
+  * Quickly bomb up (don't kill the knights yet) and go north!
+
+  * Kill the Manhandla to get the Map, bomb to the left, and go that way.
+
+  * Grab all the rupees, and go up.
+
+  * Kill the Pols with your bow, get the bombs and bomb right.  Go right.
+
+  * Here you'll find a Blue Gohma.  Shoot its eye (when it opens) 3 times to
+    open the doors.  Don't bother going up (just bombs up there), so go right.
+
+  * Kill all the monsters.  Push the left stone and go down the staircase to
+    get the -=MAGIC KEY=- and then go back left and then down twice.
+
+  * Kill all the Blue Knights to open the sealed door to the.  Go right.
+
+  * Avoid the enemies and go down the staircase, when you come up, kill all
+    the Pols with your bow, get the key, bomb up to fight the BOSS.
+
+BOSS: Gleeok (Multi Headed Dragon) - 
+            Same as Level 4, except now he has more heads.  Just cut off each
+            head one by one until he dies.
+
+
++=============================================================================+
+| 12. Level Nine, "Death Mountain"                                            |
++=============================================================================+
+
+Location:   from Level Eight - up, left 2, up 3, left 4, up 2, left 2
+            from the Origin - right, up 5, left, up 2, left 2
+            x,y - (6,1)
+
+Treasures: Red Ring, Silver Arrow, Ganon's Triforce
+
+Notes: The entrance to Death Mountain is in the Left rock, place a bomb in the
+       middle of the rock to open it.  Come prepared to this level, full life
+       full bombs, adequate money supply (for arrows), and a Red Potion.
+
+Map:
+        _   _   _   _   _   _   _    Key:  k - a key   
+       | |=|w| |6|:|5| |2|:|w| |R|         E - the Entrance
+    _   ~   ~   _   _   _   =   :         1-6 - Tunnels (1 connects to 1, etc.) 
+   |X| |b| |$|=| | |1|=|$|-|P| | |         b - bombs
+    :   |   =   =   |   :   |   :          $ - 5 rupees
+   |4| |P|:|_|=|b|:| | |b|=|$|:|m|         w - Wise Man
+    _   ~   _   =   |   :   =   :          C - Compass
+   |5|:| | |Z| |_|:|$| |C| |_|:|b|         m - Map (guarded by a Patra)
+    =   |   ~   _   _   _   _   |          R - -=RED RING=-
+   |$| | | |B| |w| |$|-| |-| | |k|         X - -=SILVER ARROW=-
+    =   ~   ~   :   |   :   |   |          P - a Patra
+   |_|~| | |6| | | | |:|1|:|k| |k|         B - GANON (BOSS)
+        |   _   =   |   :   ~   ¯          Z - Princess Zelda
+       |4|-|$|=|2| |_|-|_|~| |             : - bombable wall
+        |   ¯   =   _       |              = - locked door
+       |3|     |_|=|3|     |E|             ~ - sealed door
+        ¯           ¯       ¯
+Walkthrough:
+  * Welcome to Level 9!  Looks complicated, but it isn't so bad.  First go up,
+    and if you have passed all the other levels go up again.
+
+  * If you kill all the monsters here you can get a key, don't bother, just
+    bomb to the left, and go that way.
+
+  * Kill the Lanmola (fast centipede things) push the left stone and go through
+    the tunnel.  When you come out, go through the locked door to the right.
+
+  * Avoid the Wizzrobes, and bomb down.  If you kill all the monsters here
+    they'll leave you bombs.  Then bomb down again.
+
+  * You are now in one of the "Eyes" of Death Mountain.  Kill the Wizzrobes
+    and take the compass.  Then head back up, then up again, and then right.
+
+  * Avoid the Patra (that eye with the smaller eyes spinning around it), and
+    go down.
+
+  * Kill the gels to get 5 rupees.  Bomb right, and go there.
+
+  * There is another Patra here, kill him and get the map.  You kill a Patra
+    by killing the smaller eyes around it first, then attacking the center.
+    Then once he's dead and you have the map, bomb up.
+
+  * Ignore the enemies here, and bomb up again.
+
+  * Kill all the enemies, push the left stone, and get the -=RED RING=-!!  Go
+    back down twice, then left, then up.
+
+  * There's another Patra here, and they are really annoying.  If you kill him
+    you'll get 4 bombs.  If you don't need the bombs, and can get past him, go
+    through the locked door to the north.
+
+  * A wise man tells you to "Go to the next room".  So bomb to the left, and
+    go to the next room!
+
+  * Kill the Wizzrobes, push the left stone, and go down the stairs.
+
+  * Kill all the Zols (blobs) and go through the locked door to the left.
+
+  * Kill the keeses (bats) to get another 5 rupees, yay.  Continue to the left.
+
+  * There's another Patra here, and a key.  You don't need a key.  Kill the 
+    Patra, push the left stone, and go down the stairs.
+
+  * Ignore the Wizzrobes here (if you can), and bomb up, and go through the
+    hole there.
+
+  * Here you have to kill all the Wizzrobes.  Then push the middle stone on the
+    right to open the staircase to the -=SILVER ARROW=-!  Only 1 thing remains
+    in the entire FIRST QUEST, and that is to kill Ganon!  Go back down.
+
+  * Kill all the Wizzrobes, push the left stone, and go back through the 
+    tunnel.
+
+  * Then go north 3 times, ignore the enemies and bomb to the left.  Go left.
+
+  * Run into the room quickly to avoid the traps, kill all the monsters, 
+    and push the left stone to open up the staircase.  Go through the tunnel.
+
+  * Ignore these enemies, and bomb the left wall and go left.
+
+  * Kill all the enemies, push the left stone, and go down the staircase.
+
+  * Kill the Patra, and go up to fight GANON! 
+
+BOSS: Ganon (Pig thief) - 4 hits with the Magic Sword
+            Ganon isn't so tough.  He'll disappear and shoot fireballs at you.
+            So walk around the room in a regular pattern and stab with your
+            sword.  You will eventually hit him.  Do that four times, and he'll
+            turn brown in color.  That's when you nail him with the Silver
+            Arrows.  Then he bursts to dust leaving his Triforce.
+
+Go up to the next room.  There are 4 flames there, kill those with your sword,
+and walk up to Zelda.  
+CONGRATULATIONS!  
+
+
+
+  +=========================================================================+
+ +---------------------------------------------------------------------------+
+|                           SECOND QUEST WALKTHROUGH:                         |
+ +---------------------------------------------------------------------------+
+  +=========================================================================+
+
+  The second quest jumbles the locations of most the levels and items, and adds
+  a lot of difficulty to the levels.  In particular, in the levels there are
+  now illusionary walls, some that go 2 ways, and some only 1.
+
+  If you follow the walkthrough exactly you'll have an excess on keys, but if
+  you explore on your own, try to conserve keys.  It's very helpful to have
+  some extra keys.  Never ever buy keys.
+
+  Also there are 3 new monsters, the Red Bubble (takes away your sword,
+  PERMANENTLY), the Blue Bubble (gives your sword back), and the Electric Rope.
+
+
++=============================================================================+
+| 13. Pre- Level One                                                          |
++=============================================================================+
+
+Itinerary: 1 Heart, Bracelet, Letter, Blue Candle, Magic Shield
+
+HEART 1:
+  * Grab your Wooden Sword, and then go up, and then left 4 times.  Then go up
+    and around the bush, and back down, and go left into the Lost Forest.  
+    Kill all the enemies on this route to get money, and -=BOMBS=-, if you
+    don't get bombs, you'll have to buy them later.
+
+  * As always its "Up, Left, Down, Left" to get through the forest.
+
+  * Go up 4 times (avoid these enemies like the plague), and push the grave
+    on the middle row, 2nd from the right.  Go in and get a -=HEART=-.
+
+BRACELET:
+  * Go right, then down, the right again, and finally up.  Go into where
+    Level Six used to be to get 30 rupees.  Go back down.  This is a very
+    difficult spot, but try to avoid the enemies and go right.
+
+  * Go up the right staircase and then go right.  Touch the top right Armos
+    (statue guy), he'll come to life, revealing the -=BRACELET=-
+
+  * If you didn't get BOMBS earlier, go right and into the cave to buy them.
+
+LETTER:
+  * (from the Bracelet) Go up, and then left, and up.  Then go left 3 times,
+    and down again.  Push the far left stone to open the entrance to the 
+    Old Man.  Go down and get the letter.
+
+BLUE CANDLE:
+  * We need to buy this item, at 60 rupees.  First off return to the Origin.
+    (up, right 3, down, right, down, left, down, up the left staircase, push 
+    the left rock, down the stairs, if you come out where there are Blue
+    Tektites (spiders) you're there, go left twice and there's the origin!)
+
+  * The candle shop is up, and left, but if you don't have enough money here
+    are some places: (from origin)
+        - right, up 5, right 5 - bomb same as first quest (2nd from right by
+          the north path) 30 rupees
+        - then from there, go down 1, touch the right Armos (statue) and go
+          down the stairs for another 30 rupees
+    Once you have at least 60, go buy the Blue Candle.
+
+100 RUPEES, GOSH!:
+  * Go left 3 (from the Candle Shop), and then up.  Burn the lower left, 
+    green bush, go in and get 100 rupees!
+
+MAGIC SHIELD:
+  * We want a Magic Shield now, so go down, right twice, up and then right
+    again.  Burn the lower left bush (of the middle 6 bushes) to get another
+    10 rupees.
+
+  * Go up, and burn the corner bush, go in and buy the -=MAGIC SHIELD=-, cost
+    a fair 90 rupees.
+
+BLUE RING:
+  * Chances are you don't have enough rupees to buy the Blue Ring (250), so
+    we must go fundraising again:
+         - go right twice (from the shield) and burn the bush (same as in
+           the first quest, on the right side, the very top) 30 rupees
+         - go up, burn the bottom right green bush, 30 rupees
+         - go right 5 times, down twice, and then right, touch the right
+           Armos to reveal a staircase.  10 rupees.
+         - and as always killing monsters is a great source of money, 
+           especially the Blue Tektites (2 screens right of Origin) and the
+           Red Leevers (4 screens right of origin)
+
+  * Whenever you have 250 rupees, go all the way to the top right corner of
+    the map (from the origin it's right, up 5, right 5, up, right twice, and
+    then up through the illusionary rock wall) Go in the shop and buy the
+    -=BLUE RING=-! 
+ 
+Other Things to do:
+  * Another thing that is HIGHLY recommended is to buy a Red Potion.
+
+
++=============================================================================+
+| 14. Level One, "The Big 'E'"                                                |
++=============================================================================+
+
+Location: from the origin - right, up 4, left
+          x,y - (8, 4)
+
+Treasures: Boomerang, 1 Heart, 1 Triforce
+
+Map:   1   2
+       _   _
+   1  |B|~|^|
+       :   _
+   2  |_|=|1|       Key:  k - a key - also one at (2, 2)
+       _   ¯              E - Entrance
+   3  |M|                 $ - 5 rupees
+       |   _              X - -=BOOMERANG=-
+   4  |$|=|D|             b - bombs
+       |   ~              C - Compass
+   5  |b|-|m|             m - Map
+       |   ¯              M - Moldorm
+   6  |C|                 D - Dodongo
+       |   _              1 - Tunnel (1 connects to 1)
+   7  |k|:|1|             B - Aquamentus (BOSS)
+       |   :              ^ - Triforce
+   8  |E|-|X|             : - bombable wall
+       ¯   ¯              = - locked door
+                          ~ - sealed door
+
+Walkthrough:
+  * Go right first, kill the Goriya's and they'll leave the -=BOOMERANG=-.
+    Go back to the left, then go up.
+
+  * Kill the Goriya's, and get the key.  Bomb to the right, but don't go there
+    just yet.  Go up.
+
+  * Kill the Stalfos here (they now throw their swords at you!) and get the
+    Compass.  Continue up.
+
+  * Kill the Blue Goriya's, and they leave you some bombs.  Go up, kill all
+    the little gel's and get the 5 rupees, then go right through the locked
+    door.
+
+  * Kill the Dodongo, to open the sealed door to the south, go down, get the
+    map (kill the keeses to open the door again), go back up, then left,
+    then down 3 times, and right through the bomb hole.
+
+  * Push the left stone, and go down into the tunnel.
+
+  * You'll be in a room with 3 bubbles, and Wall Masters (giant hands), you
+    must kill all the Wall Masters to get a key to go on, but don't let them
+    grab you or you have to do the whole level again.  Plus avoid the bubbles
+    as they steal your sword.  (wall masters only appear when you are near
+    a wall)  Get the key and go left.
+
+  * Don't bother killing the Blue Goriya's here, bomb up and go through the
+    hole to the BOSS.
+
+BOSS: Aquamentus (Dragon) - 6 hits with Wooden Sword
+            Same as the first quest, just walk up to him, and hit him with your
+            sword, or drop a bomb.
+
+
++=============================================================================+
+| 15. White Sword Revisited                                                   |
++=============================================================================+
+
+Itinerary: White Sword
+
+WHITE SWORD:
+  * Well, now you have enough hearts (5) to get the White Sword.  From level
+    one go right, up, left, up, right 4, and then up.
+
+  * Go into the cave and take the -=WHITE SWORD=-
+
+
++=============================================================================+
+| 16. Level Two, "The Big 'A'"                                                |
++=============================================================================+
+
+Location: from White Sword - down, left 4, down, right, down 4, left 4, up 3
+          from the Origin - up, left 3, up 3
+          x,y - (6,4)
+
+Notes: Level 2 is where the Blue Ring was in the First Quest.  Underneath the
+       top middle Armos.
+
+Treasures: Flute, 1 Heart, 1 Triforce
+
+Map:        _
+           |m|
+        _   =   _      Key:  k - a key
+       |k|-| | |^|           b - bombs
+        ~   |   ~            E - the entrance
+       | |:|k| |B|           C - the Compass
+        |   /   =            m - Map
+       | |<|X| |1|           X - -=FLUTE=-
+        |   _   _            1 - tunnel (1 connects to 1)
+       |k|=|k|-|b|           B - Gleeok (BOSS)
+        |   :   |            ^ - Triforce
+       | |=|C|:|k|           : - bombable wall
+        |   ¯   |            = - locked door
+       |k|     |k|           ~ - sealed door
+        |       ~            / - illusionary wall
+       |E|     |1|           < - One Way illusion
+        ¯       ¯
+Walkthrough:
+  * From the entrance go up first (like you have a choice)
+
+  * Kill the Gibdos (mummies) and they'll leave a key, go up again.
+
+  * Kill the 3 Zol's and push the left stone to open the door that closes
+    behind you.  Go right through the locked door.
+
+  * Get the compass, and go back to the left.  Go up.
+
+  * Get the key (you don't need to kill the Keeses).  Go up again.
+
+  * Kill the Gibdos (mummies) to open the door behind you, go up again.
+
+  * Kill the Keeses to open the door up, but first bomb right, go that way
+    and pick up a key.  Go back to the left, then go up.
+
+  * There's a Manhandla here, kill him and he leaves a key.  Go right.
+
+  * Kill the Red Darknuts (knights) here, then go through the locked door up.
+
+  * Kill the 2 Zol's and get the map.  Go back down, then down again.
+
+  * Go straight down, and through the wall (it is an illusion, the first one
+    in the second quest!), then down the stairs to get the -=FLUTE=-!
+
+  * Now go through the wall to the left (it is also an illusion, but this one
+    is a one way illusion, once through it you can't come back), then go
+    down twice, and right (you'll be in the room where the compass was).
+
+  * Bomb up and go that way.  Kill all the monsters here to get another key.
+    (The Pols Voice -bunnies- take 5 hits from the white sword)  Go right.
+
+  * Kill all the Darknuts (knights) to get bombs, then go down.
+
+  * Kill all the Keeses to get a key, go down.
+
+  * The door will close behind you.  Kill the Zol's to open the doors and get
+    a key.  Go down.
+
+  * Kill all the Gibdos (mummies) to get 5 rupees.  Yay.  Go down the stairs.
+
+  * You'll come out right under the BOSS.  Kill the 3 Darknuts to get bombs.
+    Go through the locked door to the north, and go up to the BOSS!
+
+BOSS: Gleeok (multi headed dragon) - 8 hits with White Sword
+        Same as first quest.  Attack his heads until they fly off.  Once
+            his last head is off, he dies.
+
+
++=============================================================================+
+| 17. Play that funky Music...                                                |
++=============================================================================+
+
+Itinerary: 2 Hearts
+
+HEART 2:
+  * (from level 2) go down 3, right 4, up 4, right 2, and down
+    (from the origin) go right, up 5, right 2, and down
+
+  * Play the flute here, stairs will magically appear, go in, and get your
+    -=HEART=-
+
+HEART 3:
+  * Go back to the origin (down, left, down 2, left, down, left,
+
+  * From the origin go: up, left 4, down, left (on the bottom path), left, up,
+    up, left, down, left, up 3, right 3, up (on right ladder), right 2, up,
+    right 2, up, and finally left. (phew!)
+
+  * Play the flute, go in and get your -=HEART=-
+
+You should now have 8 hearts, or 1 full row of hearts.  To get back from up 
+there, just go right once, play your flute, and it will take you to either
+Level One, or someplace else.  If you don't find yourself at Level One, play it
+again.
+
+Other Things to Do:
+  * Buy some bait!!  You'll need it for Level Three.  The best place to get it
+    is where they sell the Blue Ring at the very top right corner of the map.
+    60 rupees.
+
+
++=============================================================================+
+| 18. Level Three, "Apostrophe 'L'"                                           |
++=============================================================================+
+
+Location: from Level One - right, down 2, right 5, up, left, up
+          from the origin - right, up 2, right 5, up, left, up
+          x,y - (13, 4)
+
+Notes: Level Three is where Level Two was in the First Quest.  Play your flute
+       to reveal the entrance (just like Level Seven in the First Quest).
+       Also you'll need bait to get the treasure of the level.  Another thing
+       you may notice about the level, is that there are more locked doors
+       than there are keys.  This is no problem if you followed the previous
+       2 levels walkthroughs, you'll have saved up plenty of keys.
+
+Treasures: Magic Boomerang, 1 Heart, 1 Triforce
+
+Map:
+     1       2   3      Key: k - a key (also one at 1,3)
+             _               E - the entrance
+ 1          |X|              b - bombs
+     _       =               m - Map
+ 2  |^|     |T|              C - located at 3,7
+     ~       |               T - "Grumble Grumble"
+ 3  |1|     |k|              X - -=MAGIC BOOMERANG=-
+     ¯       ~               B - Dodongo's (BOSS)
+ 4          |m|              ~ - sealed door
+             |               = - locked door
+ 5          |b|
+             |   _
+ 6          | |=|B|
+             |   =
+ 7          |E| |1|
+             ¯   ¯
+Walkthrough:
+  * Go up.  Kill the Goriya's here, and go right through the locked door.
+
+  * There are 3 Dodongo's here, kill them and they leave you a -=HEART=-!!
+    Go back to the left, and then up.
+
+  * There are ELECTRIC Ropes (snakes) here.  They take 2 hits with the White
+    Sword to kill.  Kill them and they leave bombs. Go up.
+
+  * Kill all those annoying Blue Goriya's to open the sealed door and get the
+    map.  Go up.
+
+  * Kill the sword throwing Stalfos to get the key, go up.
+
+  * There is a "Grumble Grumble" monster here, give him the bait and go through
+    the locked door up.
+
+  * Kill the Goriya's and get the -=MAGIC BOOMERANG=- go back down 5, then
+    right, then down.
+
+  * Get the compass, kill all the Wall Masters, and push the middle stone
+    on the right side to open the passage.  Go down the stairs.
+
+  * When you get out there are Goriya's here and a key, get the key, kill
+    the Goriya's, and go up to get the Triforce.
+
+BOSS: Dodongo (located at 3,6) - 2 bombs in the mouth
+            Oddly Level Three puts its BOSS nowhere near the Triforce.  But
+            Since they give you a Heart, they are the BOSS.
+
+
++=============================================================================+
+| 19. Level Four, "Letter 'D'"                                                |
++=============================================================================+
+
+Location: from Level Three - down, right, up 2, up the ladder, left 2
+          from the origin - right, up 5, right 4, up the ladder, left
+          x,y - (12, 2)
+
+Notes: To open the entrance to Level Four, push the far right stone, either up
+       or down.  Come with around 150 rupees, 100 for the extra bombs, and
+       50 to open a door. (its that or give up a HEART container!!)
+
+Treasures: Magic Book, Raft, Bomb Capacity Increase, 1 Heart, 1 Triforce
+
+Map:
+     _   _   _        Key:  k - a key             / - illusionary wall
+    |w|/|@|~|1|             E - the Entrance      < - One Way going left
+     /   :   _   _          m - Map               ! - One Way going up
+    | |/|k| |m|<|z|         C - Compass           : - bombable wall
+     :   |   ~   ~          D - Dodongo           ~ - sealed door
+    |b|-| |:|D| |D|         F - Digdogger         = - locked door
+     |   |   _   ~          B - Digdogger (BOSS)  ^ - Triforce
+    | |-|k|:|S| | |         S - Secret
+     |   _   _   /          b - bombs
+    |k|=|b|/|W|<|^|         w - Wise Man
+     ~   _   !   ~          W - Bomb Capacity Increase
+    | |=|a|~|X| |B|         @ - Money or Life (you lose one)
+     |   _   _   =          1 - tunnel (1 connects to 1)
+    |C|~|F|-| | |1|         X - -=MAGIC BOOK=-
+     _   |   |   ¯          z - -=RAFT=-
+    |k|-|E|-|_|             a - Aquamentus
+     ¯   ¯
+Walkthrough:
+  * Go left, kill all the monsters and get the key.  Go back to the right.
+
+  * Go up.  There is a Digdogger here, play the flute, and kill the 3 mini
+    Digdoggers to open the door to the left.  Go left.
+
+  * Kill all the enemies to get the Compass.  Go up.
+
+  * Kill all the Darknuts (knights) here to open the sealed door up.  Avoid
+    touching the Red Bubbles (they steal your sword permanently), but if you
+    do touch one, then touch a Blue Bubble, he'll give you your sword back.
+    Go right through the locked door.
+
+  * Kill the Aquamentus (dragon) and continue right.
+
+  * Kill all the monsters and push the middle stone on the far left to open
+    the stairs to the -=MAGIC BOOK=-.  If you have at least 1 key go through
+    the illusionary wall to the north, otherwise, DON'T!!  It's a One Way Trip.
+
+  * If you have 100 rupees and want more bombs, pay the old man, and continue
+    to the left through another illusion.  (note: you'll need 50 rupees later,
+    so bear that in mind)
+
+  * Kill the Darknuts, and they'll leave some bombs.  If you don't need bombs
+    ignore them, and go through the locked door to the left.
+
+  * Kill the Blue Darknuts and they'll leave you a key.  Go up.
+
+  * The door will close behind you.  Kill the zols, and go up.
+
+  * Kill these Zols too, get their bombs, and go right.
+
+  * Push the stone in the center, and go down.
+
+  * Kill the enemies to get a key, then bomb to the right, go through the hole
+    get the rupees and come back left, then up.
+
+  * Bomb to the right, go through, kill the Dodongo, go up, kill the enemies
+    and get the Map.  Go back down, the left, then up.
+
+  * Kill the keeses, and they leave a key.  Drat you can't get over there
+    without a stepladder.  Bomb up, and go up.
+
+  * If you have 50 rupees, pay the man his rupees.  DO NOT STEP ON THE HEART!
+    You'll lose 1 Heart PERMANENTLY!!  Go right.  (if you don't have the money
+    then go back through the hole, and earn more!)
+
+  * Push the left stone in the middle, and it will open up a staircase, go in.
+
+  * You'll come out in a room full of Red Bubbles, avoid those, and unlock
+    the door to the north, and go up to the BOSS!
+
+  * Kill the Boss as normal, then go up, but DON'T get the Triforce yet.  
+    Instead go up through an illusionary wall to the north.
+
+  * Kill the Red Darknuts to open the north door, go up.
+
+  * There are 3 Dodongo's here, kill them to open the doors.  Go up again.
+
+  * Kill all the enemies and push a stone on the left to open the passage to
+    get the -=RAFT=-!  Go back down 3 times and get the Triforce.
+
+BOSS: Digdogger - 4 Hits per mini Digdogger
+            Play the flute to turn him into 3 mini digdoggers, then hit those
+            with your sword.
+
+
++=============================================================================+
+| 20. Rafting...                                                              |
++=============================================================================+
+
+Itinerary: 1 Heart
+
+HEART 4:
+  * from Level 4, go left 4, down, right 7, down, right.  
+    from the origin, go right, up 5, right 6, down, right.
+
+  * Get on the dock, and raft across to the little island.  Go in the building
+    and get your -=HEART=-
+
+
++=============================================================================+
+| 21. Level Five, "The Mark of the 'Z'"                                       |
++=============================================================================+
+
+Location: from heart 4 - Raft down, down 4, left 8, up, left 2, up, raft up
+          from origin - up, left 2, up, raft up
+          x,y - (6, 5)
+
+Notes: It would be very handy to buy Arrows before going to Level 5.
+
+Treasures: Bow, 1 Heart, 1 Triforce
+
+Map:
+   _   _   _
+  |^| |1|~|G|     Key:  k - a key (another with Blue Gohma)
+   ~   _   |            C - Compass
+  |B|=|2| |X|           m - Map
+   ¯   ¯   _            M - Manhandla
+          |2|           G - Blue Gohma (has a key)
+       _   ~           1,2 - tunnels (1 connects to 1, 2 to 2)
+      |k|-|M|           $ - 5 rupees
+   _   |   ¯            E - the entrance
+  | |-|C|               X - the -=BOW=-
+   |   ¯                B - Gleeok (BOSS)
+  | |                   ^ - Triforce
+   |   _   _            = - locked door
+  |m|-|$|-| |           ~ - sealed door
+   _   =   |            / - illusionary wall
+  |k|/|1| |E|
+   ¯   ¯   ¯
+Walkthrough:
+  * Go up, kill the Zols, and then go left.
+
+  * Kill the 4 Like Likes (Shield eaters) to get 5 rupees.  Go left.
+
+  * Kill the Vire (they turn to 2 Keeses when hit), and get the map.
+
+  * Go back to the right, then go down through the locked door (aren't you glad
+    that we saved up on keys?).
+
+  * Don't bother killing the Wizzrobes, and avoid the Red Bubbles.  Walk 
+    through the wall to the left, kill the keeses, and get a key.  Go back
+    through the wall to the right, then down the stairs.
+
+  * Kill the Blue Wizzrobes here, then go to the left side of the room, and 
+    push the middle stone on the left inward (toward the center of the room),
+    and that will open the sealed door.  Go right.
+
+  * There is a Blue Gohma here, gosh wouldn't a Bow be very useful here?  Go
+    down.
+
+  * Avoid the Red Bubbles, go down the stairs and claim your -=BOW=-!  Go back
+    up (kill Gohma if you have arrows, he leaves a key), then back to the left,
+    and back down the stairs.  Once you've re-emerged, go up, left, and then up
+    again.
+
+  * Don't worry about killing the Wizzrobes here either, just don't get hit
+    by a Red Bubble.  Go up.
+
+  * Ignore these Wizzrobes too, and go right.
+
+  * Kill the Zol's (they're on a black background, so only their eyes are
+    showing) and get the compass.  Go up.
+
+  * There's another key that requires a Stepladder here.  Ignore it and go to
+    the right.
+
+  * Kill the Manhandla here to get 5 rupees and open the sealed door to the
+    north.  Go up.
+
+  * Kill the Keese, and go down the stairs.
+
+  * When you re-emerge, kill the Vire (or don't) and go through the locked door
+    to the left, to fight the BOSS.
+
+BOSS: Gleeok (multi headed dragon)
+            This Gleeok has 3 heads, instead of the standard 2.  Doesn't make
+            him that much harder, however.
+
+
++=============================================================================+
+| 22. The Magic Sword Returns                                                 |
++=============================================================================+
+
+Itinerary: Pick up the Magic Sword
+
+MAGIC SWORD:
+  * We have enough hearts now (12) to get the Magic Sword.  So from Level 5 go
+    raft down, down, left 2, down, left along bottom path, left, up 2, left,
+    down, left, up 3, right 3, up on right ladder, right 2, up on right ladder,
+    right 2, up, right 2 and you're there.
+
+  * Push the far left stone either up or down, go down the stairs and take 
+    your -=MAGIC SWORD=-
+
+
++=============================================================================+
+| 23. Level Six, "The Smurf Hat"                                              |
++=============================================================================+
+
+Location: from the Magic Sword - left 2, down, left 2, left 2, down, left 3
+          from the Origin - up, left 4, down, left along bottom path, left,
+                            up 2, left, down, left, up 3
+          x,y - (1, 4)
+
+Notes: To open Level Six play the flute, and a grave will turn into stairs.
+
+Treasures: Stepladder, 1 Heart, 1 Triforce
+
+Map:         _   _   _
+            |1|=|G|~|2|        Key: k - a key
+         _   :   ¯   _              E - the Entrance
+        |b|~|k|     |^|             m - Map
+         |   |       ~              C - Compass
+        | |/|1|     |B|             X - -=STEPLADDER=-
+         |   |       |              $ - 5 rupees
+        | |:|C|     |2|             w - Wise Man
+     _   /   :       ¯              b - bombs
+    |w|:|m|-| |                     G - Gleeok
+ _   =   _   :                     1,2 - tunnels
+|X|-|$|=| |-| |                     B - Blue Gohma (BOSS)
+ ¯   ¯   |   |                      ^ - Triforce
+        |k|-|b|                     : - bombable wall
+         ¯   |                      = - locked door
+            |E|                     ~ - sealed door
+             ¯                      / - illusionary wall
+
+Walkthrough:
+  * First off, go up, light the room up and kill the Wizzrobes to get some 
+    bombs.  Go up.
+
+  * Quickly go left, then left again (through the locked door), and left again
+
+  * Avoid the traps, and push the far left stone, go down the stairs and pick
+    up your -=STEPLADDER=-
+
+  * Go right twice, then down to pick up the key.  Go back up, then right.
+
+  * Bomb up, and go up again.  Ignore the enemies and go left.
+
+  * Run onto the center island (to avoid the traps) kill all the Like Likes,
+    and get the Map.  Go through an illusionary wall up.
+
+  * Bomb the right wall, go through, get the compass, and come back to the
+    left.  Go up.
+
+  * Go through an illusion to the right, and push the left stone in the
+    middle row to open a stairway.  Go in the stairs.
+
+  * When you re-emerge, kill all the Keese, and bomb down, go down, get your
+    key, and come back up.  Go through the locked door to the right.
+
+  * Kill the Gleeok, and he'll leave 5 rupees and open the door to the right.
+    Go right.
+
+  * Avoid the Red Bubbles, and push the far left stone to open a staircase.
+    Go down the stairs.
+
+  * Ignore the Manhandla and go up to the BOSS.
+
+BOSS: Blue Gohma - 3 arrows in its eye
+            This Boss is fairly self-explanatory, simply shoot him thrice in 
+            the Eye.  If you are quick enough, you can get all three in at 
+            once.  If not, you'll have to wait for him to open his eye again.
+
+
++=============================================================================+
+| 24. The Final Heart                                                         |
++=============================================================================+
+
+Itinerary: 1 Heart
+
+HEART 5:
+  * (if you're at level 6, return to the origin), from the origin go right 8 
+    times, and then up 2.
+
+  * Go across the platforms on your Stepladder to get the final -=HEART=-.
+
+
++=============================================================================+
+| 25. Level Seven, "Spiral"                                                   |
++=============================================================================+
+
+Location: from heart 5 - down 2, left 4, up, right
+          from the origin - right 4, up, right
+          x,y - (13, 7)
+
+Notes: Opening Level Seven is a little tricky.  Stand to the right side of it
+       and burn it.  If you're on the left side, go left, up, take the top
+       path and go right, and then down to get to the right side.
+
+      ________________
+     |bbbb bbbbbbb bbb|     Map: Location of Level Seven
+     |bbbb bbbbbbb bbb|     Key:   b - a bush
+     |bbbb .b!        |            . - Burn Here!
+     |bbbb b       bbb|            ! - Stand Here
+     |     b       bbb|
+     |     b       bbb|
+     |     b       bbb|
+     |bbbbbb       bbb|
+     |bbbbbbb         |
+     |bbbbbbbbbbbbbbbb|
+      ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+
+       Also, be sure to have at least 50 rupees to pay the "Money or your
+       Life" guy.
+
+Treasures: Red Candle, 1 Heart, 1 Triforce
+
+Map:
+        1   2   3   4   5   6   7
+                _   _   _   _   _   Key: k - a key (also one at 3,2 and 7,2)
+  1            |1| |^|~|B|~|b|=|3|       E - the entrance
+                |   ¯   ¯   ¯   _        C - the Compass (at 1,7)
+  2            |X|             |2|       m - the Map
+                _   _   _       ~        M - Manhandla
+  3            |3|-|@| |M|     |G|       G - Blue Gohma
+                |   |   |       |        X - -=RED CANDLE=-
+  4            |4|-| |-|@|     | |       $ - 5 rupees
+                =   |   ~       |        @ - Money or Life
+  5            |b| |2| |3|     |$|      1-3 - tunnels
+                ¯   ¯   ¯       |        4 - One Way Tunnel (to 6,7)
+  6                            |m|       B - Gleeok (BOSS)
+        _   _   _   _   _   _   |        ^ - Triforce
+  7    |3|-|E|-|_|-|_|-|1|-|M|~|_|       = - locked door
+        ¯   ¯           ¯   ¯            ~ - sealed door
+
+Walkthrough:
+  * Go left, kill the Zols, and get the Compass.  There is a passage here but
+    it doesn't go anywhere we want to go.  Go right, then right again.
+
+  * There is no point to this room, so go right again.  Again no point to this
+    room, so avoid the Red Bubbles, and go right.
+
+  * Kill all the enemies here, push a stone to open a stairway passage.  Go
+    down the stairs.
+
+  * When you re-emerge, kill the Keeses and go down.
+
+  * Grab the key, kill the enemies and push the left stone in the middle to
+    reveal the stairs to the -=RED CANDLE=-, get it and go back up, and back
+    through the tunnel.  Once you're out, go right again.
+
+  * Kill the Manhandla, then push the far left stone to open the door to the
+    right, go right.
+
+  * Ignore the enemies (and avoid the Red Bubbles) and go up.
+
+  * Kill these enemies to get the map.  Go up.
+
+  * Kill the Blue Darknuts to open the door to the north, and give you a very
+    generous reward of 5 rupees.  Go up.
+
+  * Ignore these Darknuts and go up again.
+
+  * Kill the Blue Gohma (3 arrows in his eye) and continue up.
+
+  * Get the key, kill the Keeses.  Push the far left stone to open the stairs.
+    Go down the stairs.
+
+  * Ignore the Darknuts, and go up.  (if you ever want to go back you'll have
+    to kill them, but we don't)
+
+  * Push the stone up, and go right.  Pay the "Money or Life" guy his 50 rupees
+    and go down.
+
+  * Kill the Blue Darknuts, and push the stone (same one you pushed at the 
+    first tunnel) and go down the stairs.
+
+  * Avoid the enemies (especially the Red Bubbles) and go through the locked
+    door to the left.
+
+  * Kill the Blue Darknuts to open the sealed door to the left.  Go left
+    to confront the BOSS.
+
+BOSS: Gleeok - about 9 hits with Magic Sword
+            This Gleeok has 4 heads this time.  But it is the same strategy to
+            kill him, cut off each head.
+
+
++=============================================================================+
+| 26. Level Eight, "The Grand Spiral"                                         |
++=============================================================================+
+
+Location: from Level Seven - left, up 4, left 4, up, right 2
+          from the Origin - right, up 5, left, up, right 2
+          x,y - (10, 2)
+
+Notes: The entrance to Level Eight is across the water, so use your stepladder
+       to cross, and bomb the 5th stone from the left side.
+       Also be sure to buy some -=BAIT=- before coming here.  (top right corner
+       of the map, 60 rupees)  And have another 100 rupees to get the 2nd
+       Bomb Capacity Increase.
+
+Treasures: Magic Key, Magic Wand, Bomb Capacity Increase, 1 Heart, 1 Triforce
+
+Map:
+   1   2   3   4   5   6   7   8
+   _   _   _   _   _   _   _   _    Key: k - a key (also keys at 2,1 and 3,1)
+1 |4|:|D| |3|~|D|=|b|:|F|~|_|~|k|        E - Entrance
+   ~   _   ¯   ¯   ¯   ¯       |         b - bombs (also at 3,7)
+2 |1|-|7|                     |C|       1-5 - tunnels
+   /   _               _       |         6 - One way tunnel to 2,7
+3 |D|~|2|             |^|     |T|        7 - One way tunnel to 8,5
+   =   :               ~       |         W - Bomb Capacity Increase
+4 |X| |m|             |B|     |6|        $ - 5 Rupees
+   _   _               =       |         C - Compass
+5 |K|=|3|             |5|     | |        m - Map
+   _   |               :       |         T - "Grumble Grumble"
+6 |4|-| |             |$|     |2|        F - Digdogger
+   /   /   _   _   _   |       |         D - Dodongo
+7 |$|-|_|=|5| |W|~|_|~|a|     |1|        K - -=MAGIC KEY=-
+   ¯       ¯   ¯       ¯       |         X - -=MAGIC WAND=-
+8                             |E|        B - Dodongo's (BOSS)
+                               ¯         ^ - Triforce
+                                         a - Aquamentus
+                                         = - locked door
+                                         ~ - sealed door
+                                         : - bombable wall
+                                         / - illusionary wall
+
+Walkthrough: (if you don't have any keys, go to 8,1 first and get one)
+  * Go up.  Avoid the Red Bubbles (good luck) and push the left stone.  Go
+    down the stairs.
+
+  * Ignore the Goriya's and walk through the wall to the south.
+
+  * Ignore the Dodongo's, and go through the locked door to the south.
+
+  * Avoid the Red Bubbles, stand by the wall to kill the Wall Masters.  Once
+    all the Wall Masters are dead, push the middle stone on the right side to
+    reveal the stairs to the -=MAGIC WAND=-
+
+  * Go back up, ignore the Dodongo's again, and go right.
+
+  * Kill the Enemies here, then bomb the south wall and go down.
+
+  * Kill the Blue Goriya's to get the Map.  Go back up.  Push the middle stone
+    on the left side of the room, and go down the stairs.
+
+  * When you re-emerge, go up.  Ignore the Blue Goriya's and go up again.
+
+  * Avoid the Digdogger, and go up.
+
+  * Give "Grumble Grumble" his Bait, and go up again.
+
+  * Kill the Keeses to get the Compass.  Continue up.
+
+  * Kill the Blue Goriya's to get a Key, and to open the door to the left.
+    Go left.
+
+  * Kill the Goriya's to open the door to the left, and go left.
+
+  * There's a Digdogger here, if you kill him he leaves 5 rupees.  Bomb to the
+    left, and go left.
+
+  * If you kill the Wall Masters here you can get some bombs.  Go through
+    the locked door to the left.
+
+  * Kill the Dodongo's to open the sealed door to the left.  Go left.
+
+  * Avoid the Red Bubbles, get the key, and push the left stone in the middle
+    to open the passageway.  Go down the stairs.
+
+  * When you re-emerge, go through the locked door to the left (if you lost
+    your sword in the previous screen, touch the Blue Bubble now).
+
+  * Kill the Stalfos, push the stone, go down the stairs to get your
+    -=MAGIC KEY=-
+
+  * Go back to the right, then down.  Push the stone down, and go left.
+
+  * Kill the Electric Ropes (they're a good source of rupees), then go down
+    through an illusionary wall.
+
+  * If you kill the enemies here they leave 5 rupees.  Go right.
+
+  * Ignore the Keeses and continue right through the locked door.
+
+  * Kill the Goriya's and they leave bombs.  Push the left stone and go down
+    the stairs.
+
+  * Kill the Moldorm here, then bomb south, and go down.
+
+  * Kill the Goriya's and they leave 5 rupees.  Go down again.
+
+  * Kill the Aquamentus here to open the door to the left.  Go left.
+
+  * Kill the 5 or so Wall Masters here (avoiding the Red Bubbles of course, if
+    you do lose your sword, kill the Wall Masters with your Wand), push the
+    middle stone on the right to open the left door.  Go left.
+
+  * "I bet you'd like to have more bombs"  Buy your bombs (100 rupees), then
+    go back to the right, right again, then up, up again, and finally up
+    through the locked door to the BOSS.
+
+BOSS: 3 Dodongo's - 2 bombs in mouth
+
+
++=============================================================================+
+| 27. Level Nine, "Ganon's Head"                                              |
++=============================================================================+
+
+Location: from Level Eight - left 7, up, left 2
+          from the Origin - right, up 5, left, up, left 5, up, left 2
+          x,y - (1, 1)
+
+Notes: To open Level Nine, bomb 4th from the left.
+       If you need a Red Potion there is a shop 2 right of level 9 (bomb to 
+       open).
+
+Treasures: Red Ring, Silver Arrow, Ganon's Triforce
+
+Map:    
+    1   2   3   4   5   6   7   8
+    _   _                   _   _    Key:  k - a key
+1  |R|/|3|                 |1| |Z|         E - Entrance
+    _   |   _   _   _   _   !   ~          b - bombs
+2  |$|~|_|-|_|/|w|>| |-| |:|P|~|B|         $ - 5 rupees
+    ¯       _   !   |   |   ¯   ¯          w - Wise Man
+3          | |=| |>| |-| |                 C - Compass
+        _   :   V   |   |   _              m - Map
+4      | |-|k|>| |-| |-|2|<| |             R - -=RED RING=-
+    _   |   :   =   :   !   !   _          X - -=SILVER ARROWS=-
+5  | |:| |<|C|>| |~|P| |X|/|m|:| |         P - Patra
+    |   =   V   |   |   :   :   /         1,2 - tunnels
+6  |b|=| | | | | | | |/|$|/| |~|1|         3 - One way tunnel to 6,2
+    ¯   =   |   |   ~   |   V   ¯          / - illusionary wall
+7      |$|-|_|~|b|~| |~|_|-|$|          V,!,<,> - one way doors/illusions
+        ¯       :   |       ¯              ~ - sealed door
+8              |2|>|E|                     = - locked door
+                ¯   ¯                      : - bombable wall
+                                           B - Ganon (BOSS)
+                                           Z - Zelda
+
+Walkthrough:
+  * Go up.  The 3 sealed doors should now open (if you passed the other 8
+    levels).  Go up.
+
+  * Ignore the zols and pass through an illusionary wall to the right.  Ignore
+    the keeses, and again go through the wall to the right.
+
+  * Do your best to avoid the Wizzrobes, and bomb up.  Go up.
+
+  * Kill the Patra to get the Map.  Then go through the wall to the left,
+    kill the Wizzrobes, push the stone, go down the stairs and get your
+    -=SILVER ARROWS=-  
+
+  * Go up through the north wall.  Push the left stone (avoiding the Red 
+    Bubbles of course) and go down the stairs.
+
+  * When you re-emerge, ignore the enemies, bomb up and go up.
+
+  * Kill the 2 Blue Lanmola (really fast centipedes) to open the sealed doors,
+    they also leave bombs.  Go left.
+
+  * Ignore the Like Likes and go left again.
+
+  * You will be in a room of Vire (bouncing blue guys), avoid them and go
+    through the locked door to the north.
+
+  * Kill the Keese, and go through the locked door to the north.
+
+  * Push the stone up, and bomb to the left.  Quickly go left, and come right
+    back right again.  (there's nothing but Red Bubbles over there)  Then
+    push the stone to the right, and go up.
+
+  * Avoid the Wizzrobes, and go right.
+
+  * If you kill the enemies here, they leave a key.  Since we don't need a key
+    avoid them.  Instead, bomb to the south and go down.
+
+  * Kill the Zols, get the compass, and go back up.  Then bomb up and go up.
+
+  * Avoid the Blue Wizzrobes here, and go through the locked door to the right.
+
+  * Avoid these enemies as best you can, and go through the door to the north.
+
+  * The wise man here says "Go to the next room" So go through the left wall.
+
+  * Ignore the Like Likes here, and continue going left.
+
+  * Avoid the Wizzrobes, and go up.  Then avoid the patra, and walk through
+    the left wall.  Kill the enemies, push the left stone, go down the stairs
+    to get the -=RED RING=-  Go back through the wall to the right.
+
+  * Kill the Patra, push the left stone, and go down the stairs.
+
+  * Immediately bomb the right wall, and go right.  Kill the Patra here to
+    open the door that leads to GANON.
+
+BOSS: Ganon (pig thief) - 4 hits with sword, silver arrows
+            Same strategy as the first quest.  Wander around the room stabbing
+            with your sword.  Hit him 4 times, then nail him with Silver
+            Arrows.
+
+Save Zelda Again, and CONGRATULATIONS!  You've completely passed Zelda I!
+
+
+The Ending:
+"Thanks Link, You're
+ The Hero of Hyrule."
+
+Finally,
+Peace returns to Hyrule.
+
+This ends the story.
+
+You are -great-
+-name-   - how many times you died -
+
+You have an amazing Wisdom and Power
+       ______
+       \    /
+        \  /
+         \/
+End of "The Legend of Zelda I"
+
+
+
+  +=========================================================================+
+ +---------------------------------------------------------------------------+
+|                                 APPENDICES:                                 |
+ +---------------------------------------------------------------------------+
+  +=========================================================================+
+
++=============================================================================+
+| A. Secrets                                                                  |
++=============================================================================+
+
+Most of these secrets come from Hexar (hexar@geocities.com).
+
+______________
+Dodongo Trick:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+  Put a bomb in Dodongo's mouth.  While he's chewing on it, put another bomb
+  on top of him (on his back, as it were) and hit him with your sword.  He will
+  die and you'll find your spoils to be four more bombs.  Bonus!
+  Note: This is possible to do without using the first bomb, simply place the
+        bomb on his back.  Not as easy since he is moving while you are doing
+        it!
+
+___________
+Up+A Trick:
+¯¯¯¯¯¯¯¯¯¯¯
+  Press start at any time.  Press up and A on the second controller at the
+  same time.  You are presented with a menu to Continue, Save, or Retry.
+  Continuing will restore you to 3 hearts and return you to the dungeon
+  starting point or the outside starting point, depending on where you were.
+  Save saves your game and returns you to the outside starting point.  Retry
+  will take you to your last save point--not sure if you will always start
+  outside or not though.
+
+___________________
+Money Making Trick:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+  Get some bombs and ten rupees.  Use the Up+A trick to save.  Open your
+  game again and go left one screen.  Bomb your way into the Money Making
+  game.  Enter and pick a rupee.  Every time you lose, use the Up+A trick to
+  retry.  Every time you win, save.  Before long you will have 255 rupees.
+
+___________________
+The One Left Trick:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+  Anytime you defeat every enemy on the screen in the outside, they will all
+  respawn if you go enough screens away.  If you want to make some screens
+  easier to pass through, kill every enemy except for the weakest one.  The
+  one you leave will stay every time you come back, and none of the other
+  enemies will be there.
+
+____________
+Ghost Trick:
+¯¯¯¯¯¯¯¯¯¯¯¯
+  Go to the graveyard and hit a ghost with your boomerang.  Touch lots and
+  lots of graves while keeping tabs on the original ghost and avoiding the
+  new ones.  Kill the original ghost.  Goodies galore will show up.  Be sure to
+  keep track of the original ghost, otherwise you will be stabbing at ghosts
+  which you can't hit!
+
+______________
+Doorway Trick:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+  While in a dungeon, the safest place to stand is always in the doorway.
+  If you can throw your sword, jump out of the doorway long enough to throw
+  it and hit enemies in rooms.  Only jump out into the fray if you feel that
+  the enemies are too weak to destroy your full health.  You can also hide
+  in doorways and wait for Darknuts to walk by so that you can smack em.
+  Make sure you bury yourself deeper in the doorway if there are Goriyas or
+  Wizzrobes because they can sometimes get you otherwise.
+
+____________
+Darknut tip:
+¯¯¯¯¯¯¯¯¯¯¯¯
+  Only attack these guys with your sword from the side, never from the back.
+  If you chase their tail, they could do an about face, and you'd wind up with
+  a face full of pain.  If you attack from the side and they turn toward you,
+  you still have to dodge, but at least you aren't already moving towards them.
+
+_______________
+Wizzrobe Trick:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+  Oftentimes in a dungeon you will enter a room with a couple of yellow 
+  Wizzrobes and some blue ones too.  If you use the doorway trick, it should be 
+  really easy to kill the yellow ones.  Once you have destroyed all of the 
+  yellow (weaker) Wizzrobes, leave the room and walk back in.  If you had more 
+  than one blue Wizzrobe still there when you left, it should now be a yellow 
+  one!  Kill that one and your problems with multiple blue Wizzrobes is solved.  
+  I believe this trick also works on other types of baddies, but I find it most 
+  useful for Wizzrobes.
+
+_____
+Misc:
+¯¯¯¯¯
+  * You can attack the Wise Men in the dungeons, which causes them to retaliate
+    and shoot fire at you.  You can't kill them, however.
+
+  * Oddly enough, if you enter Level One, then immediately leave and then
+    come back in, the locked door will be open.
+
+  * The Lost Forest is always "Up, left, down, left" and the Lost Hills is
+    always "Up 4 times"
+
+
++=============================================================================+
+| B. Monsters                                                                 |
++=============================================================================+
+
+OVERWORLD MONSTERS:
+  Tektite      -- like a giant spider that jumps around (blue and red) the red
+                  is faster, and the blue leaves more money (on average)
+  Octorok      -- Land octopus that can shoot rocks (blue and red) the blue is
+                  a little stronger than the red
+  Leever       -- Burrows into the ground (blue and red), the blue is again
+                  stronger
+  Peahat       -- A flower that spins around, can only be attacked while 
+                  stopped
+  Moblin       -- If you cross a dog and a goblin you get a Moblin (green and
+                  pink) the green is stronger than the pink, and they both 
+                  throw arrows
+  Armos        -- statue that comes to life, and may reveal secrets (like the
+                  bracelet)
+  Ghini        -- a ghost of the graveyard, only the original ghost can be
+                  attacked
+  Lynel        -- odd centaur like creature that throws his sword (red and 
+                  blue) blue is stronger
+  Zola         -- creature of the sea, shoots fireballs
+  Rock         -- big boulders that fall on you
+
+UNDERWORLD MONSTERS:
+  Zol & Gel    -- blob-like creatures, a Zol will become 2 Gels if attacked by 
+                  a Wooden Sword
+  Rope         -- fast snake (very very good source of rupees)  The 2nd quest
+                  has an electric version of these
+  Vire & Keese -- Vire's hop around and when attacked become 2 red keese (bats)
+  Stalfos      -- Skeleton (in 2nd quest they can throw their swords)
+  Wall Master  -- Giant hand that grabs you and takes you out of the level
+  Goriya       -- Boomerang goon, blue is more powerful than red
+  Wizzrobe     -- wizard, shoots magic at you.  The red teleport, and the blues
+                  are more powerful, and sort of glide around the room
+  Darknut      -- Knight, blues more powerful
+  Pols Voice   -- bunny like creature, shoot with bow to kill
+  Lanmola      -- fast moving centipede
+  Like Like    -- tube-like creature that steals your shield
+  Gibdo        -- Mummy, takes a LOT of hits to kill
+  Moldorm      -- giant worm, usually seen in pairs
+  Bubble       -- sword stealing ghost from beyond
+  Patra        -- a blue eye with smaller red eyes circling it, beat the outer
+                  eyes then take out the blue one
+BOSSES:
+  Aquamentus   -- a Dragon (technically a unicorn, but it doesn't look like 
+                  one)
+  Dodongo      -- a bomb eating rhino, sometimes found in triplicate
+  Manhandla    -- large man-eating flower, dislikes bombs, moves faster as it 
+                  loses limbs
+  Gleeok       -- Multi Headed Dragon, when hit, heads will fly off and shoot 
+                  fire at you, once it loses its last head, it dies
+  Digdogger    -- Giant Eye, hates the flute, becomes a little digdogger
+  Gohma        -- Big Spider, shoot it in the eye (also comes in a meaner blue
+                  flavor, which takes 3 hits)
+  Ganon        -- the Pig-Headed One, hit with Silver Arrows, then whack with
+                  the Magic Sword
+  
+
++=============================================================================+
+| C. Game Genie Codes                                                         |
++=============================================================================+
+
+These are all untested, but they come from Galoob's own homepage, so they
+probably work!
+
+  AVVLAUSZ            - Invincible
+  YYKPOYZZ            - Start with 8 Hearts
+  NYKPOYZX            - Start with All 16 Hearts
+  SZVXASVK            - Don't lose rupees when buying
+  SZVXASVK + AEVEVALG - All items for free!
+  SZNZVOVK            - Infinite Bombs
+  ESKUILTA            - Wear the Blue Ring
+  OSKUILTA            - Wear the Red Ring
+
+
++=============================================================================+
+| D. Online Resources                                                         |
++=============================================================================+
+
+  http://www.zhq.com/      - Zelda Headquarters, all sorts of interesting 
+                             things can be found here.
+  http://www.gamefaqs.com/ - best FAQ site
+  http://www.gamefaqs.com/console/nes/game/7882.html" - GameFaqs Zelda I page
+  http://www.rpgamer.com/  - good RPG-only site
+  http://www.rpgamer.com/games/zelda/z1/text/info/zelda.txt" - Zelda I Manual
+  http://www.rpgamer.com/games/zelda/z1/graphics/maps/maplarge.gif"
+                           - Overworld Map
+
+
++=============================================================================+
+| E. Acknowledgments                                                          |
++=============================================================================+
+
+  Most of the 2nd Quest Map from Alan Mitsugi's and Lee Kremer's Zelda FAQ
+  All monster and dungeon names taken directly from the Manual, as is the
+  introduction.
+  2nd Quest Dungeon names were completely made up by me based on what they
+  looked like.
+  Special Thanks to Hexar for his many contributions (see Secrets)
+  Game Genie codes come straight from www.galoob.com
+
+ASCII Art created using SigZag by James Dill: (Freeware!)
+  http://www.geocities.com/southbeach/marina/4942/sigzag.htm
+
+This FAQ was writen entirely using the GWD Text Editor:  (shareware)
+  http://www.gwdsoft.com/
+
+
+_________________________
+Shameless Self Promotion:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+  I have also written FAQs for:
+    NES:      Disney Adventures in the Magic Kingdom
+              Final Fantasy I -- Magic FAQ
+    SNES:     Aerobiz
+              Aerobiz Supersonic
+              Utopia: Creation of a Nation
+    Genesis:  StarFlight
+    PSX:      Thousand Arms -- Walkthrough
+                            -- Forging/Dating FAQ
+    PS2:      Madden NFL 2001
+    PC:       AD&D Rules FAQ (multiple games)
+              Baldur's Gate & Tales of the Sword Coast -- FAQ/Walkthrough
+                                                          NPC List
+                                                          Creature List
+              Baldur's Gate II -- FAQ/Walkthrough
+                               -- Items List
+                               -- Class FAQ
+                               -- Creature List
+              Colonization -- the Single Colony Strategy Guide
+                           -- the Cheat Guide
+              Drakan: Order of the Flame
+              Dungeon Hack
+              Icewind Dale & Heart of Winter -- FAQ/Walkthrough
+                                             -- Items List
+              Master of Magic (revision)
+              Messiah
+              Pharaoh (currently being edited by Red Phoenix)
+              Planescape: Torment -- FAQ/Walkthrough
+                                  -- Items Listing
+              Rollercoaster Tycoon
+              Sid Meier's Alpha Centauri
+              The Sims
+              Ultima 4: Quest of the Avatar
+              Ultima 7: The Black Gate
+              Ultima 7 Part 2: Serpent Isle
+              Ultima Underworld -- Keyboard Commands
+              Ultima Underworld II -- Keyboard Commands
+                                   -- Spell List
+  All of my FAQs can be found at:
+    http://www.gamefaqs.com/features/recognition/2203.html
+    ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+
+
+Questions?  Comments?  Complaints?  Rants about the Smurfs?  Email me about it!
+   Email:  manymoose@hotmail.com
+
+   Email Policy:  If you are going to email me about this game, please put
+                  The Legend of Zelda as the subject.  Or just Zelda.  Also
+                  please realize that I am not hiding cheats or any other
+                  information, i.e. everything I know about Zelda is in this
+                  guide (somewhere).
+
+________________
+Version History:
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+Changes in 1.1:  (2-26-99)
+  Some small changes
+Changes in 1.11: (3-11-99, 91k)
+  New ASCII Art!
+Changes in 1.2:  (4-16-99, 93k)
+  Small format changes
+  Added % on contents
+  Some small number of small changes
+Changes in 1.3:  (6-6-99, 95k)
+  Some format changes
+  Added to Shameless Self-Promotion
+  Other Small Changes
+Changes in 1.4:  (7-5-99, 98k)
+  Added all sorts of new Tricks (from Hexar) in the Secrets section
+Changes in 1.5:  (7-11-99, 99k)
+  Added yet another trick from Hexar in the Secrets section
+  Added the "latest version" thing in the Notes up top
+Changes in 1.51: (9-20-99, 106k)
+  Small format changes
+  Other small miscellaneous changes
+Changes in Version 1.52 (2-28-00, 109k)
+  Some Small Changes
+  Some Small Format Changes as well
+Changes in Version 1.53 (4-26-00, 109k)
+  Some Small Changes
+  Some Small Format Changes as well
+Changes in Version 1.54 (6-17-00, 109k)
+  Updated my Shameless Self Promotion to include my latest FAQs
+  Some other small meaningless changes
+
+  Version 1.6  May 27, 2001  109k
+
+    Updated to my current format.  Corrected several small errors (thanks to
+    Glitch).
+
+  Version 1.7  June 5, 2001  109k
+
+    Corrected a couple of errors.
+
+  Version 1.8  June 7, 2001  111k
+
+    Added information on Zelda Classic (PC).
+
+  Version 1.9  June 8, 2001  112k
+
+    Added more information on Zelda Classic (PC).
+
+________
+Stinger:
+¯¯¯¯¯¯¯¯
+  "It's a secret to everyone!"
+
+_______________________________________________________________________________
+¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+This Walkthrough is Copyright 1999-2001 by Dan Simpson
+The Legend of Zelda is Copyright by Nintendo
+
+I am not affiliated with Nintendo or anyone who had anything to do with the
+creation of this game.  This FAQ may be posted on any site so long as NOTHING
+IS CHANGED and you EMAIL ME telling me that you are posting it.  You may not
+charge for, or in any way profit from this FAQ.

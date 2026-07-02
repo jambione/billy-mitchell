@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import random
 
-from .games.smb.perception import Scene
+from typing import Any
 
 # Throttle ordinary chatter so it flavors without spamming (in emulator frames; 60 = 1s).
 _MIN_GAP_FRAMES = 50
@@ -83,14 +83,30 @@ QUIPS: dict[str, list[str]] = {
 }
 
 
+def _progress_x(scene: Any) -> int:
+    if scene is None:
+        return 0
+    return getattr(scene, "mario_x", getattr(scene, "link_x", 0))
+
+
+def _collectible_delta(scene: Any, prev: Any) -> bool:
+    coins = getattr(scene, "coins", None)
+    prev_coins = getattr(prev, "coins", None)
+    if coins is not None and prev_coins is not None:
+        return coins > prev_coins
+    rupees = getattr(scene, "rupees", None)
+    prev_rupees = getattr(prev, "rupees", None)
+    return rupees is not None and prev_rupees is not None and rupees > prev_rupees
+
+
 class Commentator:
     def __init__(self, min_gap_frames: int = _MIN_GAP_FRAMES) -> None:
         self.min_gap = min_gap_frames
         self.reset(None)
 
-    def reset(self, start_scene: Scene | None) -> None:
+    def reset(self, start_scene: Any | None) -> None:
         self._prev = start_scene
-        self._best_x = start_scene.mario_x if start_scene else 0
+        self._best_x = _progress_x(start_scene)
         self._next_milestone = ((self._best_x // 256) + 1) * 256
         self._last_frame = -10_000
         self._last_line = ""
@@ -101,20 +117,24 @@ class Commentator:
         self._last_line = line
         return line
 
-    def observe(self, scene: Scene) -> str | None:
+    def observe(self, scene: Any) -> str | None:
         """Return a quip to print for this frame (already throttled), or None."""
         prev, key, force = self._prev, None, False
+        px = _progress_x(scene)
         if prev is not None:
-            if scene.size > prev.size:
+            size = getattr(scene, "size", None)
+            prev_size = getattr(prev, "size", None)
+            if size is not None and prev_size is not None and size > prev_size:
                 key, force = "powerup", True
-            elif len(scene.enemies) < len(prev.enemies) and prev.enemy_ahead(48):
+            elif (len(scene.enemies) < len(prev.enemies)
+                  and getattr(prev, "enemy_ahead", lambda **_kw: False)(48)):
                 key = "stomp"
-            elif scene.coins > prev.coins:
+            elif _collectible_delta(scene, prev):
                 key = "coin"
-        if key is None and scene.mario_x > self._best_x and scene.mario_x >= self._next_milestone:
+        if key is None and px > self._best_x and px >= self._next_milestone:
             self._next_milestone += 256
-            key = "newbest" if scene.mario_x > self._best_x + 240 else "milestone"
-        self._best_x = max(self._best_x, scene.mario_x)
+            key = "newbest" if px > self._best_x + 240 else "milestone"
+        self._best_x = max(self._best_x, px)
         self._prev = scene
         if key and (force or scene.frame - self._last_frame >= self.min_gap):
             self._last_frame = scene.frame
@@ -125,7 +145,7 @@ class Commentator:
         """An on-demand line for discrete moments (start, stuck, death_*, clear)."""
         return self._pick(key)
 
-    def death_quip(self, scene: Scene) -> str:
+    def death_quip(self, scene: Any) -> str:
         """A cause-aware death line (pit vs enemy vs glitch)."""
         if getattr(scene, "y_viewport", 0) > 1:
             return self._pick("death_pit")

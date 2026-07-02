@@ -17,9 +17,11 @@ from billy.abstractions import BootError
 from billy.director import Director
 from billy.games.smb import SmbGame
 from billy.games.smb_lost import SmbLostGame
+from billy.games.smw import SmwGame
+from billy.games.zelda import ZeldaGame
 from billy.knowledge import KnowledgeBase, SkillLibrary
 
-GAMES = {"smb": SmbGame, "smb_lost": SmbLostGame}
+GAMES = {"smb": SmbGame, "smb_lost": SmbLostGame, "zelda": ZeldaGame, "smw": SmwGame}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,8 +32,17 @@ def main(argv: list[str] | None = None) -> int:
                    help="pure reflex run (no Billy/Coach LLM calls)")
     p.add_argument("--seed-skills", action="store_true",
                    help="seed the SkillLibrary with SMB's transferable tactics (cross-game carry-forward)")
+    p.add_argument("--no-guide", action="store_true",
+                   help="skip walkthrough ingestion/usage (walkthrough/<SYSTEM>/<game>)")
     p.add_argument("--fresh", action="store_true",
                    help="wipe learned lessons, solution cache AND skills before starting")
+    p.add_argument("--rl", metavar="MODEL", default="",
+                   help="use a trained PPO policy (a .zip from train_rl.py) as the reflex tier; "
+                        "the hand-crafted reflex remains the fallback at hazards")
+    p.add_argument("--rl-sections", action="store_true",
+                   help="enable hazard-scoped RL sub-policies (e.g. 1-3's platform/lift chain): "
+                        "they SEED micro-search with a learned crossing candidate, which search "
+                        "still verifies and the cache banks — the reflex/cache/search loop is unchanged")
     args = p.parse_args(argv)
 
     config.ensure_dirs()
@@ -40,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[warn] LM Studio unreachable at {config.LMSTUDIO_BASE_URL} — "
               f"Billy will improvise with fallbacks (load a model to fix).")
     if args.fresh:
-        for f in (config.LESSONS_FILE, config.SOLUTIONS_FILE, config.SKILLS_FILE):
+        for f in (config.LESSONS_FILE, config.SOLUTIONS_FILE, config.SKILLS_FILE,
+                  config.TAPES_FILE):
             if f.exists():
                 f.unlink()
         print("[run] wiped prior lessons + solution cache + skills; Billy starts from scratch.")
@@ -51,7 +63,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[run] seeded {len(skills)} transferable skills.")
 
     game = GAMES[args.game]()
-    director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills)
+    game.cli_name = args.game   # for self-describing outputs (e.g. demo-request teleop commands)
+    # Walkthrough learning: a text FAQ at walkthrough/<SYSTEM>/<game> is ingested once
+    # (LLM read when available, heuristic otherwise) and then seeds search + LLM prompts.
+    from billy.knowledge.guide import load_guide_for
+    guide = None if args.no_guide else load_guide_for(game, args.game)
+    sections = None
+    if args.rl_sections:
+        # Lazy import (torch/SB3 only needed with RL). Sub-policies seed micro-search at their
+        # registered hazards; the cache/search/reflex loop is otherwise untouched.
+        from billy.rl.section_policy import SectionController, default_smb_sections
+        sections = SectionController(default_smb_sections())
+    director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills,
+                        sections=sections, guide=guide)
+    if args.rl:
+        # Lazy import so torch/SB3 are only needed when actually using RL. The learned policy
+        # becomes the reflex tier; its fallback is the game's hand-crafted reflex, so cache +
+        # micro-search + learn-from-death + LLM still own the lethal hazards.
+        from billy.rl.learned_reflex import LearnedReflex
+        director.reflex = LearnedReflex(args.rl, fallback=director.reflex)
     print(f"[run] {game.name} on {game.system.name} (in-process stable-retro).")
     try:
         director.run_session(args.attempts)

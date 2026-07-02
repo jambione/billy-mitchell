@@ -96,6 +96,12 @@ def run_right(frames: int, sprint: bool = True) -> list[Step]:
     return [Step(frames, mask(RIGHT, B) if sprint else RIGHT)]
 
 
+def run_left(frames: int, sprint: bool = True) -> list[Step]:
+    """Move left — to back up for a run-up, line up on a pipe, or reposition. (Billy's policy is
+    right-biased; this gives search the option to step back when forward-only is stuck.)"""
+    return [Step(frames, mask(LEFT, B) if sprint else LEFT)]
+
+
 def jump_right(run_frames: int = 0, jump_frames: int = 16, sprint: bool = True) -> list[Step]:
     steps: list[Step] = []
     move = mask(RIGHT, B) if sprint else RIGHT

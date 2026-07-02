@@ -15,6 +15,7 @@ ROMS_DIR = REPO_ROOT / "roms"
 DATA_DIR = REPO_ROOT / "data"              # lessons.jsonl, solutions.jsonl, metrics
 LESSONS_FILE = DATA_DIR / "lessons.jsonl"
 SOLUTIONS_FILE = DATA_DIR / "solutions.jsonl"   # position-keyed solution cache (the policy)
+TAPES_FILE = DATA_DIR / "tapes.jsonl"           # whole-trajectory level replays (search→0)
 SKILLS_FILE = DATA_DIR / "skills.jsonl"         # transferable abstract tactics (cross-game)
 METRICS_FILE = DATA_DIR / "metrics.jsonl"
 
@@ -47,12 +48,56 @@ SEARCH_HORIZON_FRAMES = 50  # frames to simulate each candidate at a live danger
 LEARN_HORIZON_FRAMES = 150  # longer rollout for learn-from-death (must traverse the death zone)
 MIN_RUNWAY_PX = 24          # learn-from-death needs at least this much room before a hazard
 CACHE_BUCKET_PX = 16        # solution-cache key granularity (one NES tile)
+# Route-awareness (Phase 1): a cache/route node is keyed on (level, x_band, y_band) — the y band
+# disambiguates a high road from a low road at the SAME x (the high ledge vs the main path), which a
+# 1-D x-only key conflated. Coarse so one flat platform stays a single node.
+CACHE_Y_BAND_PX = 24
+# When micro-search scores candidates, penalise one that lands on a node already proven to dead-end
+# (stall-breaker fired there), and add a small GRAVITY tiebreak preferring the lower/grounded path
+# when x-progress is comparable — so Billy stops greedily climbing into dead-ends / past low exits.
+# (SMB elevation = mario_y, where LARGER = lower on screen, so a positive weight prefers staying low.)
+ROUTE_DEAD_PENALTY = 50_000
+# Phase 2a — backward dead-end propagation: when a node dead-ends, also mark+drop the last N nodes of
+# the APPROACH that led there, so next pass the search avoids that branch (e.g. the high road) and the
+# re-search routes the other way. The 2-D key means marking the high-road nodes dead leaves the low
+# road (same x, different y band) open. Keep small — marking too much of the approach dead nukes
+# legit path nodes and regresses the route.
+DEADEND_BACKTRACK = 4
+# Gravity tiebreak (prefer the lower road on comparable x): a blanket version cost 1-1 score (lower
+# paths = fewer coins) without cracking 1-2's exit, so it's OFF by default. The real route-finding is
+# dead-end memory + Phase-2 backtracking, not a blanket bias. Kept as a tunable knob.
+ELEVATION_TIEBREAK = 0.0
 MAX_BUCKET_VISITS = int(os.environ.get("BILLY_MAX_BUCKET_VISITS", 8))  # same hazard N times w/o passing -> give up
+# Reachback verify: on an exact-key cache miss, a HIGH-reach entry banked a few buckets behind
+# (typically a human demo whose exact tile the live run never lands on) is clone-verified from
+# the CURRENT state and replayed only if it provably survives+advances. The verify is the gate.
+REACHBACK_MIN_GAIN = int(os.environ.get("BILLY_REACHBACK_MIN_GAIN", "200"))
 # Trust-replay (default): replay cached plans verbatim; a deterministic emulator reproduces them.
 # Set BILLY_VERIFY_REPLAY=1 to instead clone-check each replay (re-searches on mismatch — can drift).
 VERIFY_REPLAY = os.environ.get("BILLY_VERIFY_REPLAY", "0") == "1"
-# Dense brute-force grid at hard walls (thorough but ~40 candidates -> slow). Off by default.
-EXPANDED_SEARCH = os.environ.get("BILLY_EXPANDED_SEARCH", "0") == "1"
+# Dense brute-force grid at hard walls the focused spread can't crack (e.g. 1-2's low-ceiling +
+# enemy ledge at x=908). Fires ONLY as a fallback when the focused micro-search fails to progress,
+# and stops at the first surviving+advancing candidate (early-exit), so its ~40-candidate cost is
+# paid only at genuine walls and only until one works — then it's cached forever. On by default;
+# set BILLY_EXPANDED_FALLBACK=0 to disable. (BILLY_EXPANDED_SEARCH kept as a back-compat alias.)
+EXPANDED_FALLBACK = (os.environ.get("BILLY_EXPANDED_FALLBACK",
+                                    os.environ.get("BILLY_EXPANDED_SEARCH", "1")) == "1")
+EXPANDED_SEARCH = EXPANDED_FALLBACK   # back-compat alias
+
+# --- Parallel micro-search (worker-pool candidate evaluation) ----------------------------
+# N worker subprocesses (one emulator each — stable-retro allows one per process) evaluate
+# search candidates concurrently. 0 = serial (default; the regression-guard baseline).
+PARALLEL_SEARCH = int(os.environ.get("BILLY_PARALLEL_SEARCH", "0"))
+
+# --- Skill distillation (cross-game transfer of banked maneuvers) ------------------------
+# Significant banked crossings are distilled into `sequence` Skills (exact plan + situation
+# embedding) that seed micro-search at SIMILAR hazards anywhere. Search-verified before commit.
+DISTILL = os.environ.get("BILLY_DISTILL", "1") == "1"
+
+# --- Auto-Stuck Trainer (closed-loop self-improvement) ----------------------------------
+AUTO_TRAIN = os.environ.get("BILLY_AUTO_TRAIN", "1") == "1"
+STUCK_DEATH_THRESHOLD = int(os.environ.get("BILLY_STUCK_DEATHS", "4"))
+STUCK_SECTION_TRAIN = os.environ.get("BILLY_STUCK_SECTION_TRAIN", "1") == "1"
 
 
 def ensure_dirs() -> None:
