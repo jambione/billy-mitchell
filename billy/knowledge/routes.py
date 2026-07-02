@@ -29,19 +29,19 @@ class RouteEdge:
     hits: int = 1               # times observed (confidence)
 
     def skips_ahead(self) -> bool:
-        """A warp: the destination is beyond the src's natural successor. Comparable keys
-        only (SMB world/stage tuples); non-ordinal keys (Zelda screens) are never warps."""
-        try:
-            return self.kind == "clear" and tuple(self.dst)[:2] > _next_stage(tuple(self.src))[:2]
-        except TypeError:
+        """A warp: the clear jumps MULTIPLE levels ahead (SMB's 1-2 → 4-1 warp zone), not the
+        normal +1 progression. Crossing a world boundary (stage 3 → next world's stage 0) is
+        ordinary, so a warp needs a ≥2-world jump, or a ≥2-stage jump within a world. Ordinal
+        (world, stage, ...) keys only; non-ordinal keys (Zelda screens) are never warps."""
+        if self.kind != "clear":
             return False
-
-
-def _next_stage(key: tuple) -> tuple:
-    """The natural successor of an ordinal (world, stage, ...) key — used to spot skips."""
-    if len(key) < 2 or not all(isinstance(v, int) for v in key[:2]):
-        raise TypeError("non-ordinal key")
-    return (key[0], key[1] + 1)
+        s, d = tuple(self.src), tuple(self.dst)
+        if not (len(s) >= 2 and len(d) >= 2
+                and all(isinstance(v, int) for v in (s[0], s[1], d[0], d[1]))):
+            return False
+        world_jump = d[0] - s[0]
+        stage_jump = d[1] - s[1]
+        return world_jump >= 2 or (world_jump == 0 and stage_jump >= 2)
 
 
 class RouteGraph:

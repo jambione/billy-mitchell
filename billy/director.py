@@ -94,6 +94,11 @@ class Director:
         self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
         self.tapes = tapes if tapes is not None else TapeLibrary()
         self.routes = RouteGraph()   # discovered level topology (clears/warps/screens)
+        # Reads the route graph to plan toward game completion (prefers discovered warps). The
+        # game may supply a progress rank for its own topology (SMB world/stage is the default).
+        from .strategist import RouteStrategist
+        rank = getattr(game, "route_rank", None)
+        self.strategist = RouteStrategist(self.routes, rank=rank) if rank else RouteStrategist(self.routes)
         self.skills = skills if skills is not None else SkillLibrary()  # cross-game transferable tactics
         # Optional ingested walkthrough (knowledge/guide.py): seeds search candidates and
         # informs the LLM prompt. Advice, not authority — everything it suggests is verified.
@@ -620,6 +625,16 @@ class Director:
         self._tape_entry_state = self.session.clone_state()
         return obs
 
+    def _log_objective(self, obs: Observation) -> None:
+        """Print the strategist's current objective when entering a level (once per entry).
+        A WARP objective means the known map has a discovered skip-ahead from here."""
+        try:
+            objective = self.strategist.objective(obs.level_key, obs.level_label)
+        except Exception:
+            return   # strategy is advice; never let it break the run
+        if objective.via_warp:
+            print(f"  [director] {objective.line()}")
+
     def _verify_tape(self, plan: Plan, level_key: tuple, min_frontier: int,
                      *, expect_clear: bool = True) -> bool:
         """Clone-check a stored tape before zero-search replay."""
@@ -918,6 +933,7 @@ class Director:
         self._reachback_miss.clear()
         obs = self._tape_begin_level(obs)
         tape_frontier = obs.progress
+        self._log_objective(obs)
 
         while frames <= config.MAX_ATTEMPT_FRAMES:
             # --- death: LEARN from it (search the approach for a survivor), then respawn -----
@@ -1005,6 +1021,7 @@ class Director:
                 last_snap_x = obs.progress   # x re-based in the new level — re-arm snapshots
                 obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
+                self._log_objective(obs)
                 if levels_cleared >= config.MAX_LEVELS_PER_ATTEMPT:
                     outcome = "clear"
                     self.session.send_plan(_IDLE)
@@ -1236,6 +1253,7 @@ class Director:
                         mem = self.memory.prompt_section() if self.memory else ""
                         if self.guide is not None:
                             mem += self.guide.prompt_section(self.game.guide_query(obs))
+                        mem += self.strategist.prompt_section(obs.level_key)
                         bd = billy.decide(obs, self.kb.retrieve(obs.summary,
                                                                 game=self._game_id()),
                                           list(self.recent), self.controller, memory=mem)
@@ -1260,6 +1278,7 @@ class Director:
                 mem = self.memory.prompt_section() if self.memory else ""
                 if self.guide is not None:
                     mem += self.guide.prompt_section(self.game.guide_query(obs))
+                mem += self.strategist.prompt_section(obs.level_key)
                 bd = billy.decide(obs, self.kb.retrieve(obs.summary, game=self._game_id()),
                                   list(self.recent), self.controller, memory=mem)
                 plan = bd.plan

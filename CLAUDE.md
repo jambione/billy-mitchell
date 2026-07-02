@@ -59,10 +59,14 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
 7. **LLM (Billy/Coach)** — only when search finds nothing / persona. Off the hot loop.
 
 Session-level: `knowledge/routes.py` records every observed transition into a persisted map
-(`data/routes.jsonl`; ahead-skipping edges = WARPs), and the furthest level-start checkpoint is
-saved to `data/checkpoints/<game>/` — `run.py --resume` continues the march there next session.
-Zelda's `progress` includes monotonic per-screen COMBAT credit (kills + room-clear) so fight
-demos/search bank on combat-walled screens.
+(`data/routes.jsonl`; multi-level-skip clears = WORLD WARPs, e.g. 1-2 → 4-1). `strategist.py`
+`RouteStrategist` DECIDES with it — plans the warp-preferring path to the furthest-known level,
+names the next objective (logged on entry, fed to the LLM). Warp preference comes from a
+per-game progress `rank` (SMB world/stage ordinal is the default; other games can supply
+`Game.route_rank` — else it degrades to frontier exploration). The furthest level-start
+checkpoint is saved to `data/checkpoints/<game>/` — `run.py --resume` continues the march there
+next session. Zelda's `progress` includes monotonic per-screen COMBAT credit (kills + room-clear)
+so fight demos/search bank on combat-walled screens.
 
 ## Invariants — do not break
 - **Exact-replay only.** The cache replays the *exact* button sequence from the same state. Embeddings

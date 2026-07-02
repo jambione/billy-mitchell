@@ -88,11 +88,15 @@ Advice flows down, verified truth flows up — the walkthrough says what to *try
   requests when stuck) and push-based (you grab the controller when you see him struggle). A live
   demo can span screens: each screen boundary banks the finished segment and you keep the
   controller — only a true level clear hands back to Billy.
-- **Route memory** (`knowledge/routes.py`) — every observed transition (level clear, screen/area
-  change) becomes an edge in a persisted map (`data/routes.jsonl`). A discovered edge that skips
-  ahead (SMB's warp zones) is flagged as a WARP — the shortcut list for routing toward game
-  completion. Paired with **frontier checkpoints** (`data/checkpoints/<game>/`): the furthest
-  level-start is saved to disk, and `--resume` continues the march there next session.
+- **Route memory + strategist** (`knowledge/routes.py`, `strategist.py`) — every observed
+  transition (level clear, screen/area change) becomes an edge in a persisted map
+  (`data/routes.jsonl`). A multi-level-skip clear (SMB's warp zones, e.g. 1-2 → 4-1) is flagged
+  as a WARP. The **RouteStrategist** plans over that map toward game completion, preferring warps
+  (fewer levels to the goal), names the next objective, and feeds the route plan to the LLM. It's
+  game-agnostic; goal-direction uses a per-game progress rank (SMB world/stage works out of the
+  box, other games can add a `route_rank`, else it falls back to frontier exploration). Paired
+  with **frontier checkpoints** (`data/checkpoints/<game>/`): the furthest level-start is saved to
+  disk, and `--resume` continues the march there next session.
 - **Shared platformer reflex** (`games/common/platformer.py`) — the whole side-scroller policy,
   parameterised by a per-game `PhysicsProfile` and LOGICAL buttons (A=jump, B=run) that each
   console's controller translates physically. **SMB2-Japan** plays with *zero new reflex code*, and

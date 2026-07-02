@@ -57,3 +57,13 @@ def test_corrupt_lines_skipped(tmp_path):
                     '{"missing": "fields"}\n')
     g = RouteGraph(path=path)
     assert len(g) == 1
+
+
+def test_world_rollover_is_not_a_warp(tmp_path):
+    """1-4 -> 2-1 is normal progression (stage 3 rolls to the next world), NOT a warp.
+    A warp is a multi-level skip like 1-2 -> 4-1."""
+    g = RouteGraph(path=tmp_path / "routes.jsonl")
+    g.record((0, 3, 4), (1, 0, 0), "clear", at=2429, dst_label="2-1")   # 1-4 -> 2-1 rollover
+    assert g.warps() == []
+    g.record((0, 1, 2), (3, 0, 0), "clear", at=3350, dst_label="4-1")   # real warp
+    assert len(g.warps()) == 1 and g.warps()[0].dst == (3, 0, 0)
