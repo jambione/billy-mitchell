@@ -312,6 +312,9 @@ class Director:
             print(f'  🎯 reachback: verified a banked long solution from '
                   f'{obs.level_label}@{obs.progress} (reach {reach}) — replaying')
             return cand
+        print(f'  🎯 reachback: candidate (banked reach {cand.reach_after}) failed verify '
+              f'from {obs.level_label}@{obs.progress} '
+              f'({"died" if not survived else f"stalled at {reach}"}) — blacklisted here')
         self._reachback_miss.add(bkey)
         return None
 

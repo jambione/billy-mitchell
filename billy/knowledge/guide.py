@@ -139,22 +139,46 @@ class GuideLibrary:
         self.path = Path(self.path)
         self._load()
 
-    def ingest(self, text: str, *, use_llm: bool = True) -> int:
-        """Parse a raw walkthrough into steps (LLM first, heuristic fallback), embed, save."""
-        steps: list[GuideStep] = []
+    def ingest(self, text: str, *, use_llm: bool = True, max_steps: int = 400) -> int:
+        """Parse a raw walkthrough into steps, embed, save.
+
+        MERGES both readers: the LLM extraction is clean but lossy (a failed chunk silently
+        drops its steps — the Zelda read lost 'head right 8 screens to the sea'), while the
+        heuristic scan is noisy but thorough. LLM steps come first; heuristic steps join
+        unless they near-duplicate one (word-overlap), so coverage never regresses below the
+        heuristic floor."""
+        llm_steps: list[GuideStep] = []
         if use_llm:
             try:
-                steps = llm_parse(text)
-                print(f"[guide] LLM extracted {len(steps)} steps")
+                llm_steps = llm_parse(text)
+                print(f"[guide] LLM extracted {len(llm_steps)} steps")
             except Exception as e:
-                print(f"[guide] LLM read unavailable ({type(e).__name__}) — heuristic parse")
-        if not steps:
-            steps = heuristic_parse(text)
-            print(f"[guide] heuristic parser extracted {len(steps)} steps")
-        for s in steps:
+                print(f"[guide] LLM read unavailable ({type(e).__name__}) — heuristic only")
+        heur = heuristic_parse(text)
+        print(f"[guide] heuristic parser extracted {len(heur)} steps")
+
+        def words(s: GuideStep) -> set:
+            return set(re.findall(r"[a-z']+", s.text.lower()))
+
+        steps = list(llm_steps)
+        keys = [words(s) for s in steps]
+        for h in heur:
+            hw = words(h)
+            if not hw:
+                continue
+            dup = any(len(hw & kw) / max(1, len(hw | kw)) >= 0.5 for kw in keys)
+            if not dup:
+                steps.append(h)
+                keys.append(hw)
+            if len(steps) >= max_steps:
+                break
+        for i, s in enumerate(steps):
+            s.order = i
             s.embedding = _safe_embed(s.text)
         self.steps = steps
         self._save()
+        print(f"[guide] merged guide: {len(steps)} steps "
+              f"({len(llm_steps)} LLM + {len(steps) - len(llm_steps)} heuristic-only)")
         return len(steps)
 
     def retrieve(self, summary: str, k: int = 3) -> list[GuideStep]:
