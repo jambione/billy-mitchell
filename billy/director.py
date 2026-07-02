@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import time
 from collections import deque
+from pathlib import Path
 
 from . import config, metrics
 from .abstractions import Game, Observation, Plan, Step, plan_frames
@@ -19,7 +20,7 @@ from .agents import billy, coach
 from .agents.rolling_memory import RollingGameMemory
 from .commentary import Commentator
 from .hazard_hooks import HazardHooks
-from .knowledge import KnowledgeBase, SolutionCache, SkillLibrary, TapeLibrary
+from .knowledge import KnowledgeBase, RouteGraph, SolutionCache, SkillLibrary, TapeLibrary
 from .knowledge.cache import bucket_of
 from .knowledge.tape import append_plan
 from .learning import LearningLedger, format_learning_line
@@ -43,10 +44,26 @@ def rollout_candidate(session, observe, reflex, game, plan: Plan,
     rationale: post-candidate settle budget, transition bonus, detour horizon)."""
     start = observe()
     start_level, base_x = start.level_key, start.progress
-    session.send_plan(plan)
-    obs = observe()
+    # Execute the candidate in short chunks so a MID-PLAN death or area transition is seen when
+    # it happens. A blind full-plan send scores the observation at plan END — by then a death's
+    # dying flags can have decayed through the level-reload frames, letting a plan that crossed
+    # a transition and died in the new area report "survived + advanced" (which is exactly how a
+    # poisoned exit-pipe plan got banked and replayed Billy into 1-3's first pit forever).
+    obs = start
+    advanced = False
+    for step in plan:
+        remaining = step.frames
+        while remaining > 0 and not advanced:
+            n = min(16, remaining)
+            session.send_plan([Step(n, step.buttons)])
+            remaining -= n
+            obs = observe()
+            if obs.dead:
+                return False, obs.progress, obs.progress, obs.elevation
+            advanced = game.search_area_advance(start_level, obs.level_key)
+        if advanced:
+            break   # verified up to the crossing; the tail is the NEXT area's problem
     reached = obs.progress
-    advanced = game.search_area_advance(start_level, obs.level_key)
     detour = obs.progress < base_x
     coasted = 0
     while coasted < settle and not obs.dead and not advanced:
@@ -76,6 +93,12 @@ class Director:
         self.kb = kb
         self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
         self.tapes = tapes if tapes is not None else TapeLibrary()
+        self.routes = RouteGraph()   # discovered level topology (clears/warps/screens)
+        # Reads the route graph to plan toward game completion (prefers discovered warps). The
+        # game may supply a progress rank for its own topology (SMB world/stage is the default).
+        from .strategist import RouteStrategist
+        rank = getattr(game, "route_rank", None)
+        self.strategist = RouteStrategist(self.routes, rank=rank) if rank else RouteStrategist(self.routes)
         self.skills = skills if skills is not None else SkillLibrary()  # cross-game transferable tactics
         # Optional ingested walkthrough (knowledge/guide.py): seeds search candidates and
         # informs the LLM prompt. Advice, not authority — everything it suggests is verified.
@@ -86,6 +109,7 @@ class Director:
         self._tape_mode = False
         self._learned_buckets: set = set()
         self._reachback_miss: set = set()   # per-attempt: buckets where reachback verify failed
+        self._reachback_reported: set = set()   # per-session: spots already reported (quiet logs)
         self._last_pit_death_x: int = 0
         # Optional hazard-scoped RL sub-policies: at a registered section they SEED micro-search with
         # a learned crossing candidate (verified+banked like any solution). None = pure reflex/search.
@@ -141,6 +165,10 @@ class Director:
     def _observe(self) -> Observation:
         st = self.session.read_state()
         return self.game.observe(st.frame, st.ram, getattr(st, "rgb", None))
+
+    def _game_id(self) -> str:
+        """Stable per-game id used to scope lessons/checkpoints (cli_name, else game name)."""
+        return str(getattr(self.game, "cli_name", "") or self.game.name)
 
     # --- micro-search: evaluate candidates on a CLONE so the live run never visibly rewinds ----
     _TRANSITION_BONUS = _TRANSITION_BONUS   # class alias (module constant is the source of truth)
@@ -227,14 +255,26 @@ class Director:
         mask is identical input frame-for-frame, so behaviour is unchanged — but the dense trail
         guarantees learn-from-death has a runway snapshot before the next death, even mid-jump."""
         obs = self._observe()
+        start_key = obs.level_key
+        executed: list[Step] = []
         for step in plan:
             remaining = step.frames
             while remaining > 0:
                 chunk = min(self.hooks.commit_chunk_size(obs, self._SNAP_CHUNK), remaining)
                 self.session.send_plan([Step(chunk, step.buttons)])
                 remaining -= chunk
+                executed.append(Step(chunk, step.buttons))
                 obs = self._observe()
                 if obs.dead:
+                    return obs, last_snap_x
+                if obs.level_key != start_key:
+                    # Level/area boundary crossed mid-plan. The tail past this point was never
+                    # verified (rollouts stop scoring at a transition) — do NOT replay it blind
+                    # into the new area. Return so the main loop handles the clear/screen change
+                    # (checkpoint, tape hand-off, fresh decisions). The executed prefix IS the
+                    # committed input, so it still extends the old level's tape.
+                    if record_tape and executed:
+                        append_plan(self._tape_record, executed)
                     return obs, last_snap_x
                 # Only snapshot ON-GROUND states: a cached solution keyed here is then replayed
                 # from the SAME reproducible state next pass (an airborne snapshot wouldn't match
@@ -248,8 +288,8 @@ class Director:
                         self._approach_trail.append(
                             (obs.progress, obs.elevation, obs.level_key, snap))
                     last_snap_x = obs.progress
-        if record_tape and plan:
-            append_plan(self._tape_record, plan)
+        if record_tape and executed:
+            append_plan(self._tape_record, executed)
         return obs, last_snap_x
 
     def _verify(self, plan: Plan, horizon: int = config.LEARN_HORIZON_FRAMES) -> bool:
@@ -312,9 +352,11 @@ class Director:
             print(f'  🎯 reachback: verified a banked long solution from '
                   f'{obs.level_label}@{obs.progress} (reach {reach}) — replaying')
             return cand
-        print(f'  🎯 reachback: candidate (banked reach {cand.reach_after}) failed verify '
-              f'from {obs.level_label}@{obs.progress} '
-              f'({"died" if not survived else f"stalled at {reach}"}) — blacklisted here')
+        if bkey not in self._reachback_reported:   # once per spot per session, not per attempt
+            print(f'  🎯 reachback: candidate (banked reach {cand.reach_after}) failed verify '
+                  f'from {obs.level_label}@{obs.progress} '
+                  f'({"died" if not survived else f"stalled at {reach}"}) — blacklisted here')
+            self._reachback_reported.add(bkey)
         self._reachback_miss.add(bkey)
         return None
 
@@ -332,7 +374,8 @@ class Director:
                 obs.raw, profile, obs.summary,
                 console=getattr(self.game.system, "name", "")))
         if self.guide is not None:
-            cands.extend(self.guide.direction_candidates(obs.summary, self.controller))
+            cands.extend(self.guide.direction_candidates(self.game.guide_query(obs),
+                                                         self.controller))
         return cands
 
     def _learn_from_death(self, safe_history, death_x: int,
@@ -442,8 +485,11 @@ class Director:
         """Live demo: the human pressed T in the watch window — hand them the controller from
         the EXACT live state, record their input, and on hand-back (ENTER/T) bank the segment
         if it survived and advanced. The live run IS the verification: the input just executed
-        on the real deterministic state, so survive+advance needs no re-simulation. ESC rewinds
-        to the takeover point and discards; a death falls through to learn-from-death as usual.
+        on the real deterministic state, so survive+advance needs no re-simulation. A demo that
+        crosses a SCREEN boundary (Zelda border, SMB pipe) banks that segment and keeps the
+        human driving — only a true level clear hands back automatically. ESC rewinds to the
+        current segment's start and discards it (earlier segments stay banked); a death falls
+        through to learn-from-death as usual.
         """
         from .teleop import TeleopRecorder
 
@@ -464,6 +510,7 @@ class Director:
         frames = 0
         aborted = False
         cur = obs
+        seg_hi = start.progress
         while frames < self._TAKEOVER_MAX_FRAMES:
             mask, fin, ab = session.teleop_poll()
             if fin or session.takeover_requested():
@@ -477,8 +524,26 @@ class Director:
             cur = self._observe()
             if cur.dead:
                 break
-            if cur.level_key[:2] != start.level_key[:2]:
+            if self.game.level_cleared(start.level_key, cur.level_key):
                 break   # cleared into the next level — hand back at the natural boundary
+            if self.game.screen_changed(start.level_key, cur.level_key):
+                # New screen/area mid-demo (Zelda border, SMB pipe). Bank the finished segment,
+                # roll the tape over to the new screen, and KEEP the human driving — handing
+                # back here would drop Billy exactly at the hazard the demo is teaching (a
+                # Zelda demo could otherwise never span the screen with the fight on it).
+                self._bank_takeover_segment(start, rec.plan(), crossed=True,
+                                            end_progress=seg_hi, attempt=attempt)
+                self._tape_finish_level(seg_hi, cleared=True)
+                self._tape_key = cur.level_key
+                self._tape_record = []
+                # Demo-discovered topology counts: the human just proved this transition.
+                self.routes.record(start.level_key, cur.level_key, "screen",
+                                   at=seg_hi, dst_label=cur.level_label)
+                start, start_state = cur, session.clone_state()
+                rec = TeleopRecorder()
+                seg_hi = cur.progress
+                continue
+            seg_hi = max(seg_hi, cur.progress)
         session.set_overlay(None)
         session.teleop_reset()
         plan = rec.plan()
@@ -494,44 +559,81 @@ class Director:
                   f'nothing banked, Billy learns from it as usual')
             return cur, frames
 
-        gained = cur.progress - start.progress
-        crossed = cur.level_key[:2] != start.level_key[:2]
-        if plan and (crossed or gained > self._MIN_PROGRESS_PX):
-            reach = start.progress + self._TRANSITION_BONUS if crossed else cur.progress
-            self._bank_solution(start.level_key, start.progress, plan, reach,
-                                y=start.elevation, force=True, source="demo_live",
-                                summary=start.summary, level_label=start.level_label)
-            # Keep the level tape contiguous: the human's frames ARE committed live input.
-            append_plan(self._tape_record, plan)
-            print(f'  [attempt {attempt}] 🧑✓ human segment BANKED '
-                  f'{start.level_label}@{start.progress} (+{gained}px'
-                  f'{", crossed" if crossed else ""}) — replays forever; Billy resumes')
-        else:
-            print(f'  [attempt {attempt}]   human segment made no progress '
-                  f'(+{gained}px) — nothing banked, Billy resumes')
+        crossed = cur.level_key != start.level_key
+        self._bank_takeover_segment(start, plan, crossed=crossed,
+                                    end_progress=seg_hi if crossed else cur.progress,
+                                    attempt=attempt)
         if getattr(cur.raw, "on_ground", True):
             safe_history.append((cur.progress, cur.elevation, cur.level_key,
                                  session.clone_state()))
         return cur, frames
 
-    def _tape_begin_level(self, obs: Observation) -> None:
-        """Start recording a level trajectory; try a verified tape replay if one exists."""
+    def _bank_takeover_segment(self, seg_start: Observation, plan: Plan, *, crossed: bool,
+                               end_progress: int, attempt: int) -> None:
+        """Bank one finished human segment. The live run IS the verification: this input just
+        executed on the real deterministic state, so survive+advance needs no re-simulation."""
+        if plan:
+            # Keep the level tape contiguous: the human's frames ARE committed live input.
+            append_plan(self._tape_record, plan)
+        gained = end_progress - seg_start.progress
+        if plan and (crossed or gained > self._MIN_PROGRESS_PX):
+            reach = (seg_start.progress + self._TRANSITION_BONUS if crossed
+                     else end_progress)
+            self._bank_solution(seg_start.level_key, seg_start.progress, plan, reach,
+                                y=seg_start.elevation, force=True, source="demo_live",
+                                summary=seg_start.summary, level_label=seg_start.level_label)
+            print(f'  [attempt {attempt}] 🧑✓ human segment BANKED '
+                  f'{seg_start.level_label}@{seg_start.progress} (+{gained}px'
+                  f'{", crossed" if crossed else ""}) — replays forever')
+        else:
+            print(f'  [attempt {attempt}]   human segment made no progress '
+                  f'(+{gained}px) — nothing banked')
+
+    def _tape_begin_level(self, obs: Observation) -> Observation:
+        """Start recording a level trajectory; try a verified tape replay if one exists.
+
+        Returns the current observation — which DIFFERS from the argument when an anchored
+        tape restored its entry savestate, so callers must use the return value."""
         self._tape_key = obs.level_key
         self._tape_record = []
         self._tape_mode = False
         self._tape_replay = None
         entry = self.tapes.get(obs.level_key)
         if entry:
+            # Entry-state anchor: a whole-level tape only reproduces a MOVING hazard (1-3's
+            # lift) if it starts from the exact state that set the hazard's phase. Restore that
+            # savestate before verify/replay — it's the level start, so the snap is imperceptible
+            # (Mario is at the entry either way) and it makes the lift deterministic.
+            if entry.entry_state is not None:
+                self.session.restore(entry.entry_state)
+                self.session.save_state(0)   # respawns this life align to the anchored entry
+                obs = self._observe()
+                self._tape_key = obs.level_key
             if self._verify_tape(entry.plan, obs.level_key, entry.frontier,
                                  expect_clear=entry.clears_level):
                 self._tape_replay = [Step(s.frames, s.buttons) for s in entry.plan]
                 self._tape_mode = True
                 self.tapes.record_hit(obs.level_key)
-            else:
+            elif entry.entry_state is None:
                 # A tape that keeps failing verify no longer matches reality — drop it after
                 # FAIL_LIMIT misses so an honest new recording can take its slot (corrupt or
-                # drifted tapes with inflated frontiers must not squat forever).
+                # drifted tapes with inflated frontiers must not squat forever). An ANCHORED tape
+                # is never dropped on a verify miss: it replays from its own saved entry, so a
+                # miss means the live approach differed, not that the tape is wrong.
                 self.tapes.record_fail(obs.level_key)
+        # Remember the entry state so a self-recorded clear of this level anchors future replays.
+        self._tape_entry_state = self.session.clone_state()
+        return obs
+
+    def _log_objective(self, obs: Observation) -> None:
+        """Print the strategist's current objective when entering a level (once per entry).
+        A WARP objective means the known map has a discovered skip-ahead from here."""
+        try:
+            objective = self.strategist.objective(obs.level_key, obs.level_label)
+        except Exception:
+            return   # strategy is advice; never let it break the run
+        if objective.via_warp:
+            print(f"  [director] {objective.line()}")
 
     def _verify_tape(self, plan: Plan, level_key: tuple, min_frontier: int,
                      *, expect_clear: bool = True) -> bool:
@@ -584,11 +686,18 @@ class Director:
                 self._tape_replay[0] = Step(step.frames - take, step.buttons)
         return chunk or None
 
-    def _tape_finish_level(self, frontier: int, *, cleared: bool) -> None:
-        """Persist a recorded trajectory when a level ends well."""
+    def _tape_finish_level(self, frontier: int, *, cleared: bool,
+                           anchor: bool = False) -> None:
+        """Persist a recorded trajectory when a level ends well.
+
+        `anchor` (only at a true world/stage clear) stores the entry savestate with the tape so
+        its replay reproduces a moving hazard (the lift) deterministically. Screen/area-change
+        tapes pass anchor=False — restoring their entry mid-level would snap the player."""
         if not self._tape_record:
             return
-        self.tapes.put(self._tape_key, self._tape_record, frontier, clears_level=cleared)
+        entry_state = getattr(self, "_tape_entry_state", None) if (cleared and anchor) else None
+        self.tapes.put(self._tape_key, self._tape_record, frontier,
+                       clears_level=cleared, entry_state=entry_state)
         self._tape_record = []
 
     # --- boot ---------------------------------------------------------------------------
@@ -605,6 +714,74 @@ class Director:
                   "ESC discards).")
         print(f'  🎤 Billy: "{self.commentator.event_line("start")}"')
         return start
+
+    # --- cross-session frontier: persist the furthest level-start checkpoint -------------
+    def _checkpoint_ready(self, obs: Observation) -> bool:
+        """On solid ground near the level start. The window is wide enough to catch a
+        PIPE-entered level (Mario emerges at x≈110+ and the first commit can land past 120 —
+        1-3 was never checkpointed, so every death respawned levels back) while staying near
+        the start so tapes still verify from the respawn state."""
+        return getattr(obs.raw, "on_ground", True) and 16 < obs.progress < 240
+
+    def _checkpoint_now(self) -> Observation:
+        """Save slot 0 (the respawn/attempt start) here and persist the cross-session copy."""
+        self.session.save_state(0)
+        obs = self._observe()
+        print(f"  [director] checkpoint at {obs.level_label} ({obs.progress})")
+        self._persist_checkpoint(obs)
+        return obs
+
+    def _checkpoint_paths(self) -> tuple:
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in self._game_id())
+        base = config.CHECKPOINTS_DIR / safe
+        return base, base / "furthest.json"
+
+    def _persist_checkpoint(self, obs: Observation) -> None:
+        """Save the furthest level-start to disk so the NEXT SESSION can resume the march
+        toward game completion instead of replaying every solved level from the top.
+        Only ordinal level keys ratchet (SMB world/stage); non-comparable keys are skipped."""
+        import json
+        base, meta_path = self._checkpoint_paths()
+        try:
+            key = list(obs.level_key)
+            if meta_path.exists():
+                prev = json.loads(meta_path.read_text())
+                try:
+                    if not key > list(prev.get("key", [])):
+                        return   # not beyond the recorded frontier
+                except TypeError:
+                    return       # mixed/non-ordinal keys — no meaningful "furthest"
+            base.mkdir(parents=True, exist_ok=True)
+            state_path = base / f"{obs.level_label.replace('-', '_').replace(' ', '_')}.state"
+            state_path.write_bytes(self.session.clone_state())
+            meta_path.write_text(json.dumps({"key": key, "label": obs.level_label,
+                                             "state": str(state_path),
+                                             "progress": obs.progress}))
+            print(f"  [director] 🚩 frontier checkpoint saved: {obs.level_label} "
+                  f"(next session can --resume here)")
+        except Exception as e:   # persistence must never kill the run
+            print(f"  [director] checkpoint persist failed: {e}")
+
+    def resume_from_checkpoint(self) -> str | None:
+        """Load the persisted furthest level-start into slot 0 (call after boot). Returns the
+        resumed level label, or None when there is nothing to resume."""
+        import json
+        _, meta_path = self._checkpoint_paths()
+        if not meta_path.exists():
+            return None
+        try:
+            meta = json.loads(meta_path.read_text())
+            snap = Path(meta["state"]).read_bytes()
+        except Exception as e:
+            print(f"[director] resume checkpoint unreadable ({e}) — starting fresh")
+            return None
+        self.session.restore(snap)
+        self.session.save_state(0)      # attempts (and respawns) now start here
+        obs = self._observe()
+        self.cur_level = obs.level_key
+        print(f"[director] ⏩ resumed at the recorded frontier: {obs.level_label} "
+              f"(progress {obs.progress})")
+        return obs.level_label
 
     # --- one attempt (a continuous playthrough across levels) ---------------------------
     def capture_savestate_from(self, state_path: str, level_label: str, x_min: int, x_max: int,
@@ -754,8 +931,9 @@ class Director:
         last_snap_x = obs.progress
         self._learned_buckets.clear()
         self._reachback_miss.clear()
-        self._tape_begin_level(obs)
+        obs = self._tape_begin_level(obs)
         tape_frontier = obs.progress
+        self._log_objective(obs)
 
         while frames <= config.MAX_ATTEMPT_FRAMES:
             # --- death: LEARN from it (search the approach for a survivor), then respawn -----
@@ -794,9 +972,19 @@ class Director:
                 if self.memory is not None:
                     self.memory.reset()
                 seg_best, need_checkpoint = obs.progress, False
+                # Respawn is a REWIND, not a transition: sync cur_level so the loop doesn't see
+                # a phantom screen change (which printed a bogus 🗺️ line and polluted the route
+                # graph with checkpoint→level edges that aren't topology).
+                self.cur_level = obs.level_key
+                # Re-base the snapshot throttle: progress just RESET to the checkpoint. Leaving it
+                # at the pre-death value starves safe_history of any snapshot before the death spot
+                # on this life — learn-from-death would then have no same-level runway to search.
+                last_snap_x = obs.progress
+                safe_history.append((obs.progress, obs.elevation, obs.level_key,
+                                     self.session.clone_state()))
                 self._learned_buckets.clear()
                 self._last_pit_death_x = 0
-                self._tape_begin_level(obs)
+                obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
                 continue
 
@@ -805,7 +993,9 @@ class Director:
             # own bucket region), but an internal area boundary inside a level — e.g. 1-2's joined
             # areas — is NOT a level clear and must not over-count or trip the per-attempt cap.
             if self.game.level_cleared(self.cur_level, obs.level_key):
-                self._tape_finish_level(max(tape_frontier, seg_best), cleared=True)
+                self._tape_finish_level(max(tape_frontier, seg_best), cleared=True, anchor=True)
+                self.routes.record(self.cur_level, obs.level_key, "clear",
+                                   at=max(tape_frontier, seg_best), dst_label=obs.level_label)
                 levels_cleared += 1
                 furthest = obs.level_label
                 clear_frames = max(1, frames - level_start_frame)
@@ -828,8 +1018,10 @@ class Director:
                 self.cur_level = obs.level_key
                 self._seg_level_key = obs.level_key[:2]
                 seg_best, need_checkpoint = obs.progress, True
-                self._tape_begin_level(obs)
+                last_snap_x = obs.progress   # x re-based in the new level — re-arm snapshots
+                obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
+                self._log_objective(obs)
                 if levels_cleared >= config.MAX_LEVELS_PER_ATTEMPT:
                     outcome = "clear"
                     self.session.send_plan(_IDLE)
@@ -847,9 +1039,12 @@ class Director:
                 # (cleared=True: it ends in a verified transition) so screen-segment tapes chain
                 # into a whole-level, then whole-game, fast-forward.
                 self._tape_finish_level(tape_frontier, cleared=True)
+                self.routes.record(self.cur_level, obs.level_key, "screen",
+                                   at=max(tape_frontier, seg_best), dst_label=obs.level_label)
                 self.cur_level = obs.level_key
-                self._tape_begin_level(obs)
+                obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
+                last_snap_x = obs.progress   # x re-based in the new area — re-arm snapshots
                 print(f'  [attempt {n}] 🗺️ screen → {obs.level_label} '
                       f'progress={obs.progress}')
 
@@ -881,6 +1076,14 @@ class Director:
                     seg_best = max(seg_best, obs.progress)
                     tape_frontier = max(tape_frontier, obs.progress)
                     final_score = max(final_score, obs.score)
+                    # Tape-carried level entries must checkpoint too: with whole levels riding
+                    # tapes, this branch `continue`s every iteration — without the gate here a
+                    # taped level NEVER checkpoints and deaths respawn levels back.
+                    if need_checkpoint and self._checkpoint_ready(obs):
+                        obs = self._checkpoint_now()
+                        need_checkpoint = False
+                        seg_best = obs.progress
+                        furthest = obs.level_label
                     continue
                 self._tape_mode = False
 
@@ -1049,8 +1252,10 @@ class Director:
                         # lets an LLM-cracked wall (e.g. early 1-2) actually compound.
                         mem = self.memory.prompt_section() if self.memory else ""
                         if self.guide is not None:
-                            mem += self.guide.prompt_section(obs.summary)
-                        bd = billy.decide(obs, self.kb.retrieve(obs.summary),
+                            mem += self.guide.prompt_section(self.game.guide_query(obs))
+                        mem += self.strategist.prompt_section(obs.level_key)
+                        bd = billy.decide(obs, self.kb.retrieve(obs.summary,
+                                                                game=self._game_id()),
                                           list(self.recent), self.controller, memory=mem)
                         plan = bd.plan
                         billy_calls += 1
@@ -1072,9 +1277,10 @@ class Director:
                 # Non-danger escalation (stuck, etc.): consult Billy with KB lessons + guide.
                 mem = self.memory.prompt_section() if self.memory else ""
                 if self.guide is not None:
-                    mem += self.guide.prompt_section(obs.summary)
-                bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent),
-                                  self.controller, memory=mem)
+                    mem += self.guide.prompt_section(self.game.guide_query(obs))
+                mem += self.strategist.prompt_section(obs.level_key)
+                bd = billy.decide(obs, self.kb.retrieve(obs.summary, game=self._game_id()),
+                                  list(self.recent), self.controller, memory=mem)
                 plan = bd.plan
                 billy_calls += 1
                 action_note = f"BILLY {self._label(plan)}"
@@ -1111,13 +1317,11 @@ class Director:
             if frames_to_frontier == 0 and self._prev_best_x > 0 and obs.progress >= self._prev_best_x:
                 frames_to_frontier = frames   # re-reached last attempt's furthest point
 
-            if need_checkpoint and getattr(obs.raw, "on_ground", True) and 16 < obs.progress < 120:
-                self.session.save_state(0)
-                obs = self._observe()
+            if need_checkpoint and self._checkpoint_ready(obs):
+                obs = self._checkpoint_now()
                 need_checkpoint = False
                 seg_best = obs.progress
                 furthest = obs.level_label
-                print(f"  [director] checkpoint at {obs.level_label} ({obs.progress})")
 
             quip = self.commentator.observe(obs.raw)
             if quip:
@@ -1230,7 +1434,8 @@ class Director:
         mem = self.memory.prompt_section() if self.memory else ""
         lesson = coach.reflect(trajectory, outcome, level_label, memory=mem)
         if lesson:
-            self.kb.add(lesson.situation, lesson.tactic, lesson.outcome, level_label)
+            self.kb.add(lesson.situation, lesson.tactic, lesson.outcome, level_label,
+                        game=self._game_id())
             print(f"  [coach] lesson: {lesson.situation} -> {lesson.tactic}")
 
     def _label(self, plan: Plan) -> str:
@@ -1238,10 +1443,12 @@ class Director:
         return "[" + ", ".join(f"{p} x{s.frames}" for p, s in zip(parts, plan)) + "]"
 
     # --- the session --------------------------------------------------------------------
-    def run_session(self, attempts: int) -> list[metrics.AttemptResult]:
+    def run_session(self, attempts: int, resume: bool = False) -> list[metrics.AttemptResult]:
         self.session.reset()
         self.session.wait_until_live()
         self.boot()
+        if resume:
+            self.resume_from_checkpoint()
         results = []
         try:
             for n in range(1, attempts + 1):

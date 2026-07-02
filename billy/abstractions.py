@@ -158,6 +158,15 @@ class Game(ABC):
         from .hazard_hooks import null_hooks
         return null_hooks()
 
+    def guide_query(self, obs: "Observation") -> str:
+        """Text used to retrieve walkthrough steps for the current situation.
+
+        Defaults to the LLM summary, but summaries are telemetry ("#115 link=(120,141)
+        hearts=2/3") while walkthroughs are prose ("kill all the Stalfos, one drops a key") —
+        cosine retrieval needs shared VOCABULARY. Games override this to speak walkthrough
+        language (level names, enemy words, objectives) so the right steps surface."""
+        return obs.summary
+
     def level_cleared(self, prev_key: tuple, new_key: tuple) -> bool:
         """True when the player finished a major stage (SMB world-stage, Zelda dungeon, etc.).
 

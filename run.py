@@ -36,6 +36,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="skip walkthrough ingestion/usage (walkthrough/<SYSTEM>/<game>)")
     p.add_argument("--fresh", action="store_true",
                    help="wipe learned lessons, solution cache AND skills before starting")
+    p.add_argument("--resume", action="store_true",
+                   help="start at the furthest level-start checkpoint saved by a previous "
+                        "session (the march toward game completion continues instead of "
+                        "replaying every solved level from 1-1)")
     p.add_argument("--rl", metavar="MODEL", default="",
                    help="use a trained PPO policy (a .zip from train_rl.py) as the reflex tier; "
                         "the hand-crafted reflex remains the fallback at hazards")
@@ -83,8 +87,13 @@ def main(argv: list[str] | None = None) -> int:
         from billy.rl.learned_reflex import LearnedReflex
         director.reflex = LearnedReflex(args.rl, fallback=director.reflex)
     print(f"[run] {game.name} on {game.system.name} (in-process stable-retro).")
+    if not args.resume:
+        _, meta = director._checkpoint_paths()
+        if meta.exists():
+            print("[run] a frontier checkpoint exists — add --resume to continue the march "
+                  "toward game completion from there.")
     try:
-        director.run_session(args.attempts)
+        director.run_session(args.attempts, resume=args.resume)
     except BootError as e:
         print("[error]", e)
         return 1
@@ -94,6 +103,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\n[run] interrupted — Billy demands a rematch.")
         return 130
+    finally:
+        if len(director.routes):
+            print(f"[routes] discovered map ({len(director.routes)} edges):\n"
+                  f"{director.routes.describe()}")
     return 0
 
 

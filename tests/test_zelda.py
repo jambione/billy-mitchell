@@ -393,3 +393,79 @@ def test_zelda_boots_and_advances():
     from billy.games.zelda.reflex import ZeldaReflex
     assert isinstance(game.make_reflex(), ZeldaReflex)
     session.close()
+
+def test_combat_credit_banks_kills_and_room_clear():
+    """Fighting must BE progress: kills and clearing a populated screen raise progress even
+    though Link's position never changes — this is what lets a human fight demo bank and
+    learn-from-death optimise on combat-walled screens (the #121 wall)."""
+    game = ZeldaGame()
+
+    def ram_with_enemies(n: int) -> bytes:
+        ram = bytearray(0x800)
+        ram[112], ram[132] = 120, 141        # Link fixed in place the whole fight
+        ram[18], ram[16], ram[235] = 5, 0, 121
+        ram[1647] = 0x22
+        ram[1569] = 121
+        for i in range(n):
+            ram[848 + i] = 0x0B              # live enemy slots
+            ram[113 + i] = 80 + 16 * i
+            ram[133 + i] = 120
+        return bytes(ram)
+
+    three = game.observe(0, ram_with_enemies(3))
+    one_killed = game.observe(1, ram_with_enemies(2))
+    assert one_killed.progress >= three.progress + ZeldaGame.KILL_CREDIT
+    cleared = game.observe(2, ram_with_enemies(0))
+    assert cleared.progress >= one_killed.progress + ZeldaGame.KILL_CREDIT + \
+        ZeldaGame.ROOM_CLEAR_BONUS - ZeldaGame.KILL_CREDIT  # 3rd kill + clear bonus
+    # Monotone: respawn-flicker back to 1 enemy must not shrink progress.
+    flicker = game.observe(3, ram_with_enemies(1))
+    assert flicker.progress == cleared.progress
+
+
+def test_combat_credit_resets_on_new_screen():
+    game = ZeldaGame()
+
+    def ram_at(screen: int, enemies: int) -> bytes:
+        ram = bytearray(0x800)
+        ram[112], ram[132] = 120, 141
+        ram[18], ram[16], ram[235] = 5, 0, screen
+        ram[1647] = 0x22
+        ram[1569] = screen
+        for i in range(enemies):
+            ram[848 + i] = 0x0B
+            ram[113 + i] = 80 + 16 * i
+            ram[133 + i] = 120
+        return bytes(ram)
+
+    game.observe(0, ram_at(121, 3))
+    game.observe(1, ram_at(121, 0))          # cleared screen 121
+    fresh = game.observe(2, ram_at(122, 4))  # walk into a NEW populated screen
+    # No stale clear-bonus or kill credit may leak into the new screen's baseline.
+    assert fresh.raw.enemy_count() == 4
+    assert game._kills_credit == 0 and game._screen_enemy_hi == 4
+
+
+def test_guide_query_speaks_walkthrough_language_in_dungeons():
+    """Retrieval needs shared vocabulary: inside a dungeon the query must say what the FAQ
+    says ("Level One", "kill all the enemies", "drop a key"), not just telemetry."""
+    game = ZeldaGame()
+    ram = bytearray(0x800)
+    ram[112], ram[132] = 120, 141
+    ram[18], ram[16], ram[235] = 9, 1, 114     # dungeon mode, level 1, room 114
+    ram[1647] = 0x22
+    for i in range(3):
+        ram[848 + i] = 0x2A
+        ram[113 + i] = 80 + 16 * i
+        ram[133 + i] = 120
+    obs = game.observe(0, bytes(ram))
+    q = game.guide_query(obs)
+    assert "Level One" in q and "kill all the enemies" in q and "drop a key" in q
+    assert obs.summary in q                    # telemetry still included for tie-breaks
+    # Overworld keeps the plain summary (overworld retrieval already worked).
+    ow = bytearray(0x800)
+    ow[112], ow[132] = 120, 141
+    ow[18], ow[16], ow[235] = 5, 0, 119
+    ow[1647] = 0x22
+    obs_ow = game.observe(1, bytes(ow))
+    assert game.guide_query(obs_ow) == obs_ow.summary

@@ -74,7 +74,10 @@ Advice flows down, verified truth flows up — the walkthrough says what to *try
   is **game-agnostic**.
 - **Tapes** (`knowledge/tape.py`) — whole-trajectory input streams per level/screen. A verified tape
   re-clears a level in wall-clock seconds with zero search; tapes self-heal (repeated verify
-  failures drop a stale tape so an honest one takes the slot).
+  failures drop a stale tape so an honest one takes the slot). A clearing tape can carry an
+  **entry-state anchor** — the savestate it was recorded from, restored at level begin — so a level
+  with a *moving* hazard (1-3's lift, whose phase is set at level load) replays deterministically.
+  This is what lets Billy march past 1-3 into World 2.
 - **Skill library** (`knowledge/skills.py` + `knowledge/distill.py`) — *abstract* tactics carried as
   embeddings, **auto-distilled** from every significant banked win and human demo. On a new game the
   cache is empty, but skills retrieved by situation-similarity **seed the search** with
@@ -82,7 +85,18 @@ Advice flows down, verified truth flows up — the walkthrough says what to *try
   can't cause a wrong action.
 - **Human demos** (`teleop.py`, live **T** takeover) — one playthrough of a wall becomes a cache
   entry + tape segment + distilled skill + BC warm-start for RL training. Pull-based (Billy files
-  requests when stuck) and push-based (you grab the controller when you see him struggle).
+  requests when stuck) and push-based (you grab the controller when you see him struggle). A live
+  demo can span screens: each screen boundary banks the finished segment and you keep the
+  controller — only a true level clear hands back to Billy.
+- **Route memory + strategist** (`knowledge/routes.py`, `strategist.py`) — every observed
+  transition (level clear, screen/area change) becomes an edge in a persisted map
+  (`data/routes.jsonl`). A multi-level-skip clear (SMB's warp zones, e.g. 1-2 → 4-1) is flagged
+  as a WARP. The **RouteStrategist** plans over that map toward game completion, preferring warps
+  (fewer levels to the goal), names the next objective, and feeds the route plan to the LLM. It's
+  game-agnostic; goal-direction uses a per-game progress rank (SMB world/stage works out of the
+  box, other games can add a `route_rank`, else it falls back to frontier exploration). Paired
+  with **frontier checkpoints** (`data/checkpoints/<game>/`): the furthest level-start is saved to
+  disk, and `--resume` continues the march there next session.
 - **Shared platformer reflex** (`games/common/platformer.py`) — the whole side-scroller policy,
   parameterised by a per-game `PhysicsProfile` and LOGICAL buttons (A=jump, B=run) that each
   console's controller translates physically. **SMB2-Japan** plays with *zero new reflex code*, and
@@ -145,6 +159,7 @@ BILLY_PARALLEL_SEARCH=4 BILLY_HEADLESS=1 .venv/bin/python run.py --attempts 6 --
 | `--rl-sections` | Enable hazard-scoped RL sub-policies; they seed micro-search with a learned crossing that search verifies and the cache banks. Needs a trained model under `data/rl/` (see below). |
 | `--rl MODEL` | Use a whole-level PPO policy (a `.zip` from `train_rl.py`) as the reflex tier; the hand-crafted reflex stays the fallback at hazards. |
 | `--seed-skills` | Seed the SkillLibrary with SMB's transferable tactics (cross-game carry-forward). |
+| `--resume` | Start at the furthest level-start checkpoint saved by a previous session (`data/checkpoints/<game>/`) — the march toward game completion continues instead of replaying every solved level from the top. |
 | `--fresh` | Wipe learned solutions, skills, and lessons before starting. |
 
 ### Environment knobs

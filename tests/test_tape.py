@@ -108,3 +108,36 @@ def test_tape_consume_preserves_input_stream():
         for s in chunk:
             rec.record(s.buttons, s.frames)
     assert rec.plan() == plan
+
+def test_entry_state_anchor_roundtrips(tmp_path):
+    """A clearing tape can carry its entry savestate (sidecar file) so replay reproduces a
+    moving hazard (1-3's lift) deterministically. It must survive a save/reload."""
+    lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    lk = (0, 2, 3)
+    plan = [Step(50, controller.RIGHT)]
+    state = b"\x00\x01\x02SAVESTATE\xff" * 4
+    lib.put(lk, plan, frontier=2514, clears_level=True, entry_state=state)
+    # sidecar written, JSONL references it
+    assert (tmp_path / "tape_states" / "0_2_3.state").exists()
+    reloaded = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    e = reloaded.get(lk)
+    assert e is not None and e.entry_state == state
+
+
+def test_extension_keeps_the_anchor(tmp_path):
+    """A self-recorded extension that doesn't re-supply an anchor must keep the demo's."""
+    lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    lk = (0, 2, 3)
+    state = b"ANCHOR" * 8
+    lib.put(lk, [Step(50, controller.RIGHT)], frontier=800, clears_level=True, entry_state=state)
+    # a later, further-reaching clear with no explicit anchor keeps the original
+    lib.put(lk, [Step(60, controller.RIGHT)], frontier=2514, clears_level=True)
+    assert lib.get(lk).entry_state == state
+
+
+def test_unanchored_partial_tape_has_no_state(tmp_path):
+    lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    lk = (0, 0, 0)
+    lib.put(lk, [Step(50, controller.RIGHT)], frontier=1200, clears_level=False)
+    assert lib.get(lk).entry_state is None
+    assert not (tmp_path / "tape_states").exists()

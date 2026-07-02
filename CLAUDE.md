@@ -33,7 +33,11 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
 2. **Tapes** — `knowledge/tape.py`; whole-trajectory input streams per level/screen, tape-first replay
    after a clone-verify (`tape%` column). Tapes EXTEND when exhausted (replayed chunks re-seed the
    recording — never replace a tape with a suffix), chain across screens, and persist partials to the
-   frontier on a timed-out-alive attempt.
+   frontier on a timed-out-alive attempt. A clearing tape may carry an **entry-state anchor**
+   (`entry_state` sidecar) restored at level begin — this is what makes a MOVING hazard (1-3's lift,
+   phase-set at level load) reproduce: the input stream only replays from that exact state. Anchored
+   tapes are never dropped on a verify miss (a miss means the live approach differed, not that the
+   tape is wrong). This cleared 1-3 → Billy now marches into World 2.
 3. **SolutionCache** — `knowledge/cache.py`; exact verified sequences keyed `(level_key, x_bucket)`.
    The compounding memory. Persisted tiny (button steps only) to `data/solutions.jsonl`.
    **Reachback**: on a miss (or weak hit), a HIGH-reach entry a few buckets behind is clone-verified
@@ -54,6 +58,16 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
    + LLM prompt context. Advice only, never authority.
 7. **LLM (Billy/Coach)** — only when search finds nothing / persona. Off the hot loop.
 
+Session-level: `knowledge/routes.py` records every observed transition into a persisted map
+(`data/routes.jsonl`; multi-level-skip clears = WORLD WARPs, e.g. 1-2 → 4-1). `strategist.py`
+`RouteStrategist` DECIDES with it — plans the warp-preferring path to the furthest-known level,
+names the next objective (logged on entry, fed to the LLM). Warp preference comes from a
+per-game progress `rank` (SMB world/stage ordinal is the default; other games can supply
+`Game.route_rank` — else it degrades to frontier exploration). The furthest level-start
+checkpoint is saved to `data/checkpoints/<game>/` — `run.py --resume` continues the march there
+next session. Zelda's `progress` includes monotonic per-screen COMBAT credit (kills + room-clear)
+so fight demos/search bank on combat-walled screens.
+
 ## Invariants — do not break
 - **Exact-replay only.** The cache replays the *exact* button sequence from the same state. Embeddings
   (Skills/KB) may **seed search candidates**, but must **never** drive a blind replay (fuzzy match →
@@ -63,14 +77,21 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
 - **Rollout `settle` is a POST-candidate budget**, not a total. (The Phase-0 bug: a ~50-frame jump
   consumed a 50-frame total budget, so a death just past the landing was never simulated.) Keep the
   coast-forward loop running after every candidate.
+- **A plan is verified only UP TO a transition.** Rollouts chunk-step and stop scoring at a
+  level/area advance (mid-plan death must be SEEN, not masked by flag decay through the reload);
+  `_commit` stops replaying at a level_key change for the same reason. (The 1-3 x=283 loop: a
+  transition-bonused exit-pipe plan replayed its unverified tail straight into the next level's
+  first pit, inside one commit — no 🏁, checkpoint stuck, learn-from-death starved.)
 - **Snapshot/learn/replay only ON-GROUND** spots — airborne states don't reproduce across passes.
 - **Behaviour-preserving refactors** to the reflex must keep the 1-1 clear + identical compounding
   curve (the regression guard).
 
 ## Known limits (honest)
-- Within-level compounding is **partial**: static geometry caches+replays; moving enemies re-search
-  each pass (position-bucketed replay is timing-sensitive → replay-verify falls back to live-search).
-  Billy still clears 1-1 every attempt. Search→0 would need whole-trajectory determinism.
+- Within-level compounding is **partial** for POSITION-KEYED cache entries: static geometry
+  caches+replays; moving enemies re-search each pass (position-bucketed replay is timing-sensitive →
+  replay-verify falls back to live-search). The **whole-level tape** (esp. entry-state-anchored) is the
+  answer where it exists — it reproduces the whole trajectory incl. moving lifts deterministically
+  (this is how 1-3 clears). Search→0 within a level needs that whole-trajectory determinism.
 - Cross-game transfer: the **shared reflex** is the primary carry-forward (SMB2-Japan plays with zero
   new reflex code). The **Skill layer** adds candidate diversity that can unblock a hazard (seeded run
   reached further on Lost Levels 1-1), at the cost of more rollouts.
