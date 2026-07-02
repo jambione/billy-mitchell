@@ -65,6 +65,14 @@ def cmd_capture(args: argparse.Namespace) -> int:
             return False
         if args.until_level is not None and obs.level_label != args.until_level:
             return False
+        # Level-transition artifact guard: on the frames where the label has already flipped
+        # to the next level, progress can still read the PREVIOUS level's x (e.g. 3266 while
+        # "1-3" is loading). Such a state is mid-transition, not a playable spot — require the
+        # transition to have settled (x reset to a small in-level value first).
+        if args.until_level is not None and getattr(reached, "_settled", False) is False:
+            if obs.progress < 16 or obs.progress > 400:
+                return False
+            reached._settled = True
         if args.until_progress is not None and obs.progress < args.until_progress:
             return False
         # Hand the human a stable, grounded stance — never a mid-jump/airborne frame (which

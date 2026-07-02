@@ -1017,7 +1017,9 @@ class Director:
         x_lo, x_hi = band
         best: tuple[int, bytes] | None = None
         stage = level_key[:2] if level_key else ()
-        for x, _y, _lk, snap in (approach_trail or []):
+        for x, _y, lk, snap in (approach_trail or []):
+            if stage and lk[:2] != stage:
+                continue   # same x-band on ANOTHER level is not this death's approach
             if x_lo <= x <= x_hi and (best is None or x > best[0]):
                 best = (x, snap)
         for x, _y, lk, snap in safe_history:
