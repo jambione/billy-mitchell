@@ -52,6 +52,7 @@ class _Viewer:
         self._keys: set[int] = set()
         self._finish = False
         self._abort = False
+        self._takeover = False    # T pressed: the human wants the controller (live demo)
         self.joystick = None
         self._joy_map = _load_pad_map()
         # On-screen overlay (calibration prompts etc.): first line renders big/highlighted.
@@ -172,12 +173,16 @@ class _Viewer:
                 self._KEYMAP[sym] = bit
         ENTER, ESC = key.ENTER, key.ESCAPE
 
+        TAKEOVER = key.T
+
         @self.window.event
         def on_key_press(symbol, modifiers):
             if symbol == ENTER:
                 self._finish = True
             elif symbol == ESC:
                 self._abort = True
+            elif symbol == TAKEOVER:
+                self._takeover = True
             elif symbol in self._KEYMAP:
                 self._keys.add(symbol)
 
@@ -209,6 +214,7 @@ class _Viewer:
         self._keys.clear()
         self._finish = False
         self._abort = False   # a latched ESC must not leak into the next prompt/stage
+        self._takeover = False
         self._abort = False
 
     def show(self, frame: np.ndarray) -> None:
@@ -358,6 +364,15 @@ class RetroSession:
         if self._viewer is None:
             return 0, False, False
         return self._viewer.teleop_poll()
+
+    def takeover_requested(self) -> bool:
+        """True once if the human pressed T in the watch window (live-demo takeover).
+        Reading clears the latch. Always False headless."""
+        v = self._viewer
+        if v is None or not getattr(v, "_takeover", False):
+            return False
+        v._takeover = False
+        return True
 
     def teleop_reset(self) -> None:
         if self._viewer is not None:

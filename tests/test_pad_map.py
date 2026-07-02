@@ -156,3 +156,22 @@ def test_dirs_present_disables_legacy_stick():
     dirs = {"LEFT": {"src": "button", "idx": 13}}
     v = _viewer_with(_FakeJoy(stick=(0.9, 0.0)), {"dirs": dirs, "deadzone": 0.4})
     assert not v._joy_mask() & c.RIGHT
+
+
+# --- live-takeover latch (T in the watch window) -------------------------------------------
+def test_takeover_latch_reads_once():
+    from billy.systems.nes.retro_session import RetroSession
+    s = RetroSession.__new__(RetroSession)          # no emulator needed for the latch
+    v = type("V", (), {"_takeover": True})()
+    s._viewer = v
+    assert s.takeover_requested() is True
+    assert s.takeover_requested() is False          # latch cleared by the read
+    v._takeover = True
+    assert s.takeover_requested() is True
+
+
+def test_takeover_false_when_headless():
+    from billy.systems.nes.retro_session import RetroSession
+    s = RetroSession.__new__(RetroSession)
+    s._viewer = None
+    assert s.takeover_requested() is False

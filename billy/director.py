@@ -395,6 +395,85 @@ class Director:
         self.session.restore(snap)
         return self._candidates(self._observe())
 
+    _TAKEOVER_MAX_FRAMES = 9000   # ~150s cap on one live human segment
+
+    def _human_takeover(self, obs: Observation, safe_history,
+                        attempt: int) -> tuple[Observation, int]:
+        """Live demo: the human pressed T in the watch window — hand them the controller from
+        the EXACT live state, record their input, and on hand-back (ENTER/T) bank the segment
+        if it survived and advanced. The live run IS the verification: the input just executed
+        on the real deterministic state, so survive+advance needs no re-simulation. ESC rewinds
+        to the takeover point and discards; a death falls through to learn-from-death as usual.
+        """
+        from .teleop import TeleopRecorder
+
+        session = self.session
+        if not session.ensure_viewer():
+            return obs, 0
+        start_state = session.clone_state()
+        start = obs
+        if getattr(obs.raw, "on_ground", True):
+            safe_history.append((obs.progress, obs.elevation, obs.level_key, start_state))
+        print(f'  [attempt {attempt}] 🎮→🧑 HUMAN TAKEOVER at {obs.level_label}@{obs.progress} '
+              f'— play through it; ENTER hands back (banks if it advanced), ESC discards')
+        session.set_overlay(["YOU HAVE THE CONTROLLER",
+                             "play through the tough spot",
+                             "ENTER = hand back & bank   ESC = discard & rewind"])
+        session.teleop_reset()
+        rec = TeleopRecorder()
+        frames = 0
+        aborted = False
+        cur = obs
+        while frames < self._TAKEOVER_MAX_FRAMES:
+            mask, fin, ab = session.teleop_poll()
+            if fin or session.takeover_requested():
+                break
+            if ab:
+                aborted = True
+                break
+            session.teleop_step(mask)
+            rec.record(mask, 1)
+            frames += 1
+            cur = self._observe()
+            if cur.dead:
+                break
+            if cur.level_key[:2] != start.level_key[:2]:
+                break   # cleared into the next level — hand back at the natural boundary
+        session.set_overlay(None)
+        session.teleop_reset()
+        plan = rec.plan()
+
+        if aborted:
+            session.restore(start_state)
+            cur = self._observe()
+            print(f'  [attempt {attempt}]   takeover discarded — rewound to '
+                  f'{cur.level_label}@{cur.progress}, Billy resumes')
+            return cur, frames
+        if cur.dead:
+            print(f'  [attempt {attempt}]   human segment died at {cur.progress} — '
+                  f'nothing banked, Billy learns from it as usual')
+            return cur, frames
+
+        gained = cur.progress - start.progress
+        crossed = cur.level_key[:2] != start.level_key[:2]
+        if plan and (crossed or gained > self._MIN_PROGRESS_PX):
+            reach = start.progress + self._TRANSITION_BONUS if crossed else cur.progress
+            self._bank_solution(start.level_key, start.progress, plan, reach,
+                                y=start.elevation, force=True, source="demo_live",
+                                summary=start.summary, level_label=start.level_label)
+            # Keep the level tape contiguous: the human's frames ARE committed live input.
+            append_plan(self._tape_record, plan)
+            print(f'  [attempt {attempt}] 🧑✓ human segment BANKED '
+                  f'{start.level_label}@{start.progress} (+{gained}px'
+                  f'{", crossed" if crossed else ""}) — replays forever; Billy resumes')
+        else:
+            print(f'  [attempt {attempt}]   human segment made no progress '
+                  f'(+{gained}px) — nothing banked, Billy resumes')
+        if getattr(cur.raw, "on_ground", True):
+            safe_history.append((cur.progress, cur.elevation, cur.level_key,
+                                 session.clone_state()))
+        return cur, frames
+
     def _tape_begin_level(self, obs: Observation) -> None:
         """Start recording a level trajectory; try a verified tape replay if one exists."""
         self._tape_key = obs.level_key
@@ -480,6 +559,10 @@ class Director:
         self.cur_level = start.level_key
         print(f"[director] in play at {start.level_label}, progress={start.progress}. "
               f"Billy has taken the controller.")
+        if getattr(self.session, "_viewer", None) is not None:
+            print("[director] watching? Press T in the game window anytime to TAKE THE "
+                  "CONTROLLER — your segment banks if it advances (ENTER hands back, "
+                  "ESC discards).")
         print(f'  🎤 Billy: "{self.commentator.event_line("start")}"')
         return start
 
@@ -728,6 +811,18 @@ class Director:
                 tape_frontier = obs.progress
                 print(f'  [attempt {n}] 🗺️ screen → {obs.level_label} '
                       f'progress={obs.progress}')
+
+            # --- live human takeover: T in the watch window hands the human the controller.
+            # Their segment banks like any verified solution (it ran live on the real state).
+            if self.session.takeover_requested():
+                self._tape_mode = False          # human input supersedes tape playback
+                self._tape_replay = None
+                obs, used = self._human_takeover(obs, safe_history, n)
+                frames += used
+                seg_best = max(seg_best, obs.progress)
+                tape_frontier = max(tape_frontier, obs.progress)
+                final_score = max(final_score, obs.score)
+                continue
 
             # --- tape replay (zero-search level trajectory) ------------------------------
             if self._tape_mode:
