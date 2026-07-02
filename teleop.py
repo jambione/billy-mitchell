@@ -34,6 +34,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+class PadLostError(RuntimeError):
+    """The gamepad or the watch window vanished mid-calibration (fail loudly, not silently)."""
+
+
 def _game(name: str):
     from run import GAMES
     if name not in GAMES:
@@ -223,14 +227,39 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
 
     def pump() -> tuple:
         """One frame: pump window+HID events, keep the game alive, read raw pad state.
-        Returns (state|None, finish_pressed, abort_pressed)."""
+        Returns (state, finish_pressed, abort_pressed). Raises PadLostError if the pad or
+        the window dies mid-calibration — silently reading None here made every stage look
+        'skipped' with a frozen window, which is worse than failing loudly."""
         _mask, fin, ab = session.teleop_poll()
         session.teleop_step(neutral)
-        return session.pad_state(), fin, ab
+        st = session.pad_state()
+        if st is None:
+            raise PadLostError(
+                "gamepad/window lost mid-calibration (viewer disabled or pad disconnected) — "
+                "check the [viewer] error above, then re-run calibrate")
+        return st, fin, ab
 
-    st, _, _ = pump()
+    # Bluetooth pads auto-sleep; don't bail on the first miss — prompt and wait for a wake.
+    st = None
+    for i in range(60 * 45):            # up to ~45s of waiting for the pad
+        _mask, _fin, ab = session.teleop_poll()
+        session.teleop_step(neutral)
+        if ab:
+            session.close()
+            return 1
+        st = session.pad_state()
+        if st is not None:
+            break
+        if i % 60 == 0:
+            session.set_overlay(["WAKE THE GAMEPAD",
+                                 "press any button on the pad (Bluetooth pads sleep)",
+                                 "ESC = abort"])
+            if i == 0:
+                print("[calibrate] no gamepad yet — press a button on it to wake it "
+                      "(waiting up to 45s)...")
+            session.reopen_joystick()
     if st is None:
-        print("[calibrate] no gamepad detected — is it paired/awake? (pyglet HID)")
+        print("[calibrate] no gamepad detected — pair/wake it, then re-run calibrate")
         session.close()
         return 1
     print(f"[calibrate] gamepad: {st['name']}")
@@ -314,81 +343,161 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
         mapping[role] = assigned
         done_roles.append(f"{role}={assigned}" if assigned >= 0 else f"{role}=skip")
 
-    # -- 3. movement: detect hat vs stick and the stick's up-sign ----------------------------
-    def sample_direction(prompt: str, frames: int = 600):   # ~10s — reading the banner takes time
-        """Prompt, then wait for a sustained hat/stick deviation; returns (hat_dx, dx, dy)."""
-        print(f"[calibrate] {prompt}")
-        session.set_overlay([prompt.upper().rstrip(" ."),
-                             "hold it steady for a second",
+    # -- 3. movement: calibrate each DIRECTION by holding it -----------------------------------
+    # Records whatever actually changes while the user holds the direction — a plain button
+    # (many pads report the d-pad as buttons), a hat axis, or ANY of the six HID axes. Three
+    # defenses against phantom sources (floating hats, axes that report late and stick high):
+    #   • the baseline is re-snapshotted at EACH prompt (a stuck axis shows ~zero deviation),
+    #   • the captured source must RELEASE back to baseline when the user lets go,
+    #   • two directions can never share a source+sign (banned set).
+    def _sources(st, base):
+        """All (deviation, key, spec) candidates for the current frame vs a baseline."""
+        out = []
+        fresh = set(st["buttons"]) - rest_buttons - taken
+        if fresh:
+            out.append((1.0, ("button", min(fresh)), {"src": "button", "idx": min(fresh)}))
+        # The HAT is matched as an EXACT TUPLE, not per-axis signs: scrambled/rotated hats
+        # (this pad's known quirk) emit *some* stable tuple per held direction — that tuple
+        # IS the direction. The baseline holds the SET of resting tuples (this hat flickers
+        # at rest), so a resting value can never be captured as a press.
+        hat = tuple(st["hat"])
+        if hat not in base["hat_set"]:
+            out.append((2.0, ("hat", hat), {"src": "hat", "value": list(hat)}))
+        for n, v in st["axes"].items():
+            dev = v - base["axes"].get(n, 0.0)
+            if abs(dev) > 0.35:
+                sign = 1 if dev > 0 else -1
+                out.append((abs(dev), (f"axis_{n}", sign),
+                            {"src": f"axis_{n}", "sign": sign,
+                             "rest": round(base["axes"].get(n, 0.0), 3)}))
+        return out
+
+    def sample_dir_spec(name: str, banned: set, frames: int = 900):
+        """Hold a direction; returns its verified spec dict, or None on skip/timeout."""
+        print(f"[calibrate] press and HOLD {name} (d-pad or stick) ...")
+        session.set_overlay([f"HOLD:  {name}",
+                             "on the d-pad or stick - hold it steady",
                              "keyboard ENTER = skip   ESC = abort"])
         session.teleop_reset()
-        streak = 0
+        # Per-prompt baseline: ~1/3s of hands-off frames. Collect the SET of resting hat
+        # tuples (flickering hats produce several) and the axes' current values.
+        hat_set: set = set()
+        st, fin, ab = pump()
+        axes0 = dict(st["axes"])
+        for _ in range(20):
+            st, fin, ab = pump()
+            if ab or fin:
+                return None
+            hat_set.add(tuple(st["hat"]))
+        base = {"hat_set": hat_set, "axes": axes0}
+        streak, last_key, spec = 0, None, None
         for _ in range(frames):
             st, fin, ab = pump()
-            if ab or fin or not st:
+            if ab or fin:
                 return None
-            hat_dx = st["hat"][0] - (rest_hats[0][0] if rest_hats else 0)
-            dx, dy = st["stick"][0] - rest_x, st["stick"][1] - rest_y
-            if abs(hat_dx) > 0.5 or abs(dx) > 0.35 or abs(dy) > 0.35:
-                streak += 1
-                if streak >= 12:        # ~0.2s sustained — a hold, not a blip
-                    return hat_dx, dx, dy
+            cands = [c for c in _sources(st, base) if c[1] not in banned]
+            if cands:
+                cands.sort(reverse=True, key=lambda c: c[0])
+                _, key, cur = cands[0]
+                streak = streak + 1 if key == last_key else 1
+                last_key, spec = key, cur
+                if streak >= 12:        # ~0.2s sustained on the SAME source — a hold, not a blip
+                    session.set_overlay([f"{name}: got it - now LET GO", "(verifying release)"])
+                    released = False
+                    for _ in range(240):    # ~4s to release
+                        st, _, ab2 = pump()
+                        if ab2:
+                            return None
+                        still = any(k == key for _, k, _s in _sources(st, base))
+                        if not still:
+                            released = True
+                            break
+                    if released:
+                        return spec
+                    # Never released = a stuck/floating source, not the user's hold. Ban it
+                    # and keep listening for the real one.
+                    print(f"[calibrate]   ignoring {key[0]} (never releases — floating source)")
+                    banned.add(key)
+                    streak, last_key, spec = 0, None, None
             else:
-                streak = 0
+                streak, last_key = 0, None
         return None
 
-    left = sample_direction("hold LEFT (d-pad or stick) ...")
-    if left is not None:
-        hat_dx, dx, _ = left
-        used_hat = hat_rests_centered and abs(hat_dx) > 0.5
-        if used_hat:
-            mapping["use_hat"] = True
-            print("[calibrate]   left/right: d-pad hat works")
-            if hat_dx > 0.5:
-                print("[calibrate]   ⚠ hat reads reversed (LEFT read as RIGHT) — "
-                      "no auto-fix for a reversed hat; set BILLY_PAD_USE_HAT=0 to fall "
-                      "back to the stick instead")
-        elif abs(dx) > 0.35:
-            print("[calibrate]   left/right: analog stick")
-            # Engine convention (see _joy_mask): LEFT fires on x < -deadzone. If pushing LEFT
-            # gives a POSITIVE x on this pad/backend, record invert_x so the sign matches —
-            # same fix as invert_y below, just for the horizontal axis.
-            mapping["invert_x"] = dx > 0.35
-            if mapping["invert_x"]:
-                print("[calibrate]   stick left reads positive on this pad — saving invert_x")
-    up = sample_direction("now hold UP (stick) ...")
-    if up is not None:
-        _, _, dy = up
-        # Engine convention (see _joy_mask): UP fires on y < -deadzone. If pushing up gives a
-        # POSITIVE y on this pad/backend, record invert_y so the sign matches.
-        mapping["invert_y"] = dy > 0.35
-        if mapping["invert_y"]:
-            print("[calibrate]   stick up reads positive on this pad — saving invert_y")
+    def _spec_key(spec: dict) -> tuple:
+        if spec["src"] == "button":
+            return ("button", spec["idx"])
+        if spec["src"] == "hat":
+            return ("hat", tuple(spec["value"]))
+        return (spec["src"], spec.get("sign"))
 
-    # -- 4. save + live verify ----------------------------------------------------------------
-    path = save_pad_map(mapping)
-    print(f"\n[calibrate] saved -> {path}")
-    print(f"[calibrate]   {describe(mapping)}")
-    print("[calibrate] BILLY_PAD_* env vars still override the saved map per-run.\n")
+    def _spec_desc(spec: dict) -> str:
+        if spec["src"] == "button":
+            return f"d-pad button {spec['idx']}"
+        if spec["src"] == "hat":
+            return f"d-pad hat {tuple(spec['value'])}"
+        return f"{spec['src']} {'+' if spec.get('sign', 1) > 0 else '-'}"
 
+    dirs: dict = {}
+    banned: set = set()
+    for name in ("LEFT", "RIGHT", "UP", "DOWN"):
+        spec = sample_dir_spec(name, banned)
+        if spec is None:
+            print(f"[calibrate]   {name}: skipped (falls back to stick defaults)")
+            continue
+        dirs[name] = spec
+        banned.add(_spec_key(spec))
+        print(f"[calibrate]   {name} = {_spec_desc(spec)}")
+    if dirs:
+        mapping["dirs"] = dirs
+
+    # -- 4. REVIEW before saving: try the candidate mapping live, then confirm ----------------
+    # Nothing is written yet — the mapping is applied to the live window only. Press every
+    # button and direction and watch the decode; confirm to save, ESC to walk away clean.
     session.set_pad_map(mapping)
     session.teleop_reset()
-    print("[calibrate] VERIFY (15s): press things — decoded buttons print below. "
-          "ENTER/ESC to finish.")
+    print("\n[calibrate] REVIEW — nothing saved yet. Candidate mapping:")
+    print(f"[calibrate]   {describe(mapping)}")
+    print("[calibrate] try every button/direction; decoded input prints below.")
+    print("[calibrate] CONFIRM & SAVE: keyboard ENTER, or hold your mapped START ~1s. "
+          "DISCARD: ESC.")
+    dir_line = "  ".join(f"{d}={_spec_desc(s)}" for d, s in (dirs or {}).items()) \
+        or "stick defaults"
+    summary = "  ".join(x for x in done_roles if not x.endswith("=skip"))
     last = None
-    for _ in range(60 * 15):
+    confirmed = False
+    start_hold = 0
+    for _ in range(60 * 120):           # up to 2 minutes of review
         mask, fin, ab = session.teleop_poll()
         session.teleop_step(neutral)
-        if fin or ab:
+        if ab:
+            break
+        if fin:
+            confirmed = True
             break
         names = "+".join(ctrl.names_from_mask(mask)) or "-"
         if names != last:
             print(f"    {names}")
             last = names
-        session.set_overlay(["VERIFY: press buttons and move the stick",
+        # Pad-only confirm: hold the freshly-mapped START for ~1s.
+        start_hold = start_hold + 1 if (mask & getattr(ctrl, "START", 0)) else 0
+        if mapping.get("START", -1) >= 0 and start_hold >= 60:
+            confirmed = True
+            break
+        session.set_overlay(["REVIEW - try everything (not saved yet)",
                              f"reading:  {names}",
-                             "keyboard ENTER = done"])
+                             f"buttons: {summary}",
+                             f"directions: {dir_line}",
+                             "SAVE: keyboard ENTER or hold START   DISCARD: ESC"])
     session.set_overlay(None)
+
+    if not confirmed:
+        print("[calibrate] discarded — nothing written. Run calibrate again when ready.")
+        session.close()
+        return 1
+    path = save_pad_map(mapping)
+    print(f"\n[calibrate] confirmed — saved -> {path}")
+    print(f"[calibrate]   {describe(mapping)}")
+    print("[calibrate] BILLY_PAD_* env vars still override the saved map per-run.")
     session.close()
     print("[calibrate] done. Play with: "
           f".venv/bin/python teleop.py play --game {args.game} --from-state <state> --bank")
@@ -469,7 +578,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = p.parse_args(argv)
     if args.cmd == "calibrate":
-        return cmd_calibrate(args)
+        try:
+            return cmd_calibrate(args)
+        except PadLostError as e:
+            print(f"[calibrate] ❌ {e}")
+            return 1
     if args.cmd == "pad-debug":
         return cmd_pad_debug(args)
     if args.cmd == "capture":

@@ -74,39 +74,72 @@ class _Viewer:
         except Exception:
             self.joystick = None
 
+    def _dir_active(self, j, spec: dict, dz: float, btns) -> bool:
+        """Evaluate one calibrated direction spec against the live pad (see pad_map.py)."""
+        src = str(spec.get("src"))
+        if src == "button":
+            idx = spec.get("idx", -1)
+            return isinstance(idx, int) and 0 <= idx < len(btns) and bool(btns[idx])
+        if src == "hat":
+            # Exact-tuple match: some pads' hats come through the OS HID layer rotated or
+            # scrambled, so per-axis signs lie. Whatever (hat_x, hat_y) the pad emitted while
+            # the user HELD this direction during calibration is this direction, verbatim.
+            want = spec.get("value")
+            return (want is not None
+                    and (getattr(j, "hat_x", 0), getattr(j, "hat_y", 0)) == tuple(want))
+        if src == "hat_x" or src == "hat_y":
+            val = getattr(j, src, 0)
+        elif src == "stick_x":                       # legacy alias for axis x
+            val = getattr(j, "x", 0.0) or 0.0
+        elif src == "stick_y":                       # legacy alias for axis y
+            val = getattr(j, "y", 0.0) or 0.0
+        elif src.startswith("axis_"):                # generic HID axis (x/y/z/rx/ry/rz)
+            val = getattr(j, src[5:], 0.0) or 0.0
+        else:
+            return False
+        threshold = 0.5 if src.startswith("hat") else dz
+        return (val - spec.get("rest", 0.0)) * spec.get("sign", 1) > threshold
+
     def _joy_mask(self) -> int:
         j = self.joystick
         if j is None:
             return 0
         m = 0
         dz = float(self._joy_map.get("deadzone", 0.4))
-        # Movement from the LEFT ANALOG STICK; either axis's sign can vary per pad/OS backend
-        # (independently), so calibration records `invert_x`/`invert_y`. The d-pad hat
-        # contributes left/right only when `use_hat` is set (some pads' hats never center —
-        # calibration detects that and turns it off).
-        x = getattr(j, "x", 0.0) or 0.0
-        y = getattr(j, "y", 0.0) or 0.0
-        if self._joy_map.get("invert_x"):
-            x = -x
-        if self._joy_map.get("invert_y"):
-            y = -y
-        if x < -dz:
-            m |= self._c.LEFT
-        if x > dz:
-            m |= self._c.RIGHT
-        if y < -dz:
-            m |= self._c.UP
-        if y > dz:
-            m |= self._c.DOWN
-        if self._joy_map.get("use_hat"):
-            try:
-                if j.hat_x < -0.5:
-                    m |= self._c.LEFT
-                if j.hat_x > 0.5:
-                    m |= self._c.RIGHT
-            except Exception:
-                pass
         btns = getattr(j, "buttons", []) or []
+        dirs = self._joy_map.get("dirs") or {}
+        if dirs:
+            # Calibrated per-direction specs own movement: each direction reads whatever the
+            # wizard saw change when the user held it (d-pad button / hat axis / stick axis).
+            for name, spec in dirs.items():
+                bit = getattr(self._c, str(name).upper(), 0)
+                if bit and isinstance(spec, dict) and self._dir_active(j, spec, dz, btns):
+                    m |= bit
+        else:
+            # Legacy heuristics (defaults + pre-directional maps): LEFT ANALOG STICK with
+            # optional per-axis inversion; d-pad hat only via `use_hat`.
+            x = getattr(j, "x", 0.0) or 0.0
+            y = getattr(j, "y", 0.0) or 0.0
+            if self._joy_map.get("invert_x"):
+                x = -x
+            if self._joy_map.get("invert_y"):
+                y = -y
+            if x < -dz:
+                m |= self._c.LEFT
+            if x > dz:
+                m |= self._c.RIGHT
+            if y < -dz:
+                m |= self._c.UP
+            if y > dz:
+                m |= self._c.DOWN
+            if self._joy_map.get("use_hat"):
+                try:
+                    if j.hat_x < -0.5:
+                        m |= self._c.LEFT
+                    if j.hat_x > 0.5:
+                        m |= self._c.RIGHT
+                except Exception:
+                    pass
         def pressed(idx):
             return isinstance(idx, int) and 0 <= idx < len(btns) and btns[idx]
         # Roles are LOGICAL and resolved against the active controller module, so one saved
@@ -175,6 +208,7 @@ class _Viewer:
     def reset_teleop(self) -> None:
         self._keys.clear()
         self._finish = False
+        self._abort = False   # a latched ESC must not leak into the next prompt/stage
         self._abort = False
 
     def show(self, frame: np.ndarray) -> None:
@@ -218,10 +252,21 @@ class _Viewer:
                         font_size=12, color=(235, 235, 235, 255)))
                 self._overlay_widgets = widgets
                 self._overlay_key = self._overlay
+            # pyglet 1.5: tex.blit leaves GL_TEXTURE_2D enabled, which corrupts untextured
+            # shape drawing (the backdrop would sample the game frame). Disable it first;
+            # harmless no-op wrapped for pyglet 2.x core profiles.
+            with contextlib.suppress(Exception):
+                from pyglet import gl
+                gl.glDisable(gl.GL_TEXTURE_2D)
             for wdg in self._overlay_widgets:
                 wdg.draw()
-        except Exception:
-            self._overlay_widgets, self._overlay_key = [], None   # never break the frame loop
+        except Exception as e:
+            # Never break the frame loop — but report once and stop retrying.
+            if self._overlay_key is not None or self._overlay_widgets:
+                print(f"[viewer] overlay draw failed ({type(e).__name__}: {e}) — "
+                      f"banner disabled (terminal prompts still apply)")
+            self._overlay_widgets, self._overlay_key = [], None
+            self._overlay = ()
 
     def close(self) -> None:
         if self.window is not None:
@@ -323,6 +368,15 @@ class RetroSession:
         if self._viewer is not None:
             self._viewer._joy_map = dict(mapping)
 
+    def reopen_joystick(self) -> bool:
+        """Rescan for a gamepad (e.g. it was asleep when the window opened). True if present."""
+        v = self._viewer
+        if v is None:
+            return False
+        if v.joystick is None:
+            v._open_joystick()
+        return v.joystick is not None
+
     def set_overlay(self, lines) -> None:
         """Draw a text banner over the game frame (calibration prompts). None clears it."""
         if self._viewer is not None:
@@ -334,11 +388,18 @@ class RetroSession:
         if v is None or v.joystick is None:
             return None
         j = v.joystick
+
+        def ax(name):
+            return round(getattr(j, name, 0.0) or 0.0, 3)
+
         btns = [i for i, b in enumerate(getattr(j, "buttons", []) or []) if b]
         return {
             "buttons": btns,
             "hat": (getattr(j, "hat_x", 0), getattr(j, "hat_y", 0)),
-            "stick": (round(getattr(j, "x", 0.0) or 0.0, 2), round(getattr(j, "y", 0.0) or 0.0, 2)),
+            "stick": (ax("x"), ax("y")),
+            # ALL HID axes: pads route d-pads/sticks to surprising axes per mode/OS, and some
+            # axes float — the calibration wizard decides per direction which one is real.
+            "axes": {n: ax(n) for n in ("x", "y", "z", "rx", "ry", "rz")},
             "name": getattr(j.device, "name", "?"),
         }
 
@@ -450,8 +511,14 @@ class RetroSession:
             self._viewer.show(frame)
             if self._realtime:
                 time.sleep(1 / 60)
-        except Exception:
-            self._viewer = None  # disable display on any windowing failure; keep playing
+        except Exception as e:
+            # Disable display on a windowing failure but SAY SO — a silent kill here freezes
+            # the window and eats all pad/keyboard input, which reads as "nothing works".
+            import traceback
+            print(f"[viewer] display failed ({type(e).__name__}: {e}) — window disabled, "
+                  f"play continues headless")
+            traceback.print_exc()
+            self._viewer = None
 
     def _refresh_ram(self) -> None:
         ram = self.env.get_ram()

@@ -25,7 +25,18 @@ PAD_MAP_FILE = config.DATA_DIR / "pad_map.json"
 
 # Button-index roles a wizard can assign (console extras included; harmless if absent).
 ROLE_KEYS = ("A", "B", "START", "SELECT", "FINISH", "SPIN", "X", "L", "R")
-OPTION_KEYS = ("use_hat", "deadzone", "invert_x", "invert_y")
+OPTION_KEYS = ("use_hat", "deadzone", "invert_x", "invert_y", "dirs")
+
+# Per-direction movement specs (the robust path, written by `teleop.py calibrate`):
+#   "dirs": {"LEFT": {"src": "button", "idx": 13},
+#            "DOWN": {"src": "hat", "value": [-1, -1]},
+#            "UP": {"src": "axis_y", "sign": -1, "rest": 0.02}, ...}
+# Each direction is driven by whatever the calibration saw change when the user held it —
+# a plain button, the hat as an EXACT TUPLE (some pads' hats arrive rotated/scrambled from
+# the OS HID layer, so per-axis signs lie — the tuple emitted during the hold IS the
+# direction), or any HID axis (x/y/z/rx/ry/rz, with resting offset and sign).
+# When "dirs" is present it fully owns movement; the legacy use_hat/invert_x/invert_y stick
+# heuristics apply only to maps without it (pre-directional calibrations and the defaults).
 
 DEFAULTS = {
     # 8Bitdo SN30 Pro (Bluetooth, macOS), verified via pad-debug: JUMP=2, RUN=1.
