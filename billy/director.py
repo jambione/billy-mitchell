@@ -279,12 +279,16 @@ class Director:
         cached = self.cache.get(obs.level_key, obs.progress, obs.elevation)
         if cached is not None and self.hooks.stale_cache(obs, cached):
             return None
-        if cached is None and on_ground:
-            cached = self._reachback(obs)
+        if on_ground:
+            # Reachback fires on a MISS and also on a WEAK hit: a 79-frame local hop keyed
+            # right here must not shadow a 2500px demo keyed four tiles back.
+            better = self._reachback(obs, floor=cached.reach_after if cached else 0)
+            if better is not None:
+                cached = better
         return cached
 
-    def _reachback(self, obs: Observation):
-        """On an exact-key miss, clone-verify a HIGH-reach entry banked a few tiles behind.
+    def _reachback(self, obs: Observation, floor: int = 0):
+        """Clone-verify a HIGH-reach entry banked a few tiles behind (or shadowed here).
 
         The killer case: a human demo reaching thousands of px sits at bucket 47, but the
         live run's on-ground moments land at bucket 51 — the exact key never hits and the
@@ -298,8 +302,8 @@ class Director:
             return None
         cand = self.cache.nearby_reaching(obs.level_key, obs.progress,
                                           min_gain=config.REACHBACK_MIN_GAIN)
-        if cand is None:
-            return None
+        if cand is None or cand.reach_after < floor + config.REACHBACK_MIN_GAIN:
+            return None   # nothing meaningfully beyond what the exact hit already reaches
         survived, reach = self._evaluate(cand.plan, settle=config.SEARCH_HORIZON_FRAMES)
         if survived and reach > obs.progress + config.REACHBACK_MIN_GAIN // 2:
             print(f'  🎯 reachback: verified a banked long solution from '
