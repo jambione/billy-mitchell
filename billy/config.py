@@ -18,6 +18,8 @@ SOLUTIONS_FILE = DATA_DIR / "solutions.jsonl"   # position-keyed solution cache 
 TAPES_FILE = DATA_DIR / "tapes.jsonl"           # whole-trajectory level replays (search→0)
 SKILLS_FILE = DATA_DIR / "skills.jsonl"         # transferable abstract tactics (cross-game)
 METRICS_FILE = DATA_DIR / "metrics.jsonl"
+ROUTES_FILE = DATA_DIR / "routes.jsonl"         # discovered level topology (clears/warps/screens)
+CHECKPOINTS_DIR = DATA_DIR / "checkpoints"      # furthest level-start savestates (cross-session resume)
 
 RAM_SIZE = 0x800            # NES work RAM 0x0000-0x07FF (first 2KB of env.get_ram())
 

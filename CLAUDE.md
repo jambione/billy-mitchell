@@ -54,6 +54,12 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
    + LLM prompt context. Advice only, never authority.
 7. **LLM (Billy/Coach)** — only when search finds nothing / persona. Off the hot loop.
 
+Session-level: `knowledge/routes.py` records every observed transition into a persisted map
+(`data/routes.jsonl`; ahead-skipping edges = WARPs), and the furthest level-start checkpoint is
+saved to `data/checkpoints/<game>/` — `run.py --resume` continues the march there next session.
+Zelda's `progress` includes monotonic per-screen COMBAT credit (kills + room-clear) so fight
+demos/search bank on combat-walled screens.
+
 ## Invariants — do not break
 - **Exact-replay only.** The cache replays the *exact* button sequence from the same state. Embeddings
   (Skills/KB) may **seed search candidates**, but must **never** drive a blind replay (fuzzy match →
@@ -63,6 +69,11 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
 - **Rollout `settle` is a POST-candidate budget**, not a total. (The Phase-0 bug: a ~50-frame jump
   consumed a 50-frame total budget, so a death just past the landing was never simulated.) Keep the
   coast-forward loop running after every candidate.
+- **A plan is verified only UP TO a transition.** Rollouts chunk-step and stop scoring at a
+  level/area advance (mid-plan death must be SEEN, not masked by flag decay through the reload);
+  `_commit` stops replaying at a level_key change for the same reason. (The 1-3 x=283 loop: a
+  transition-bonused exit-pipe plan replayed its unverified tail straight into the next level's
+  first pit, inside one commit — no 🏁, checkpoint stuck, learn-from-death starved.)
 - **Snapshot/learn/replay only ON-GROUND** spots — airborne states don't reproduce across passes.
 - **Behaviour-preserving refactors** to the reflex must keep the 1-1 clear + identical compounding
   curve (the regression guard).

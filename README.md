@@ -82,7 +82,14 @@ Advice flows down, verified truth flows up — the walkthrough says what to *try
   can't cause a wrong action.
 - **Human demos** (`teleop.py`, live **T** takeover) — one playthrough of a wall becomes a cache
   entry + tape segment + distilled skill + BC warm-start for RL training. Pull-based (Billy files
-  requests when stuck) and push-based (you grab the controller when you see him struggle).
+  requests when stuck) and push-based (you grab the controller when you see him struggle). A live
+  demo can span screens: each screen boundary banks the finished segment and you keep the
+  controller — only a true level clear hands back to Billy.
+- **Route memory** (`knowledge/routes.py`) — every observed transition (level clear, screen/area
+  change) becomes an edge in a persisted map (`data/routes.jsonl`). A discovered edge that skips
+  ahead (SMB's warp zones) is flagged as a WARP — the shortcut list for routing toward game
+  completion. Paired with **frontier checkpoints** (`data/checkpoints/<game>/`): the furthest
+  level-start is saved to disk, and `--resume` continues the march there next session.
 - **Shared platformer reflex** (`games/common/platformer.py`) — the whole side-scroller policy,
   parameterised by a per-game `PhysicsProfile` and LOGICAL buttons (A=jump, B=run) that each
   console's controller translates physically. **SMB2-Japan** plays with *zero new reflex code*, and
@@ -145,6 +152,7 @@ BILLY_PARALLEL_SEARCH=4 BILLY_HEADLESS=1 .venv/bin/python run.py --attempts 6 --
 | `--rl-sections` | Enable hazard-scoped RL sub-policies; they seed micro-search with a learned crossing that search verifies and the cache banks. Needs a trained model under `data/rl/` (see below). |
 | `--rl MODEL` | Use a whole-level PPO policy (a `.zip` from `train_rl.py`) as the reflex tier; the hand-crafted reflex stays the fallback at hazards. |
 | `--seed-skills` | Seed the SkillLibrary with SMB's transferable tactics (cross-game carry-forward). |
+| `--resume` | Start at the furthest level-start checkpoint saved by a previous session (`data/checkpoints/<game>/`) — the march toward game completion continues instead of replaying every solved level from the top. |
 | `--fresh` | Wipe learned solutions, skills, and lessons before starting. |
 
 ### Environment knobs
