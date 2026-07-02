@@ -402,11 +402,17 @@ class Director:
         self._tape_mode = False
         self._tape_replay = None
         entry = self.tapes.get(obs.level_key)
-        if entry and self._verify_tape(entry.plan, obs.level_key, entry.frontier,
-                                       expect_clear=entry.clears_level):
-            self._tape_replay = [Step(s.frames, s.buttons) for s in entry.plan]
-            self._tape_mode = True
-            self.tapes.record_hit(obs.level_key)
+        if entry:
+            if self._verify_tape(entry.plan, obs.level_key, entry.frontier,
+                                 expect_clear=entry.clears_level):
+                self._tape_replay = [Step(s.frames, s.buttons) for s in entry.plan]
+                self._tape_mode = True
+                self.tapes.record_hit(obs.level_key)
+            else:
+                # A tape that keeps failing verify no longer matches reality — drop it after
+                # FAIL_LIMIT misses so an honest new recording can take its slot (corrupt or
+                # drifted tapes with inflated frontiers must not squat forever).
+                self.tapes.record_fail(obs.level_key)
 
     def _verify_tape(self, plan: Plan, level_key: tuple, min_frontier: int,
                      *, expect_clear: bool = True) -> bool:

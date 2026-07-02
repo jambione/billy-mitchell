@@ -61,6 +61,32 @@ def test_shorter_partial_does_not_regress_partial(tmp_path):
     assert lib.get(lk).frontier == 1100
 
 
+def test_record_fail_drops_after_limit_and_allows_replacement(tmp_path):
+    lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    lk = (0, 1, 2)
+    # A corrupt tape with an inflated frontier would block honest replacements forever...
+    lib.put(lk, [Step(10, controller.RIGHT)], frontier=3267, clears_level=True)
+    lib.put(lk, [Step(900, controller.RIGHT)], frontier=3266, clears_level=True)
+    assert lib.get(lk).frontier == 3267          # blocked (the bug this guards against)
+    # ...until repeated verify failures drop it:
+    lib.record_fail(lk)
+    assert lib.get(lk) is not None               # one strike — still there
+    lib.record_fail(lk)
+    assert lib.get(lk) is None                   # dropped at FAIL_LIMIT
+    lib.put(lk, [Step(900, controller.RIGHT)], frontier=3266, clears_level=True)
+    assert lib.get(lk).frontier == 3266          # honest tape takes the slot
+
+
+def test_record_hit_resets_fail_streak(tmp_path):
+    lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    lk = (0, 0, 0)
+    lib.put(lk, [Step(100, controller.RIGHT)], frontier=300, clears_level=False)
+    lib.record_fail(lk)
+    lib.record_hit(lk)                           # a success clears the strike
+    lib.record_fail(lk)
+    assert lib.get(lk) is not None               # 1 fail since last hit — survives
+
+
 def test_tape_consume_preserves_input_stream():
     """The Director's chunked consume must replay the exact stored input stream, and the
     consumed chunks (re-recorded via _commit) must RLE back to the same stream — the property

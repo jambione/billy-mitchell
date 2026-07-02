@@ -22,6 +22,7 @@ class TapeEntry:
     frontier: int          # max progress reached on this tape
     clears_level: bool     # advanced world/stage when recorded
     hits: int = 0
+    fails: int = 0         # consecutive clone-verify failures (drops at FAIL_LIMIT)
 
 
 @dataclass
@@ -57,11 +58,27 @@ class TapeLibrary:
             self._save()
         return self.entries[key]
 
+    FAIL_LIMIT = 2   # verify failures before a tape is dropped (mirrors cache record_fail)
+
     def record_hit(self, level_key: LevelKey) -> None:
         e = self.get(level_key)
         if e:
             e.hits += 1
+            e.fails = 0
             self._save()
+
+    def record_fail(self, level_key: LevelKey) -> None:
+        """A stored tape failed its clone-verify. Repeated failures mean the tape no longer
+        matches reality (drifted checkpoint, or a corrupt legacy entry whose inflated frontier
+        would otherwise BLOCK honest replacements forever) — drop it so the next good run
+        stores fresh. Self-healing, same contract as SolutionCache.record_fail."""
+        e = self.get(level_key)
+        if e is None:
+            return
+        e.fails += 1
+        if e.fails >= self.FAIL_LIMIT:
+            del self.entries[tuple(level_key)]
+        self._save()
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -78,7 +95,8 @@ class TapeLibrary:
             plan = [Step(f, b) for f, b in d["plan"]]
             self.entries[key] = TapeEntry(
                 level_key=key, plan=plan, frontier=d["frontier"],
-                clears_level=d.get("clears_level", False), hits=d.get("hits", 0))
+                clears_level=d.get("clears_level", False), hits=d.get("hits", 0),
+                fails=d.get("fails", 0))
 
     def _save(self) -> None:
         config.ensure_dirs()
@@ -91,6 +109,7 @@ class TapeLibrary:
                     "frontier": e.frontier,
                     "clears_level": e.clears_level,
                     "hits": e.hits,
+                    "fails": e.fails,
                 }) + "\n")
 
 
