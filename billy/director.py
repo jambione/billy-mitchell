@@ -161,6 +161,10 @@ class Director:
         st = self.session.read_state()
         return self.game.observe(st.frame, st.ram, getattr(st, "rgb", None))
 
+    def _game_id(self) -> str:
+        """Stable per-game id used to scope lessons/checkpoints (cli_name, else game name)."""
+        return str(getattr(self.game, "cli_name", "") or self.game.name)
+
     # --- micro-search: evaluate candidates on a CLONE so the live run never visibly rewinds ----
     _TRANSITION_BONUS = _TRANSITION_BONUS   # class alias (module constant is the source of truth)
 
@@ -689,8 +693,7 @@ class Director:
         return obs
 
     def _checkpoint_paths(self) -> tuple:
-        name = str(getattr(self.game, "cli_name", "") or self.game.name)
-        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in self._game_id())
         base = config.CHECKPOINTS_DIR / safe
         return base, base / "furthest.json"
 
@@ -1209,7 +1212,8 @@ class Director:
                         mem = self.memory.prompt_section() if self.memory else ""
                         if self.guide is not None:
                             mem += self.guide.prompt_section(self.game.guide_query(obs))
-                        bd = billy.decide(obs, self.kb.retrieve(obs.summary),
+                        bd = billy.decide(obs, self.kb.retrieve(obs.summary,
+                                                                game=self._game_id()),
                                           list(self.recent), self.controller, memory=mem)
                         plan = bd.plan
                         billy_calls += 1
@@ -1232,8 +1236,8 @@ class Director:
                 mem = self.memory.prompt_section() if self.memory else ""
                 if self.guide is not None:
                     mem += self.guide.prompt_section(self.game.guide_query(obs))
-                bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent),
-                                  self.controller, memory=mem)
+                bd = billy.decide(obs, self.kb.retrieve(obs.summary, game=self._game_id()),
+                                  list(self.recent), self.controller, memory=mem)
                 plan = bd.plan
                 billy_calls += 1
                 action_note = f"BILLY {self._label(plan)}"
@@ -1387,7 +1391,8 @@ class Director:
         mem = self.memory.prompt_section() if self.memory else ""
         lesson = coach.reflect(trajectory, outcome, level_label, memory=mem)
         if lesson:
-            self.kb.add(lesson.situation, lesson.tactic, lesson.outcome, level_label)
+            self.kb.add(lesson.situation, lesson.tactic, lesson.outcome, level_label,
+                        game=self._game_id())
             print(f"  [coach] lesson: {lesson.situation} -> {lesson.tactic}")
 
     def _label(self, plan: Plan) -> str:
