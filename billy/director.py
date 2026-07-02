@@ -67,7 +67,7 @@ def rollout_candidate(session, observe, reflex, game, plan: Plan,
 class Director:
     def __init__(self, game: Game, kb: KnowledgeBase, use_llm: bool = True,
                  cache: SolutionCache | None = None, skills: SkillLibrary | None = None,
-                 tapes: TapeLibrary | None = None, sections=None) -> None:
+                 tapes: TapeLibrary | None = None, sections=None, guide=None) -> None:
         self.game = game
         self.hooks: HazardHooks = game.hazard_hooks()
         self.session = game.system.connect()
@@ -77,6 +77,9 @@ class Director:
         self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
         self.tapes = tapes if tapes is not None else TapeLibrary()
         self.skills = skills if skills is not None else SkillLibrary()  # cross-game transferable tactics
+        # Optional ingested walkthrough (knowledge/guide.py): seeds search candidates and
+        # informs the LLM prompt. Advice, not authority — everything it suggests is verified.
+        self.guide = guide
         self._tape_record: list = []
         self._tape_key: tuple = ()
         self._tape_replay: list | None = None
@@ -325,6 +328,8 @@ class Director:
             cands.extend(self.skills.candidates(
                 obs.raw, profile, obs.summary,
                 console=getattr(self.game.system, "name", "")))
+        if self.guide is not None:
+            cands.extend(self.guide.direction_candidates(obs.summary, self.controller))
         return cands
 
     def _learn_from_death(self, safe_history, death_x: int,
@@ -1040,6 +1045,8 @@ class Director:
                         # replays it instead of re-asking the (slow, inconsistent) LLM. This is what
                         # lets an LLM-cracked wall (e.g. early 1-2) actually compound.
                         mem = self.memory.prompt_section() if self.memory else ""
+                        if self.guide is not None:
+                            mem += self.guide.prompt_section(obs.summary)
                         bd = billy.decide(obs, self.kb.retrieve(obs.summary),
                                           list(self.recent), self.controller, memory=mem)
                         plan = bd.plan
@@ -1059,8 +1066,10 @@ class Director:
                     elif not progressed:
                         action_note = f"search✗ {self._label(plan)}"   # best-effort, not cached
             elif decision.needs_billy and self.use_llm:
-                # Non-danger escalation (stuck, etc.): consult Billy with KB lessons.
+                # Non-danger escalation (stuck, etc.): consult Billy with KB lessons + guide.
                 mem = self.memory.prompt_section() if self.memory else ""
+                if self.guide is not None:
+                    mem += self.guide.prompt_section(obs.summary)
                 bd = billy.decide(obs, self.kb.retrieve(obs.summary), list(self.recent),
                                   self.controller, memory=mem)
                 plan = bd.plan

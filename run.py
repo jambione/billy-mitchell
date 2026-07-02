@@ -32,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="pure reflex run (no Billy/Coach LLM calls)")
     p.add_argument("--seed-skills", action="store_true",
                    help="seed the SkillLibrary with SMB's transferable tactics (cross-game carry-forward)")
+    p.add_argument("--no-guide", action="store_true",
+                   help="skip walkthrough ingestion/usage (walkthrough/<SYSTEM>/<game>)")
     p.add_argument("--fresh", action="store_true",
                    help="wipe learned lessons, solution cache AND skills before starting")
     p.add_argument("--rl", metavar="MODEL", default="",
@@ -62,13 +64,18 @@ def main(argv: list[str] | None = None) -> int:
 
     game = GAMES[args.game]()
     game.cli_name = args.game   # for self-describing outputs (e.g. demo-request teleop commands)
+    # Walkthrough learning: a text FAQ at walkthrough/<SYSTEM>/<game> is ingested once
+    # (LLM read when available, heuristic otherwise) and then seeds search + LLM prompts.
+    from billy.knowledge.guide import load_guide_for
+    guide = None if args.no_guide else load_guide_for(game, args.game)
     sections = None
     if args.rl_sections:
         # Lazy import (torch/SB3 only needed with RL). Sub-policies seed micro-search at their
         # registered hazards; the cache/search/reflex loop is otherwise untouched.
         from billy.rl.section_policy import SectionController, default_smb_sections
         sections = SectionController(default_smb_sections())
-    director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills, sections=sections)
+    director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills,
+                        sections=sections, guide=guide)
     if args.rl:
         # Lazy import so torch/SB3 are only needed when actually using RL. The learned policy
         # becomes the reflex tier; its fallback is the game's hand-crafted reflex, so cache +
