@@ -36,15 +36,23 @@ else **LLM**. On death → **learn-from-death** (search a survivor past the deat
    frontier on a timed-out-alive attempt.
 3. **SolutionCache** — `knowledge/cache.py`; exact verified sequences keyed `(level_key, x_bucket)`.
    The compounding memory. Persisted tiny (button steps only) to `data/solutions.jsonl`.
+   **Reachback**: on a miss (or weak hit), a HIGH-reach entry a few buckets behind is clone-verified
+   from the live state before replay — demos bind to their exact state, so verify decides honestly.
 4. **Micro-search** — `director.py` `_micro_search`/`rollout_candidate`; runs on
    `session.clone_state()` under `search_mode()` so frames never display (no visible rewind).
    Candidates = reflex spread + Skills, incl. distilled `sequence` skills (`knowledge/distill.py` —
    significant banks auto-become transferable, console-gated, search-seeded only).
    `BILLY_PARALLEL_SEARCH=N` fans candidates out to N emulator workers (`search_pool.py`).
-5. **Human demos (pull-based)** — when search + stuck-training all miss, `stuck_trainer.request_demo`
-   files a teleop command (`data/demo_requests.jsonl`). One demo = cache entry + tape
-   (`teleop.py --tape`) + BC warm-start (`train_section.py --demo`, `billy/rl/bc.py`).
-6. **LLM (Billy/Coach)** — only when search finds nothing / persona. Off the hot loop.
+5. **Human demos** — PULL: when search + stuck-training all miss, `stuck_trainer.request_demo`
+   files a teleop command (`data/demo_requests.jsonl`). PUSH: **T in the watch window** = live
+   takeover (`director._human_takeover`) — the segment banks from Billy's own live state (the
+   durable carrier; mid-level savestate demos often fail verify from shifted approaches).
+   One demo = cache entry + tape (`teleop.py --tape`) + distilled skill + BC warm-start
+   (`train_section.py --demo`, `billy/rl/bc.py`).
+6. **Walkthrough guide** — `knowledge/guide.py`; a text FAQ at `walkthrough/<SYSTEM>/<game>` is
+   ingested once (LLM read merged with heuristic parse → `data/guides/`). Seeds search candidates
+   + LLM prompt context. Advice only, never authority.
+7. **LLM (Billy/Coach)** — only when search finds nothing / persona. Off the hot loop.
 
 ## Invariants — do not break
 - **Exact-replay only.** The cache replays the *exact* button sequence from the same state. Embeddings
