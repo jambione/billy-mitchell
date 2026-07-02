@@ -102,6 +102,26 @@ class SolutionCache:
     def is_dead(self, level_key: LevelKey, x: int, y: int = 0) -> bool:
         return bucket_of(level_key, x, y) in self.dead_ends
 
+    def nearby_reaching(self, level_key: LevelKey, x: int, *, min_gain: int,
+                        back_buckets: int = 5) -> CacheEntry | None:
+        """Best HIGH-REACH entry keyed within a few buckets BEHIND x (any elevation band).
+
+        Exact keys miss when the player never stands on-ground in the exact 16px tile where a
+        long solution (typically a human demo) was banked. This finds such an entry so the
+        Director can CLONE-VERIFY it from the live state before replaying — the verify is the
+        gate, so this never blind-replays (the exact-replay invariant holds)."""
+        lk = tuple(level_key)
+        b = x // config.CACHE_BUCKET_PX
+        best: CacheEntry | None = None
+        for (k, xb, _yb), e in self.entries.items():
+            if k != lk or not (b - back_buckets <= xb <= b):
+                continue
+            if e.reach_after < x + min_gain:
+                continue
+            if best is None or e.reach_after > best.reach_after:
+                best = e
+        return best
+
     def solved_frontier(self, level_key: LevelKey) -> int:
         """Highest solved progress-bucket (in px) on this level — how far the policy reaches."""
         lk = tuple(level_key)

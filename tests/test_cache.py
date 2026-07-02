@@ -73,3 +73,19 @@ def test_solved_frontier_is_per_level(tmp_path):
     c.put(LK, 600, _plan(), reach_after=660)
     assert c.solved_frontier(LK) == (900 // 16) * 16  # highest solved bucket in px
     assert c.solved_frontier((1, 1)) == 0             # different level: nothing solved
+
+
+def test_nearby_reaching_finds_high_reach_entry_behind(tmp_path):
+    """The demo-rot case: a 2510px demo at bucket 47 must be findable from bucket 51."""
+    from billy.knowledge.cache import SolutionCache
+    from billy.abstractions import Step
+    cache = SolutionCache(path=tmp_path / "s.jsonl")
+    lk = (0, 1, 2)
+    cache.put(lk, 752, [Step(2724, 0x80)], reach_after=3266, y=200)   # the demo (yband 8)
+    cache.put(lk, 816, [Step(6, 0x80)], reach_after=874, y=100)       # a short local hop
+    # From x=816 (bucket 51), any elevation: the demo 4 buckets back qualifies…
+    e = cache.nearby_reaching(lk, 816, min_gain=200)
+    assert e is not None and e.reach_after == 3266
+    # …but not from too far past it, and not when only low-gain entries are near.
+    assert cache.nearby_reaching(lk, 950, min_gain=200) is None
+    assert cache.nearby_reaching(lk, 816, min_gain=3000) is None

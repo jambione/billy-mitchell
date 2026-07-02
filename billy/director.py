@@ -82,6 +82,7 @@ class Director:
         self._tape_replay: list | None = None
         self._tape_mode = False
         self._learned_buckets: set = set()
+        self._reachback_miss: set = set()   # per-attempt: buckets where reachback verify failed
         self._last_pit_death_x: int = 0
         # Optional hazard-scoped RL sub-policies: at a registered section they SEED micro-search with
         # a learned crossing candidate (verified+banked like any solution). None = pure reflex/search.
@@ -278,7 +279,34 @@ class Director:
         cached = self.cache.get(obs.level_key, obs.progress, obs.elevation)
         if cached is not None and self.hooks.stale_cache(obs, cached):
             return None
+        if cached is None and on_ground:
+            cached = self._reachback(obs)
         return cached
+
+    def _reachback(self, obs: Observation):
+        """On an exact-key miss, clone-verify a HIGH-reach entry banked a few tiles behind.
+
+        The killer case: a human demo reaching thousands of px sits at bucket 47, but the
+        live run's on-ground moments land at bucket 51 — the exact key never hits and the
+        demo rots. Reachback finds it and VERIFIES it from the live state (one invisible
+        rollout); only a proven survive+advance gets replayed, so the exact-replay invariant
+        holds. Failed verifies are blacklisted per attempt (no re-verify spam)."""
+        if obs.progress < 16:
+            return None
+        bkey = bucket_of(obs.level_key, obs.progress, obs.elevation)
+        if bkey in self._reachback_miss:
+            return None
+        cand = self.cache.nearby_reaching(obs.level_key, obs.progress,
+                                          min_gain=config.REACHBACK_MIN_GAIN)
+        if cand is None:
+            return None
+        survived, reach = self._evaluate(cand.plan, settle=config.SEARCH_HORIZON_FRAMES)
+        if survived and reach > obs.progress + config.REACHBACK_MIN_GAIN // 2:
+            print(f'  🎯 reachback: verified a banked long solution from '
+                  f'{obs.level_label}@{obs.progress} (reach {reach}) — replaying')
+            return cand
+        self._reachback_miss.add(bkey)
+        return None
 
     def _candidates(self, obs: Observation) -> list[Plan]:
         """Search candidate set on a cache MISS: the reflex's hand-picked spread, PLUS the
@@ -713,6 +741,7 @@ class Director:
         safe_history.append((obs.progress, obs.elevation, obs.level_key, self.session.clone_state()))
         last_snap_x = obs.progress
         self._learned_buckets.clear()
+        self._reachback_miss.clear()
         self._tape_begin_level(obs)
         tape_frontier = obs.progress
 

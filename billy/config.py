@@ -68,6 +68,10 @@ DEADEND_BACKTRACK = 4
 # dead-end memory + Phase-2 backtracking, not a blanket bias. Kept as a tunable knob.
 ELEVATION_TIEBREAK = 0.0
 MAX_BUCKET_VISITS = int(os.environ.get("BILLY_MAX_BUCKET_VISITS", 8))  # same hazard N times w/o passing -> give up
+# Reachback verify: on an exact-key cache miss, a HIGH-reach entry banked a few buckets behind
+# (typically a human demo whose exact tile the live run never lands on) is clone-verified from
+# the CURRENT state and replayed only if it provably survives+advances. The verify is the gate.
+REACHBACK_MIN_GAIN = int(os.environ.get("BILLY_REACHBACK_MIN_GAIN", "200"))
 # Trust-replay (default): replay cached plans verbatim; a deterministic emulator reproduces them.
 # Set BILLY_VERIFY_REPLAY=1 to instead clone-check each replay (re-searches on mismatch — can drift).
 VERIFY_REPLAY = os.environ.get("BILLY_VERIFY_REPLAY", "0") == "1"
