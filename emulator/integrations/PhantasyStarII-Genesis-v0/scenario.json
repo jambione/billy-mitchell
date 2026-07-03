@@ -1,0 +1,9 @@
+{
+  "done": {
+    "condition": "all",
+    "variables": {}
+  },
+  "reward": {
+    "variables": {}
+  }
+}

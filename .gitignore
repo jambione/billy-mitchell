@@ -1,6 +1,8 @@
 # ROMs — never commit copyrighted game files
 roms/
 *.nes
+*.bin
+emulator/integrations/*/rom.md
 
 # Lock-step IPC runtime + emulator savestates
 .runtime/

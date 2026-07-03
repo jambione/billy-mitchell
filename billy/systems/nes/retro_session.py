@@ -307,7 +307,8 @@ class RetroSession:
     """A stable-retro env presented through the engine's lock-step Session contract."""
 
     def __init__(self, render: bool | None = None, game: str | None = None,
-                 inttype=None, controller_mod=None, ram_size: int | None = None) -> None:
+                 inttype=None, controller_mod=None, ram_size: int | None = None,
+                 restricted_actions=None) -> None:
         # Watchable by default; set BILLY_HEADLESS=1 for fast benchmarks (no window).
         if render is None:
             render = os.environ.get("BILLY_HEADLESS", "0") != "1"
@@ -322,12 +323,16 @@ class RetroSession:
         self._retro_names = getattr(self.controller, "RETRO_NAMES", {})
         # Always render to an offscreen array; WE decide which frames reach the screen, so
         # micro-search frames stay hidden (the live run never visibly rewinds).
+        # `restricted_actions` (e.g. Actions.ALL) is a per-console need: the Genesis FILTERED
+        # space silently strips START, so its system opts out of filtering.
+        make_kwargs = {"render_mode": "rgb_array"}
+        if restricted_actions is not None:
+            make_kwargs["use_restricted_actions"] = restricted_actions
         try:
-            self.env = retro.make(game, render_mode="rgb_array", inttype=inttype)
+            self.env = retro.make(game, inttype=inttype, **make_kwargs)
         except FileNotFoundError:
             if inttype == Integrations.STABLE:
-                self.env = retro.make(game, render_mode="rgb_array",
-                                      inttype=Integrations.EXPERIMENTAL)
+                self.env = retro.make(game, inttype=Integrations.EXPERIMENTAL, **make_kwargs)
             else:
                 raise
         self._viewer = _Viewer(controller_mod=self.controller) if render else None
