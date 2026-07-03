@@ -18,12 +18,13 @@ from billy.director import Director
 from billy.games.smb import SmbGame
 from billy.games.smb_lost import SmbLostGame
 from billy.games.pixel import PixelPlatformerGame
+from billy.games.shmup import ShmupGame
 from billy.games.smw import SmwGame
 from billy.games.zelda import ZeldaGame
 from billy.knowledge import KnowledgeBase, SkillLibrary
 
 GAMES = {"smb": SmbGame, "smb_lost": SmbLostGame, "zelda": ZeldaGame, "smw": SmwGame,
-         "pixel": PixelPlatformerGame}
+         "pixel": PixelPlatformerGame, "shmup": ShmupGame}
 
 
 def main(argv: list[str] | None = None) -> int:

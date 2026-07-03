@@ -287,6 +287,7 @@ class State:
     ram: bytes
     done: bool = False
     rgb: object = None   # latest rgb_array frame (optional; Zelda vision uses this)
+    info: dict = None    # integration info (lives/score/…) — optional, RAM-map-free games use it
 
 
 def _resolve_inttype(inttype) -> Integrations:
@@ -339,6 +340,7 @@ class RetroSession:
         self._frame = 0
         self._ram = bytes(self.ram_size)
         self._rgb: np.ndarray | None = None
+        self._info: dict = {}
         self._slots: dict[int, bytes] = {}
         self._done = False
         self._started = False
@@ -441,6 +443,7 @@ class RetroSession:
     # --- engine Session contract --------------------------------------------------------
     def reset(self) -> None:
         out = self.env.reset()
+        self._info = out[1] if isinstance(out, tuple) and len(out) > 1 else {}
         self._started = True
         self._done = False
         self._frame = 0
@@ -456,7 +459,8 @@ class RetroSession:
             self.reset()
 
     def read_state(self, timeout_s: float | None = None) -> State:
-        return State(frame=self._frame, ram=self._ram, done=self._done, rgb=self._rgb)
+        return State(frame=self._frame, ram=self._ram, done=self._done, rgb=self._rgb,
+                     info=self._info)
 
     def send_plan(self, plan) -> None:
         """Execute every frame of the plan on the live env, then publish the resulting RAM."""
@@ -508,10 +512,10 @@ class RetroSession:
         result = self.env.step(action)
         # gymnasium 5-tuple (obs, reward, terminated, truncated, info) or legacy 4-tuple.
         if len(result) == 5:
-            _, _, terminated, truncated, _ = result
+            _, _, terminated, truncated, self._info = result
             self._done = bool(terminated or truncated)
         else:
-            _, _, self._done, _ = result
+            _, _, self._done, self._info = result
         self._frame += 1
         try:
             self._rgb = np.asarray(self.env.render())
@@ -538,3 +542,10 @@ class RetroSession:
     def _refresh_ram(self) -> None:
         ram = self.env.get_ram()
         self._ram = bytes(np.asarray(ram, dtype=np.uint8)[:self.ram_size])
+        # Recompute integration info (lives/score/…) from the CURRENT RAM. After a state
+        # restore no env.step runs, so without this `info` would stay stale from before the
+        # rewind — and an info-terminal game (shmup) would read a phantom death on respawn.
+        try:
+            self._info = self.env.data.lookup_all()
+        except Exception:
+            pass

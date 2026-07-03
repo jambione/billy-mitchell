@@ -119,19 +119,21 @@ class ShmupTracker:
 
         enemies = [b for b in blobs if b is not picked]
 
-        # DEATH = the bright-sprite area COLLAPSES. A life lost clears the ship (and the wave
-        # around it), roughly halving the field's sprite area in one observe — a sharp drop
-        # below a slow baseline. This is far more reliable than watching the fast-respawning
-        # ship, which never fully vanishes. The baseline (a lagging EMA) still reads the
-        # pre-death level at the moment of the drop.
+        # SURVIVAL always advances — the progress signal a longer trajectory earns. It must
+        # NOT be gated on the (best-effort, fragile) pixel death below, or a spurious death
+        # latch would freeze progress and starve the learning loop of a reach signal.
+        self._alive += 1
+        # DEATH-from-pixels (view.dead) is a DIAGNOSTIC only: the sprite area COLLAPSES when a
+        # life is lost (the ship + surrounding wave clear, roughly halving field area). It's
+        # clean under a stable-firing policy but confounded by the player's own bullet area,
+        # so the adapter uses the integration's lives for the real terminal, not this. Kept so
+        # the probe can grade it against ground truth.
         if (not self._dead and self._area_ema is not None
                 and self._area_ema > _MIN_FIELD
                 and field_area < _DEATH_DROP * self._area_ema):
             self._dead = True
         self._area_ema = (float(field_area) if self._area_ema is None
                           else 0.85 * self._area_ema + 0.15 * field_area)
-        if not self._dead:
-            self._alive += 1
 
         self._prev = frame
         view = ShmupView(frame=frame_no, progress=self._alive, player=self.player,

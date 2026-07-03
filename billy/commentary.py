@@ -127,8 +127,8 @@ class Commentator:
             if size is not None and prev_size is not None and size > prev_size:
                 key, force = "powerup", True
             elif (len(getattr(scene, "enemies", ())) < len(getattr(prev, "enemies", ()))
-                  and getattr(prev, "enemy_ahead", lambda **_kw: False)(48)):
-                key = "stomp"   # scenes without enemy perception (pixel games) skip this
+                  and getattr(prev, "enemy_ahead", lambda *_a, **_k: False)(48)):
+                key = "stomp"   # scenes without enemy_ahead (pixel/shmup games) skip this
             elif _collectible_delta(scene, prev):
                 key = "coin"
         if key is None and px > self._best_x and px >= self._next_milestone:
