@@ -6,7 +6,9 @@ engine needs (progress, player position, on_ground, death, level identity). The 
 game adapter built ONLY on these lets Billy learn any side-scroller without RAM offsets.
 """
 from .core import estimate_scroll, find_blobs, frame_fingerprint, to_gray
+from .shmup import ShmupTracker, ShmupView, bright_blobs, bright_mask
 from .tracker import PixelTracker, PixelView
 
 __all__ = ["estimate_scroll", "find_blobs", "frame_fingerprint", "to_gray",
-           "PixelTracker", "PixelView"]
+           "PixelTracker", "PixelView",
+           "ShmupTracker", "ShmupView", "bright_blobs", "bright_mask"]
