@@ -249,13 +249,21 @@ class Director:
     _SNAP_CHUNK = 6   # commit live plans in chunks this many frames long (dense snapshot trail)
 
     def _commit(self, plan: Plan, safe_history, last_snap_x: int,
-                *, record_tape: bool = True) -> tuple[Observation, int]:
+                *, record_tape: bool = True, interruptible: bool = False) -> tuple[Observation, int]:
         """Execute a committed (live) plan in small same-button chunks, appending a snapshot to the
         trail every ~tile of new progress. Splitting a Step into equal sub-steps of the same button
         mask is identical input frame-for-frame, so behaviour is unchanged — but the dense trail
-        guarantees learn-from-death has a runway snapshot before the next death, even mid-jump."""
+        guarantees learn-from-death has a runway snapshot before the next death, even mid-jump.
+
+        `interruptible` (ROUTINE reflex plans only — never a replay or a verified search plan,
+        whose banked trajectory must run to its end): stop early when an on-ground chunk crosses
+        a bucket holding a cached solution, so the decision loop can replay it from its exact
+        keyed state. Banks are keyed at on-ground snapshot spots INSIDE commits, which plan-
+        boundary decisions never revisit on a deterministic pass — without this cut a survivor
+        learned from a death sits one bucket off the decision cadence and never fires."""
         obs = self._observe()
         start_key = obs.level_key
+        start_bucket = bucket_of(obs.level_key, obs.progress, obs.elevation)
         executed: list[Step] = []
         for step in plan:
             remaining = step.frames
@@ -273,6 +281,13 @@ class Director:
                     # into the new area. Return so the main loop handles the clear/screen change
                     # (checkpoint, tape hand-off, fresh decisions). The executed prefix IS the
                     # committed input, so it still extends the old level's tape.
+                    if record_tape and executed:
+                        append_plan(self._tape_record, executed)
+                    return obs, last_snap_x
+                if (interruptible and getattr(obs.raw, "on_ground", True)
+                        and bucket_of(obs.level_key, obs.progress, obs.elevation) != start_bucket
+                        and self.cache.get(obs.level_key, obs.progress,
+                                           obs.elevation) is not None):
                     if record_tape and executed:
                         append_plan(self._tape_record, executed)
                     return obs, last_snap_x
@@ -389,19 +404,32 @@ class Director:
         learn_horizon = (self.hooks.learn_horizon_frames(level_label, death_x)
                          or config.LEARN_HORIZON_FRAMES)
 
+        starts: list = []
+        short_runway: list = []
         for x, y, lk, snap in reversed(safe_history):   # nearest the death first
             if level_key and lk[:2] != level_key[:2]:
                 continue                                # same x on another level is not this death
             runway = death_x - x
+            if runway <= 0:
+                continue
             if runway < config.MIN_RUNWAY_PX:
-                continue                                # too close to set up an escape
+                short_runway.append((x, y, lk, snap))   # too close to set up — last resort only
+                continue
             if runway > learn_horizon:
                 action = self.hooks.learn_runway_action(
                     level_label, death_x, runway, config.LEARN_HORIZON_FRAMES)
                 if action == "continue":
                     continue
                 break                                   # further back is out of rollout reach
+            starts.append((x, y, lk, snap))
+        if not starts:
+            # No snapshot with proper runway (airborne arcs leave holes in the trail right
+            # before a hazard). A tight-runway start costs only rollouts — better a cramped
+            # search than learning nothing and walking into the same death forever.
+            starts = short_runway[:1]
 
+        for x, y, lk, snap in starts:
+            runway = death_x - x
             bkey = bucket_of(lk, x, y)
             if bkey in self._learned_buckets:
                 continue
@@ -1157,6 +1185,7 @@ class Director:
                               or self._verify(cached.plan,
                                               max(plan_frames(cached.plan) + 24,
                                                   config.SEARCH_HORIZON_FRAMES))))
+            routine = False   # True for reflex plans only — safe to cut at a cached bucket
             if do_replay:
                 plan = cached.plan
                 replay_calls += 1
@@ -1288,16 +1317,19 @@ class Director:
             elif decision.needs_billy:
                 plan = list(decision.plan)   # reflex's own fallback (e.g. a recovery jump)
                 action_note = f"reflex {decision.note}"
+                routine = True
             else:
                 plan = list(decision.plan)
                 action_note = f"{decision.note} {self._label(plan)}"
+                routine = True
 
             # Commit the plan in small same-button chunks, snapshotting the trail as we go. Chunking
             # is behaviour-preserving (identical per-frame input) but lets us capture snapshots
             # DURING a long jump — so learn-from-death always has a runway snapshot before a death,
             # even when a single ballistic plan skips many tiles at once.
             replay_x, replay_y = obs.progress, obs.elevation
-            obs, last_snap_x = self._commit(plan, safe_history, last_snap_x)
+            obs, last_snap_x = self._commit(plan, safe_history, last_snap_x,
+                                            interruptible=routine)
             if obs.dead:
                 if "replay" in action_note:
                     self._drop_solution(lk, replay_x, y=replay_y, reason="replay_fail")

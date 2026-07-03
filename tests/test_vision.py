@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from billy.vision import PixelTracker, estimate_scroll, find_blobs, to_gray
 from billy.vision.core import (background_color, color_histogram,
-                               fingerprint_distance, motion_mask)
+                               fingerprint_distance, ground_distance, motion_mask)
 
 H, W = 224, 240
 SKY = (92, 148, 252)      # SMB-ish sky
@@ -96,6 +96,38 @@ def test_tracker_progress_follows_the_march():
     # progress ≈ camera travel (120px) + on-screen x; require the right ballpark + monotone
     assert last.progress > 100
     assert last.camera_x == 30 * 4 - 4  # first update has no prev frame -> no scroll
+
+
+def test_ground_distance_finds_the_ground_line():
+    f = _frame(_world(), 300)
+    bg = background_color(f)
+    assert ground_distance(f, bg, 40, 60, GROUND_Y - 10) == 10   # ground 10 rows below
+    assert ground_distance(f, bg, 40, 60, GROUND_Y + 4) == 0     # already inside ground
+    assert ground_distance(f, bg, 40, 60, 100, max_scan=20) is None   # open sky: no support
+
+
+def test_tracker_on_ground_from_ground_line():
+    world = _world()
+    # Standing: feet on the ground line while the camera scrolls.
+    t = PixelTracker()
+    cam, last = 100, None
+    for i in range(20):
+        cam += 4
+        last = t.update(_frame(world, cam, player=(80, GROUND_Y - 16)), frame_no=i * 4)
+    assert last.player is not None
+    assert last.on_ground, "feet on the ground line must read grounded"
+    # Stationary: no motion = no fresh blob, but ground support is static evidence.
+    for i in range(20, 23):
+        last = t.update(_frame(world, cam, player=(80, GROUND_Y - 16)), frame_no=i * 4)
+    assert last.on_ground, "a player who stopped moving did not stop standing"
+    # Airborne: same march with the player high in the sky.
+    t2 = PixelTracker()
+    cam = 100
+    for i in range(20):
+        cam += 4
+        last = t2.update(_frame(world, cam, player=(80, 120)), frame_no=i * 4)
+    assert last.player is not None
+    assert not last.on_ground, "a player in open sky must not read grounded"
 
 
 def test_tracker_death_on_pit_fall():

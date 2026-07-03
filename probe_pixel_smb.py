@@ -145,6 +145,11 @@ def main() -> int:
     drift_mae, drift_p95 = float(drift.mean()), float(np.percentile(drift, 95))
     og_t, og_p = np.array(og_truth), np.array(og_pixel)
     og_agree = float((og_t == og_p).mean()) if len(og_t) else 0.0
+    # Error DIRECTION matters more than the rate: a false negative only misses a cache
+    # lookup; a false positive lets the engine snapshot an AIRBORNE state (non-reproducible
+    # replay — invariant violation).
+    og_fp = float((og_p & ~og_t).sum() / max(1, (~og_t).sum()))   # airborne read as grounded
+    og_fn = float((~og_p & og_t).sum() / max(1, og_t.sum()))      # grounded read as airborne
 
     n_obs = sum(len(s[0]) for s in segs)
     print("== sprint-hop 1-1 run ==")
@@ -157,7 +162,9 @@ def main() -> int:
           f"p95={drift_p95:.1f}px")
     print(f"cross-life reproducibility (same spot, {len(segs)} lives): "
           f"spread mean={repro_mean:.1f}px  p95={repro_p95:.1f}px  (cache bucket = 16px)")
-    print(f"on_ground agreement={100 * og_agree:.0f}% (n={len(og_t)})")
+    print(f"on_ground agreement={100 * og_agree:.0f}% (n={len(og_t)})  "
+          f"false-grounded={100 * og_fp:.0f}% of airborne  "
+          f"missed-grounded={100 * og_fn:.0f}% of grounded")
     print(f"false deaths={false_deaths}")
     print(f"tracker cost: mean={1000 * np.mean(times):.2f}ms  "
           f"p95={1000 * np.percentile(times, 95):.2f}ms per observe")
