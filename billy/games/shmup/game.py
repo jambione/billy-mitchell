@@ -88,7 +88,6 @@ class ShmupGame(Game):
         self.tracker = ShmupTracker()
         self.system = _TrackedSystem(retro_id, self.tracker)
         self._session: Session | None = None
-        self._start_lives: int | None = None
         self._last_progress = 0
 
     # --- info (terminal/score) plumbed from the session's integration info ------------------
@@ -110,9 +109,11 @@ class ShmupGame(Game):
                                summary="no frame", ascii_map="", raw=None)
         view = self.tracker.update(rgb, frame)
         # DEATH from the integration's lives (pixels can't give a robust terminal here); the
-        # ship + enemies driving the reflex are all pixel-perceived. First life lost = death,
-        # the tight wall the search must push (survive longer before the first hit).
-        dead = self._start_lives is not None and lives is not None and lives < self._start_lives
+        # ship + enemies driving the reflex are all pixel-perceived. Terminal = ALL lives gone
+        # (game over), not the first hit — that gives tape evolution a rich target (survive
+        # every wave through all lives) with room to keep compounding, instead of maxing out
+        # the first life in one generation.
+        dead = lives is not None and lives <= 0
         # PROGRESS = survival (pixel, monotonic, reproducible) + score (kills). Both reward the
         # search for a longer/better trajectory from the deterministic boot.
         progress = view.progress + self._SCORE_W * score
@@ -125,6 +126,13 @@ class ShmupGame(Game):
     def make_reflex(self) -> ReflexPolicy:
         return ShmupReflex()
 
+    def tape_moves(self) -> list[int]:
+        """Movement vocabulary for tape evolution — always firing, every dodge direction (the
+        ship lives at the bottom, so left/right/up + diagonals cover the escapes)."""
+        f = C.B
+        return [C.mask(f), C.mask(f, C.LEFT), C.mask(f, C.RIGHT), C.mask(f, C.UP),
+                C.mask(f, C.LEFT, C.UP), C.mask(f, C.RIGHT, C.UP), C.mask(f, C.DOWN)]
+
     def level_cleared(self, prev_key: tuple, new_key: tuple) -> bool:
         return False
 
@@ -135,15 +143,15 @@ class ShmupGame(Game):
         return False
 
     def boot(self, session: Session) -> Observation:
-        """A fixed START-then-settle dance drops us into live gameplay (the integration's
-        `gameover` is a counter and `terminated` a fixed timer, so we can't gate on them).
-        Record the starting life count as the death baseline."""
+        """Press START, then settle just long enough to be live — and NO longer. The anchor
+        (this state, checkpointed to slot 0) is where tape evolution begins, so it must land
+        EARLY, while the whole trajectory is still malleable and all lives are intact: idling
+        here loses a life around frame ~190, which would anchor evolution at a doomed state
+        with no headroom. (The integration's `gameover` is a counter and `terminated` a fixed
+        timer, so we can't gate on them — a short fixed dance is the reliable boot.)"""
         self._session = session
         session.reset()
         self.tracker.rebase()
-        for i in range(30):
-            session.send_plan([Step(8, C.START)] if i < 2 else [Step(8, 0)])
-        info = self._info()
-        self._start_lives = int(info.get("lives", 3) or 3)
+        session.send_plan([Step(8, C.START), Step(32, 0)])
         st = session.read_state()
         return self.observe(st.frame, st.ram, getattr(st, "rgb", None))

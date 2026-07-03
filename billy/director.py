@@ -107,6 +107,7 @@ class Director:
         self._tape_key: tuple = ()
         self._tape_replay: list | None = None
         self._tape_mode = False
+        self._evolver = None                # lazy TapeEvolver for reactive (tape-evolving) games
         self._learned_buckets: set = set()
         self._reachback_miss: set = set()   # per-attempt: buckets where reachback verify failed
         self._reachback_reported: set = set()   # per-session: spots already reported (quiet logs)
@@ -923,7 +924,94 @@ class Director:
               f"ground={getattr(obs.raw, 'on_ground', True)}")
         return False
 
+    _EVOLVE_MAX_STEPS = 400   # cap a tape's length (frames = steps * reflex chunk)
+
+    def _tape_fitness(self, anchor, tape: Plan) -> int:
+        """Roll a whole tape from the boot anchor on a clone; return progress at death/end.
+        Deterministic (same anchor + same inputs => same run), invisible, live untouched."""
+        self.session.restore(anchor)
+        obs = self._observe()
+        with self.session.search_mode():
+            for step in tape:
+                self.session.send_plan([step])
+                obs = self._observe()
+                if obs.dead:
+                    break
+        fit = obs.progress
+        self.session.restore(anchor)
+        self._observe()
+        return fit
+
+    def _evolve_seed(self) -> list[Step]:
+        """The tape to evolve FROM on the very first attempt: the SIMPLEST viable trajectory —
+        the game's first move (always-fire for a shmup) held for a short stretch. Deliberately
+        NOT the hand reflex: the point of evolution is to LEARN the reactive policy from search,
+        not inherit it. From this dumb seed the hill-climb discovers the whole dodge."""
+        moves = self.game.tape_moves()
+        return [Step(self._SNAP_CHUNK, moves[0]) for _ in range(20)]
+
+    def _run_attempt_evolve(self, n: int) -> metrics.AttemptResult:
+        """Reactive-game attempt: EVOLVE a whole input tape (search over trajectories) instead
+        of position-keyed local search. The best tape is banked and becomes next attempt's base,
+        so survival/score compounds with no position key — the answer for a game whose death is
+        a positioning problem local search can't reach (a shmup, a moving-enemy gauntlet)."""
+        from .knowledge.tape_evolve import TapeEvolver
+
+        t0 = time.monotonic()
+        self.session.load_state(0)                      # boot anchor (deterministic origin)
+        anchor = self.session.clone_state()
+        obs = self._observe()
+        level_key = obs.level_key
+        if self._evolver is None:
+            self._evolver = TapeEvolver(self.game.tape_moves(), slot=self._SNAP_CHUNK,
+                                        max_steps=self._EVOLVE_MAX_STEPS)
+
+        entry = self.tapes.get(level_key)
+        replayed_prior = entry is not None and bool(entry.plan)
+        base = ([Step(s.frames, s.buttons) for s in entry.plan] if replayed_prior
+                else self._evolve_seed())
+        base_fit = self._tape_fitness(anchor, base)
+
+        rounds = int(os.environ.get("BILLY_EVOLVE_ROUNDS", "5"))
+        mutants = int(os.environ.get("BILLY_EVOLVE_MUTANTS", "10"))
+        best, best_fit, evals = self._evolver.evolve(
+            base, lambda t: self._tape_fitness(anchor, t), rounds=rounds, mutants=mutants)
+
+        improved = best_fit > base_fit or not replayed_prior
+        if improved:
+            self.tapes.put(level_key, best, best_fit, clears_level=False)
+
+        # Commit the best tape LIVE (visible, real outcome) from the anchor.
+        self.session.restore(anchor)
+        obs = self._observe()
+        self.commentator.reset(obs.raw)
+        committed = 0
+        for step in best:
+            self.session.send_plan([step])
+            committed += step.frames
+            obs = self._observe()
+            if obs.dead:
+                break
+        outcome = "game_over" if obs.dead else "timeout"
+        gained = best_fit - base_fit
+        print(f'  [attempt {n}] 🧬 evolved tape: survived {base_fit}→{best_fit} '
+              f'(+{gained}) over {evals} rollouts — {"banked" if improved else "no gain"}')
+        result = metrics.AttemptResult(
+            attempt=n, outcome=outcome, max_x=best_fit, frames=max(committed, 1),
+            billy_calls=0, world_stage=obs.level_label, levels_cleared=0, score=obs.score,
+            fastest_clear_frames=0, duration_s=round(time.monotonic() - t0, 2),
+            search_calls=evals, replay_calls=1 if replayed_prior else 0, tape_frames=committed,
+            frontier_x=best_fit, frames_to_frontier=0,
+            banks=1 if improved else 0, drops=0, learns=1 if gained > 0 else 0,
+            level_frontier=best_fit)
+        metrics.record(result)
+        print(f"  [attempt {n}] {outcome.upper()} — reached {obs.level_label}, "
+              f"survived {best_fit}, score {obs.score}")
+        return result
+
     def run_attempt(self, n: int) -> metrics.AttemptResult:
+        if self.game.evolves_tapes:
+            return self._run_attempt_evolve(n)
         t0 = time.monotonic()
         self.ledger.set_attempt_num(n)
         self.ledger.begin_attempt(self.cache)
