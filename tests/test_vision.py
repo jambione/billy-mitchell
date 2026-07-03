@@ -135,3 +135,34 @@ def test_tracker_area_change_bumps_identity_and_rebases():
         v = t.update(cave, frame_no=i)
     assert v.area_seq == 1, "sustained scene change must bump the area identity"
     assert v.camera_x == 0, "progress re-bases in the new area"
+
+
+def test_tracked_session_time_travels_the_tracker():
+    """clone/restore must snapshot+restore TRACKER state alongside emulator state —
+    otherwise invisible search rollouts desync pixel perception from the machine."""
+    from billy.games.pixel.game import _TrackedSession
+
+    class _FakeSession:
+        def __init__(self):
+            self.n = 0
+        def clone_state(self):
+            return bytes([self.n])
+        def restore(self, snap):
+            self.n = snap[0]
+        def save_state(self, slot=0):
+            pass
+        def load_state(self, slot=0):
+            pass
+
+    t = PixelTracker()
+    s = _TrackedSession(_FakeSession(), t)
+    t.camera_x = 500
+    snap = s.clone_state()
+    t.camera_x = 900          # play/search moved on…
+    s.restore(snap)           # …then the engine rewound
+    assert t.camera_x == 500, "tracker did not time-travel with the emulator"
+    s2 = _TrackedSession(_FakeSession(), t)
+    s2.save_state(3)
+    t.camera_x = 1234
+    s2.load_state(3)
+    assert t.camera_x == 500
