@@ -154,7 +154,11 @@ class PixelPlatformerGame(Game):
             summary=view.summary(),
             ascii_map="",
             raw=view,
-            elevation=(view.player[1] + view.player[3]) if view.player else 0,
+            # Don't key memory on a signal we can't reproduce: blob bottoms jitter ±8px
+            # (cell quantization), so raw elevation splits identical spots into different
+            # y-bands and banked solutions never replay. One band until pixel ground
+            # estimation is solid; x-buckets carry the position identity.
+            elevation=0,
         )
 
     def make_reflex(self) -> ReflexPolicy:
