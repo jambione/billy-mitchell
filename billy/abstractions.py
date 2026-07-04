@@ -182,3 +182,14 @@ class Game(ABC):
 
         Zelda returns False so exploration progress is measured by `progress` only, not room id."""
         return end_key > start_key
+
+    def tape_moves(self) -> list[int]:
+        """Mutation vocabulary for TAPE EVOLUTION — the button masks a movement window may take
+        while search hill-climbs a whole input trajectory. Non-empty opts the game into the
+        evolve loop (for reactive games whose deaths are positioning problems local search can't
+        fix: a shmup, a moving-enemy gauntlet). Default empty = position-keyed learning only."""
+        return []
+
+    @property
+    def evolves_tapes(self) -> bool:
+        return bool(self.tape_moves())

@@ -83,6 +83,27 @@ def background_color(frame: np.ndarray, hud_rows: int = HUD_ROWS) -> np.ndarray:
     return np.array([(top >> 16) & 0xFF, (top >> 8) & 0xFF, top & 0xFF], dtype=np.uint8)
 
 
+def ground_distance(frame: np.ndarray, bg: np.ndarray, x0: int, x1: int, y0: int, *,
+                    max_scan: int = 28, min_frac: float = 0.4) -> int | None:
+    """Rows from y0 down to the first SUPPORTED row across columns [x0, x1) — the local
+    ground line under a sprite's feet. A row is supported when at least min_frac of its
+    pixels differ clearly from the background color (ground top, pipe lip, brick).
+    Returns None when nothing solid appears within max_scan rows (a gap/pit below).
+
+    Static, current-frame-only evidence: unlike motion, it works on a sprite that is
+    standing still, and it never needs history — which is what makes the on_ground verdict
+    reproducible across passes."""
+    h = frame.shape[0]
+    y0 = max(0, min(h - 1, y0))
+    band = frame[y0:min(h, y0 + max_scan), max(0, x0):max(0, x1)]
+    if band.size == 0:
+        return None
+    diff = np.abs(band.astype(np.int16) - bg.astype(np.int16))
+    solid = (diff.max(axis=-1) if band.ndim == 3 else diff) > 40
+    rows = np.flatnonzero(solid.mean(axis=1) >= min_frac)
+    return int(rows[0]) if rows.size else None
+
+
 def motion_mask(prev: np.ndarray, cur: np.ndarray, scroll_dx: int, *,
                 hud_rows: int = HUD_ROWS, thresh: int = 24) -> np.ndarray:
     """Boolean mask of pixels that moved DIFFERENTLY from the global scroll — sprites.

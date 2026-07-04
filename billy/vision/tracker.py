@@ -3,7 +3,7 @@
 Produces the minimum the Director's contracts need, from pixels alone:
   progress   — cumulative camera scroll + player screen x (the generic `Observation.progress`)
   player     — screen box of the controlled sprite, tracked across frames
-  on_ground  — feet supported by non-background pixels and vertical velocity ~0
+  on_ground  — solid ground begins within a few rows of the feet (current-frame ground line)
   dead       — player fell below the viewport, or was lost into a scene blackout
   area_seq   — level identity: bumps when the scene's color signature changes for good
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .core import (HUD_ROWS, background_color, color_histogram, estimate_scroll_cost,
-                   find_blobs, fingerprint_distance, motion_mask, to_gray)
+                   find_blobs, fingerprint_distance, ground_distance, motion_mask, to_gray)
 
 _REACQUIRE_RADIUS = 48      # px: how far the player can plausibly move between observes
 _LOST_LIMIT = 6             # updates without the player before we consider them gone
@@ -59,10 +59,9 @@ class PixelTracker:
         self.player: tuple | None = None
         self._player_v = (0.0, 0.0)
         self._px_ema: float | None = None    # smoothed player-center x (progress component)
-        self._bottoms: list[int] = []        # recent player bottom-y (ground stability)
+        self._prev_bottom: int | None = None  # last reliable box bottom (raw descent signal)
         self._lost = 0
         self._fell = False
-        self._on_ground = False       # last verdict — reused when there's no fresh evidence
         self._vx_per_frame = 0.0
         self.area_seq = 0
         self._area_hist: np.ndarray | None = None
@@ -75,6 +74,25 @@ class PixelTracker:
     def _is_blackout(gray: np.ndarray) -> bool:
         """Loading/death/transition screens: nearly uniform, nearly dark."""
         return bool(gray.std() < 8 or (gray < 24).mean() > 0.92)
+
+    def _feet_supported(self, frame: np.ndarray, box: tuple) -> bool:
+        """Grounded = solid ground begins within a few rows of the feet — judged from the
+        CURRENT frame alone (no motion, no history), which is what makes the verdict
+        reproducible across passes. Blob boxes are 8px-cell quantized (the bottom edge sits
+        0-7px BELOW the true feet), so the scan starts just above the box bottom and the
+        tolerance absorbs the quantization."""
+        x, y, bw, bh = box
+        h = frame.shape[0]
+        if y + bh >= h - 2:
+            # Feet jammed against the frame bottom: there are no rows below to distinguish
+            # real ground from the black void of a pit/death-screen (both read as non-sky), so
+            # we can't confirm support. Reporting "not grounded" here is what keeps a fall
+            # latched — a genuinely grounded sprite sits with ground rows visible below its
+            # feet (box bottom well inside the frame).
+            return False
+        bg = background_color(frame, self.hud_rows)
+        gap = ground_distance(frame, bg, x + 2, x + bw - 2, y + bh - 2)
+        return gap is not None and gap <= 4
 
     def _pick_player(self, blobs: list[tuple[int, int, int, int]],
                      h: int) -> tuple | None:
@@ -182,37 +200,56 @@ class PixelTracker:
                 # position but don't trust its BOX for ground/fall judgments.
                 x, y, bw, bh = picked
                 bottom = y + bh
-                self._bottoms = (self._bottoms + [bottom])[-3:]
-                feet = frame[min(h - 1, bottom + 1):min(h, bottom + 5), x:x + bw]
-                bg = background_color(frame, self.hud_rows)
-                solid = bool(feet.size) and (
-                    np.abs(feet.astype(np.int16) - bg.astype(np.int16)).max(axis=-1)
-                    > 40).mean() > 0.4
-                # Grounded = supported AND the bottom edge has been STABLE (box jitter from
-                # 8px cell quantization makes instantaneous vy useless).
-                stable = (len(self._bottoms) >= 2
-                          and max(self._bottoms) - min(self._bottoms) <= 8)
-                on_ground = solid and stable
+                # The motion box's bottom edge includes the sprite's GHOST (where it was) —
+                # during jump ASCENT the ghost sits on the ground, so support alone
+                # over-fires there; during DESCENT the feet pass within tolerance of any
+                # solid top (pipe lip, pit edge) while clearly falling. Ascent is vetoed by
+                # the velocity EMA (one-sided, so a standing sprite's symmetric ±8px cell
+                # jitter doesn't trip it). Descent needs the RAW bottom delta — the EMA
+                # keeps fall momentum for several observes after a real touch-down — and 12
+                # sits between quantization jitter (±8) and a real fall (~24px/observe).
+                falling = (self._prev_bottom is not None
+                           and bottom - self._prev_bottom >= 12)
+                self._prev_bottom = bottom
+                on_ground = (self._feet_supported(frame, picked)
+                             and self._player_v[1] > -4 and not falling)
+                # `_fell` = "recently near the bottom edge, moving down". We set it liberally
+                # (a pit void reads as non-sky pixels, so feet-support can't tell pit from
+                # ground during a fall) but CLEAR it on a settled landing — on_ground is
+                # false while `falling`, so it only clears once the descent actually stops on
+                # real ground. Over a pit the descent never stops (the player exits the
+                # frame), so `_fell` stays latched into the lost window below.
                 if on_ground:
                     self._fell = False
-                if bottom >= h - 8 and self._player_v[1] > 2:
-                    self._fell = True        # small sprite, at the bottom edge, moving down
+                elif bottom >= h - 8 and self._player_v[1] > 2:
+                    self._fell = True
+            else:
+                self._prev_bottom = None     # oversized merge: its bottom is not the feet
         else:
             self._lost += 1
-            # No motion = no new evidence. A player who stopped MOVING did not stop STANDING:
-            # things in the air fall (and would produce motion), so keep the last verdict.
-            on_ground = self._on_ground if self.player is not None else False
-            if self.player is not None and self.player[1] + self.player[3] >= h - 24 \
+            self._prev_bottom = None
+            # No motion = no new evidence about POSITION, but ground support is STATIC
+            # evidence: judge the last known box against the current frame (a player who
+            # stopped moving is still standing on whatever is under them).
+            on_ground = (self._feet_supported(frame, self.player)
+                         if self.player is not None else False)
+            if on_ground:
+                self._fell = False
+            elif self.player is not None and self.player[1] + self.player[3] >= h - 24 \
                     and self._player_v[1] > 2:
                 self._fell = True
             if self._lost >= _LOST_LIMIT:
                 self.player = None
                 on_ground = False
 
-        dead = self._fell and (self._lost >= 2
-                               or (reliable and picked[1] + picked[3] >= h - 2))
+        # Death = fell (descending near the bottom) AND then genuinely GONE from the viewport.
+        # A player merely TRACKED at the bottom edge is NOT dead — where the ground line sits
+        # low on screen (this stretch of 1-1) that is just a high-jump landing. A real pit
+        # fall makes the player disappear (no motion blob to reacquire), so `_lost` climbs
+        # monotonically past 2; a landing keeps reacquiring, so `_lost` oscillates 0↔1 and
+        # never reaches 2. That gap is the honest pit-vs-landing discriminator.
+        dead = self._fell and self._lost >= 2
 
-        self._on_ground = on_ground
         self._prev = frame
         self._prev_frame_no = frame_no
         view = PixelView(frame=frame_no, progress=self._progress(), camera_x=self.camera_x,
@@ -229,10 +266,9 @@ class PixelTracker:
         self._lost = 0
         self.player = None
         self._px_ema = None
-        self._bottoms = []
+        self._prev_bottom = None
         self._player_v = (0.0, 0.0)
         self._vx_per_frame = 0.0
-        self._on_ground = False
 
     def respawned(self) -> None:
         """The engine restored a checkpoint — clear death/motion state and re-base progress

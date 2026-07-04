@@ -287,6 +287,7 @@ class State:
     ram: bytes
     done: bool = False
     rgb: object = None   # latest rgb_array frame (optional; Zelda vision uses this)
+    info: dict = None    # integration info (lives/score/…) — optional, RAM-map-free games use it
 
 
 def _resolve_inttype(inttype) -> Integrations:
@@ -302,11 +303,80 @@ def _resolve_inttype(inttype) -> Integrations:
     return Integrations.STABLE
 
 
+class _AudioSink:
+    """Best-effort speaker output for LIVE, real-time play — the game's music + SFX.
+
+    stable-retro already generates audio every frame (`em.get_audio()` → int16 stereo at
+    `em.get_audio_rate()`); we just stream it. A PortAudio output stream pulls from a bounded
+    ring buffer that each live emulator step feeds. Search rollouts and turbo/headless runs
+    never feed it (the caller gates on show+realtime), so fast paths stay silent and the audio
+    only ever hears the frames you're actually watching. Any failure (no device, no PortAudio,
+    CI) degrades to silence — never breaks play. Latency is bounded by dropping the oldest
+    audio when the buffer runs long (a real-time run that briefly stutters must not build a
+    growing delay); underflow pads with silence."""
+
+    _MAX_BUFFER_SEC = 0.20      # cap queued audio → cap lip-sync lag (drop oldest beyond this)
+
+    def __init__(self, rate: int, channels: int = 2) -> None:
+        import threading
+        self.rate = int(rate)
+        self.channels = channels
+        self._buf = np.zeros((0, channels), dtype=np.int16)
+        self._lock = threading.Lock()
+        self._cap = int(self.rate * self._MAX_BUFFER_SEC)
+        self._stream = None
+
+    def start(self) -> bool:
+        try:
+            import sounddevice as sd
+            self._stream = sd.OutputStream(
+                samplerate=self.rate, channels=self.channels, dtype="int16",
+                blocksize=0, callback=self._callback)
+            self._stream.start()
+            return True
+        except Exception as e:      # no device / no PortAudio / unsupported rate → stay silent
+            print(f"[audio] sound disabled ({type(e).__name__}: {e}) — play continues silent")
+            self._stream = None
+            return False
+
+    def _callback(self, outdata, frames, time_info, status) -> None:
+        with self._lock:
+            have = min(frames, len(self._buf))
+            if have:
+                outdata[:have] = self._buf[:have]
+                self._buf = self._buf[have:]
+            if have < frames:
+                outdata[have:] = 0      # underflow → silence, no crash
+
+    def feed(self, samples) -> None:
+        if self._stream is None or samples is None:
+            return
+        a = np.asarray(samples, dtype=np.int16)
+        if a.ndim == 1:
+            a = np.stack([a, a], axis=1)
+        if a.shape[1] != self.channels:
+            a = a[:, : self.channels]
+        with self._lock:
+            self._buf = np.concatenate([self._buf, a]) if len(self._buf) else a
+            if len(self._buf) > self._cap:      # running behind → drop oldest, keep it live
+                self._buf = self._buf[-self._cap:]
+
+    def close(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+
 class RetroSession:
     """A stable-retro env presented through the engine's lock-step Session contract."""
 
     def __init__(self, render: bool | None = None, game: str | None = None,
-                 inttype=None, controller_mod=None, ram_size: int | None = None) -> None:
+                 inttype=None, controller_mod=None, ram_size: int | None = None,
+                 restricted_actions=None) -> None:
         # Watchable by default; set BILLY_HEADLESS=1 for fast benchmarks (no window).
         if render is None:
             render = os.environ.get("BILLY_HEADLESS", "0") != "1"
@@ -321,17 +391,33 @@ class RetroSession:
         self._retro_names = getattr(self.controller, "RETRO_NAMES", {})
         # Always render to an offscreen array; WE decide which frames reach the screen, so
         # micro-search frames stay hidden (the live run never visibly rewinds).
+        # `restricted_actions` (e.g. Actions.ALL) is a per-console need: the Genesis FILTERED
+        # space silently strips START, so its system opts out of filtering.
+        make_kwargs = {"render_mode": "rgb_array"}
+        if restricted_actions is not None:
+            make_kwargs["use_restricted_actions"] = restricted_actions
         try:
-            self.env = retro.make(game, render_mode="rgb_array", inttype=inttype)
+            self.env = retro.make(game, inttype=inttype, **make_kwargs)
         except FileNotFoundError:
             if inttype == Integrations.STABLE:
-                self.env = retro.make(game, render_mode="rgb_array",
-                                      inttype=Integrations.EXPERIMENTAL)
+                self.env = retro.make(game, inttype=Integrations.EXPERIMENTAL, **make_kwargs)
             else:
                 raise
         self._viewer = _Viewer(controller_mod=self.controller) if render else None
         self._show = render          # True only while executing committed (live) play
         self._realtime = render and os.environ.get("BILLY_TURBO", "0") != "1"
+        # Sound: on for watchable real-time play (the music is half the fun), off for headless/
+        # turbo/search. BILLY_SOUND=0 mutes; =1 forces even if something else would skip it.
+        self._audio: _AudioSink | None = None
+        _sound_env = os.environ.get("BILLY_SOUND")
+        if _sound_env != "0" and (self._realtime or _sound_env == "1"):
+            try:
+                rate = int(self.env.em.get_audio_rate())
+                sink = _AudioSink(rate)
+                if sink.start():
+                    self._audio = sink
+            except Exception as e:
+                print(f"[audio] unavailable ({type(e).__name__}: {e}) — play continues silent")
         # Map our controller button names -> stable-retro action-vector indices.
         # env.buttons looks like ['B', None, 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'A'].
         self._btn_index = {name.upper(): i for i, name in enumerate(self.env.buttons) if name}
@@ -339,6 +425,7 @@ class RetroSession:
         self._frame = 0
         self._ram = bytes(self.ram_size)
         self._rgb: np.ndarray | None = None
+        self._info: dict = {}
         self._slots: dict[int, bytes] = {}
         self._done = False
         self._started = False
@@ -441,6 +528,7 @@ class RetroSession:
     # --- engine Session contract --------------------------------------------------------
     def reset(self) -> None:
         out = self.env.reset()
+        self._info = out[1] if isinstance(out, tuple) and len(out) > 1 else {}
         self._started = True
         self._done = False
         self._frame = 0
@@ -456,7 +544,8 @@ class RetroSession:
             self.reset()
 
     def read_state(self, timeout_s: float | None = None) -> State:
-        return State(frame=self._frame, ram=self._ram, done=self._done, rgb=self._rgb)
+        return State(frame=self._frame, ram=self._ram, done=self._done, rgb=self._rgb,
+                     info=self._info)
 
     def send_plan(self, plan) -> None:
         """Execute every frame of the plan on the live env, then publish the resulting RAM."""
@@ -489,6 +578,9 @@ class RetroSession:
         self._refresh_ram()
 
     def close(self) -> None:
+        if self._audio is not None:
+            self._audio.close()
+            self._audio = None
         try:
             self.env.close()
         except Exception:
@@ -508,15 +600,22 @@ class RetroSession:
         result = self.env.step(action)
         # gymnasium 5-tuple (obs, reward, terminated, truncated, info) or legacy 4-tuple.
         if len(result) == 5:
-            _, _, terminated, truncated, _ = result
+            _, _, terminated, truncated, self._info = result
             self._done = bool(terminated or truncated)
         else:
-            _, _, self._done, _ = result
+            _, _, self._done, self._info = result
         self._frame += 1
         try:
             self._rgb = np.asarray(self.env.render())
         except Exception:
             self._rgb = None
+        if self._show and self._realtime and self._audio is not None:
+            # Only the frames you're actually watching reach the speakers — search runs under
+            # search_mode() (show=False) stay silent, so no fast-forward chipmunk audio.
+            try:
+                self._audio.feed(self.env.em.get_audio())
+            except Exception:
+                pass
         if self._show and self._viewer is not None:
             self._display()
 
@@ -538,3 +637,10 @@ class RetroSession:
     def _refresh_ram(self) -> None:
         ram = self.env.get_ram()
         self._ram = bytes(np.asarray(ram, dtype=np.uint8)[:self.ram_size])
+        # Recompute integration info (lives/score/…) from the CURRENT RAM. After a state
+        # restore no env.step runs, so without this `info` would stay stale from before the
+        # rewind — and an info-terminal game (shmup) would read a phantom death on respawn.
+        try:
+            self._info = self.env.data.lookup_all()
+        except Exception:
+            pass

@@ -248,10 +248,13 @@ def load_guide_for(game, cli_name: str = "") -> GuideLibrary | None:
         return None
     sysname = getattr(game.system, "name", "")
     src = None
-    for cand in (config.REPO_ROOT / "walkthrough" / sysname.upper() / name,
+    for base in (config.REPO_ROOT / "walkthrough" / sysname.upper() / name,
                  config.REPO_ROOT / "walkthrough" / sysname / name):
-        if cand.is_file():
-            src = cand
+        for cand in (base, base.with_suffix(".md"), base.with_suffix(".txt")):
+            if cand.is_file():
+                src = cand
+                break
+        if src is not None:
             break
     if src is None:
         return None
