@@ -64,3 +64,60 @@ def test_furthest_reads_checkpoint_meta(tmp_path, monkeypatch):
 def test_past_margin_is_a_real_crossing():
     # the teach goal is death_x + margin: a toe over the edge is not a pass
     assert remix.PAST_MARGIN >= 16
+
+
+def test_dropin_prefers_the_level_checkpoint(tmp_path, monkeypatch):
+    # A tight approach state can coast over the wall; the level-start checkpoint gives real
+    # runway, so we must prefer it when present.
+    ck = tmp_path / "checkpoints" / "smb"
+    ck.mkdir(parents=True)
+    (ck / "1_3.state").write_bytes(b"LEVELSTART")
+    approach = tmp_path / "approach.state"
+    approach.write_bytes(b"APPROACH")
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", tmp_path / "checkpoints")
+    req = {"game": "smb", "level_label": "1-3", "state": str(approach), "death_x": 771}
+    data, source = remix._dropin_state(req)
+    assert data == b"LEVELSTART" and "start of 1-3" in source
+
+
+def test_dropin_falls_back_to_approach_without_a_checkpoint(tmp_path, monkeypatch):
+    approach = tmp_path / "approach.state"
+    approach.write_bytes(b"APPROACH")
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", tmp_path / "none")
+    req = {"game": "zelda", "level_label": "dungeon-1", "state": str(approach), "death_x": 300}
+    data, source = remix._dropin_state(req)
+    assert data == b"APPROACH" and source == "approach"
+
+
+# --- the take-control gate: nothing wins until YOU play (the reported bug) -------------------
+
+class _FakeSession:
+    """Enough of the session surface for _play_wall's pre-arm gate (no emulator)."""
+    def __init__(self, polls):
+        self._polls, self._i, self.steps = polls, 0, 0
+
+    def teleop_reset(self):
+        pass
+
+    def set_overlay(self, lines):
+        pass
+
+    def teleop_poll(self):
+        v = self._polls[self._i] if self._i < len(self._polls) else (0, False, False)
+        self._i += 1
+        return v
+
+    def teleop_step(self, mask):
+        self.steps += 1
+
+
+def test_no_input_never_auto_wins():
+    # The exact regression: the drop-in's momentum must NOT complete the wall for you.
+    fake = _FakeSession([(0, False, False)] * 6000)     # you never touch the controls
+    outcome = remix._play_wall(fake, object(), target=795, death_x=771)[0]
+    assert outcome == "afk"                              # not "win"
+
+
+def test_esc_before_taking_control_skips():
+    fake = _FakeSession([(0, False, True)])             # ESC right away
+    assert remix._play_wall(fake, object(), 795, 771)[0] == "skip"

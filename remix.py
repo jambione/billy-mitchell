@@ -94,6 +94,21 @@ def _game(name: str):
     return GAMES[name]()
 
 
+def _dropin_state(req: dict) -> tuple[bytes | None, str]:
+    """Where to drop the human in. PREFER the level-start checkpoint: it gives real runway to
+    the wall, so the saved momentum in a tight approach state can't coast over the hazard before
+    you take control (the passive-win bug). Fall back to the approach state only if there's no
+    checkpoint for that level."""
+    game, label = req.get("game", ""), req.get("level_label", "")
+    ck = config.CHECKPOINTS_DIR / game / (label.replace("-", "_") + ".state")
+    if ck.is_file():
+        return ck.read_bytes(), f"start of {label}"
+    p = Path(req.get("state", ""))
+    if p.is_file():
+        return p.read_bytes(), "approach"
+    return None, ""
+
+
 def _observe(session, game):
     st = session.read_state()
     return game.observe(st.frame, st.ram, getattr(st, "rgb", None))
@@ -148,36 +163,43 @@ def _teach_wall(req: dict) -> bool:
     death_x = int(req.get("death_x", 0))
     target = death_x + PAST_MARGIN
     label = req.get("level_label", "?")
-    state_path = Path(req.get("state", ""))
+    dropin, source = _dropin_state(req)
     print(f"\n{'═' * 64}\n  ▶  {game_key} · {label}  —  Billy's wall at x≈{death_x} "
           f"({req.get('deaths', '?')} deaths)\n     GOAL: get past x≈{death_x} and keep going — "
-          f"clear it and Billy learns the line.\n{'═' * 64}")
-    if not state_path.is_file():
-        print(f"     ⚠  drop-in state missing ({state_path}) — skipping.")
+          f"clear it and Billy learns the line.  (drop-in: {source})\n{'═' * 64}")
+    if dropin is None:
+        print("     ⚠  no drop-in state available — skipping.")
         return False
 
     game = _game(game_key)
     session = game.system.connect()
     try:
         session.wait_until_live()
-        session.restore(state_path.read_bytes())
+        session.restore(dropin)
         if not session.ensure_viewer():
             print("     ⚠  no game window (headless?). The remix needs a window to play in.")
             return False
         print("     🎮 controller ready." if session.reopen_joystick()
               else "     ⌨  keyboard (arrows / Z / X / Tab).")
-        start_state = session.clone_state()
-        start_obs = _observe(session, game)
 
         for t in range(1, 4):
             if t > 1:
                 print(f"     try {t}/3…")
-            outcome, secs, plan = _play_wall(session, game, start_obs, target, death_x)
+            session.restore(dropin)
+            outcome, secs, plan, start_state, start_obs = _play_wall(
+                session, game, target, death_x)
             if outcome == "win":
                 print(f"     ✓ you cleared it in {secs:.1f}s")
                 return _bank(game_key, session, game, start_state, start_obs, plan)
             if outcome == "skip":
                 print("     ↷ skipped.")
+                return False
+            if outcome == "afk":
+                print("     ⏳ no input — you didn't take the controller. Skipping this wall.")
+                return False
+            if outcome == "bad_dropin":
+                print("     ⚠  this drop-in coasts past the wall on its own — can't teach it "
+                      "cleanly. Skipping (needs an earlier start state).")
                 return False
             print(f"     ✗ {outcome} at {secs:.1f}s — try again.")
         print("     (out of tries — the wall stays open for next time.)")
@@ -189,35 +211,57 @@ def _teach_wall(req: dict) -> bool:
         session.close()
 
 
-def _play_wall(session, game, start_obs, target: int, death_x: int) -> tuple[str, float, list]:
+def _play_wall(session, game, target: int, death_x: int):
+    """Hand the controller to the human, then record their crossing. Returns
+    (outcome, seconds, plan, armed_start_state, armed_start_obs). Nothing counts until YOU take
+    control (fixes auto-completing on the drop-in's momentum): the demo begins the moment you
+    first press something, re-anchored to that state."""
     from billy.teleop import TeleopRecorder
     session.teleop_reset()
-    rec = TeleopRecorder()
-    budget = 45 * 60
-    frames = 0
-    obs = start_obs
 
-    def overlay(rem):
-        session.set_overlay([f"▶ Get past x≈{death_x} and keep going",
-                             f"{rem:4.0f}s   at x={obs.progress}  →  need {target}",
-                             "controller or keys · ESC = skip"])
-    overlay(45)
+    # 1) Wait for you to take the controller. The window stays live via neutral steps, but the
+    #    goal is NOT armed and nothing is recorded — so the drop-in's coast can't auto-win.
+    session.set_overlay(["YOUR TURN — take the controller",
+                         f"get past x≈{death_x} and keep going",
+                         "move / press a button to begin   ·   ESC = skip"])
+    armed = False
+    for _ in range(60 * 30):                       # up to 30s to take control
+        mask, finish, abort = session.teleop_poll()
+        if abort:
+            return "skip", 0.0, [], None, None
+        session.teleop_step(mask)                  # your input from the very first frame
+        if mask or finish:
+            armed = True
+            break
+    if not armed:
+        return "afk", 0.0, [], None, None
+
+    # 2) Re-anchor: the demo is what YOU do from here. If the drop-in already coasted past the
+    #    wall before you took control, it can't teach the crossing — bail.
+    start_state = session.clone_state()
+    start_obs = _observe(session, game)
+    if start_obs.progress >= death_x:
+        return "bad_dropin", 0.0, [], None, None
+
+    rec = TeleopRecorder()
+    frames, budget, obs = 0, 90 * 60, start_obs
     while frames < budget:
         mask, finish, abort = session.teleop_poll()
         if abort:
-            return "skip", frames / 60.0, []
+            return "skip", frames / 60.0, [], None, None
         session.teleop_step(mask)
         rec.record(mask, 1)
         frames += 1
         obs = _observe(session, game)
         if obs.dead:
-            return "died", frames / 60.0, []
-        alive_past = getattr(obs.raw, "in_play", True) and obs.progress >= target
-        if alive_past or finish:
-            return "win", frames / 60.0, rec.plan()
+            return "died", frames / 60.0, [], None, None
+        if (getattr(obs.raw, "in_play", True) and obs.progress >= target) or finish:
+            return "win", frames / 60.0, rec.plan(), start_state, start_obs
         if frames % 15 == 0:
-            overlay((budget - frames) / 60)
-    return "timeout", frames / 60.0, []
+            session.set_overlay([f"▶ get past x≈{death_x} and keep going",
+                                 f"x={obs.progress}  →  need {target}",
+                                 "controller or keys · ESC = skip"])
+    return "timeout", frames / 60.0, [], None, None
 
 
 def _bank(game_key: str, session, game, start_state: bytes, start_obs, plan) -> bool:
