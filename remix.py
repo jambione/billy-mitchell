@@ -155,28 +155,24 @@ def _play_once(ch: Challenge, session, game, start_state: bytes, start_obs) -> t
 
     # You made it — turn your run into something Billy keeps.
     plan = rec.plan()
-    banked = _bank(ch, game, start_state, start_obs, plan)
+    banked = _bank(ch, session, game, start_state, start_obs, plan)
     session.set_overlay([f"✓ CLEARED in {seconds:.1f}s",
                          "Billy learned it." if banked else "(nice — run didn't verify to bank)",
                          ""])
     return "win", seconds
 
 
-def _bank(ch: Challenge, game, start_state: bytes, start_obs, plan) -> bool:
-    """Verify the human demo on a clone and, if it survives+advances, bank it for Billy:
-    a SolutionCache entry (exact replay) + a distilled transferable skill."""
+def _bank(ch: Challenge, session, game, start_state: bytes, start_obs, plan) -> bool:
+    """Verify the human demo on the SAME session (stable-retro allows only one emulator per
+    process) and, if it survives+advances, bank it for Billy: a SolutionCache entry (exact
+    replay) + a distilled transferable skill. A FRESH game object does the observing so the
+    live run's monotonic progress high-water mark can't mask the demo's gain (as teleop does)."""
     from billy.config import SOLUTIONS_FILE
     from billy.knowledge.cache import SolutionCache
     from billy.teleop import bank_demo, verify_demo
 
-    verify_game = _game(ch.game)                    # fresh: avoid the live progress high-water mark
-    session2 = verify_game.system.connect()
-    session2.wait_until_live()
-    try:
-        result = verify_demo(session2, verify_game, start_state, plan,
-                             min_progress=config._MIN_PROGRESS_PX if hasattr(config, "_MIN_PROGRESS_PX") else 8)
-    finally:
-        session2.close()
+    verify_game = _game(ch.game)                    # fresh observer, same emulator session
+    result = verify_demo(session, verify_game, start_state, plan, min_progress=8)
     print(f"     verify: {result.summary()}")
     if not result.bankable:
         return False
