@@ -1,76 +1,66 @@
-"""Remix gauntlet: medal timing, goal detection, and manifest integrity."""
+"""Remix: dynamic multi-game wall queue — request parsing, resolve, frontier, roster."""
+import json
 import os
 import sys
-import types
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import remix
-from remix import CHALLENGES, Challenge, _BY_ID
 
 
-def _obs(level_key=(0, 1, 3), progress=0, in_play=True, place=(9, 9, 1)):
-    raw = types.SimpleNamespace(in_play=in_play, place=place)
-    return types.SimpleNamespace(level_key=level_key, progress=progress, raw=raw)
-
-
-# --- medals: seconds-to-finish, faster is shinier -------------------------------------------
-
-def test_medal_thresholds():
-    ch = Challenge("t", "T", "smb", "", "advance", time_s=40, medals=(12, 22))
-    assert ch.medal(8.0) == "gold"
-    assert ch.medal(18.0) == "silver"
-    assert ch.medal(30.0) == "bronze"          # finished, just slow
-    assert ch.medal(None) == "none"            # never finished
-
-
-# --- goal detection --------------------------------------------------------------------------
-
-def test_clear_goal_fires_on_level_change():
-    ch = Challenge("c", "C", "smb", "", "clear", time_s=60, medals=(45, 65))
-    start = _obs(level_key=(0, 1, 1))
-    assert not ch.reached(start, _obs(level_key=(0, 1, 2)))   # same world/stage → not yet
-    assert ch.reached(start, _obs(level_key=(0, 2, 3)))       # stage advanced → done
-
-
-def test_advance_goal_needs_the_pixel_gain():
-    ch = Challenge("a", "A", "smb", "", "advance", goal_px=180, time_s=40, medals=(12, 22))
-    start = _obs(progress=1000)
-    assert not ch.reached(start, _obs(progress=1120))
-    assert ch.reached(start, _obs(progress=1200))
-
-
-def test_psii_exit_needs_a_new_outdoor_place():
-    ch = Challenge("p", "P", "psii", "", "psii_exit", time_s=60, medals=(25, 45))
-    start = _obs(place=(9, 9, 1))
-    assert not ch.reached(start, _obs(place=(9, 9, 1)))       # same place
-    assert not ch.reached(start, _obs(place=(6, 6, 0)))       # a building (indoor)
-    assert ch.reached(start, _obs(place=(11, 9, 1)))          # new OUTDOOR place = out of town
-
-
-def test_a_dead_or_not_in_play_frame_is_never_a_win():
-    ch = Challenge("a", "A", "smb", "", "advance", goal_px=10, time_s=40, medals=(12, 22))
-    start = _obs(progress=1000)
-    assert not ch.reached(start, _obs(progress=2000, in_play=False))
-
-
-# --- manifest integrity ----------------------------------------------------------------------
-
-def test_ids_unique_and_indexed():
-    ids = [c.id for c in CHALLENGES]
-    assert len(ids) == len(set(ids))
-    assert set(_BY_ID) == set(ids)
-
-
-def test_every_challenge_targets_a_real_game():
+def test_campaign_games_are_real():
     from run import GAMES
-    for c in CHALLENGES:
-        assert c.game in GAMES, f"{c.id} → unknown game {c.game}"
+    for g in remix.CAMPAIGN:
+        assert g in GAMES, f"campaign roster has unknown game {g}"
+    for g in remix._ENDING:
+        assert g in remix.CAMPAIGN
 
 
-def test_declared_start_states_exist():
-    root = Path(remix.__file__).resolve().parent
-    for c in CHALLENGES:
-        if c.from_state:
-            assert (root / c.from_state).is_file(), f"{c.id} start state missing: {c.from_state}"
+def test_read_requests_parses_and_skips_junk(tmp_path, monkeypatch):
+    f = tmp_path / "demo_requests.jsonl"
+    f.write_text('{"game":"smb","level_label":"1-3","death_bucket":48,"death_x":771}\n'
+                 'not json\n'
+                 '{"game":"zelda","level_label":"dungeon-1","death_bucket":10,"death_x":300}\n')
+    monkeypatch.setattr(remix, "REQUESTS_FILE", f)
+    reqs = remix._read_requests()
+    assert [r["game"] for r in reqs] == ["smb", "zelda"]       # junk line dropped
+
+
+def test_resolve_request_removes_only_the_taught_wall(tmp_path, monkeypatch):
+    f = tmp_path / "demo_requests.jsonl"
+    cleared = tmp_path / "cleared.jsonl"
+    a = {"game": "smb", "level_label": "1-3", "death_bucket": 48, "death_x": 771}
+    b = {"game": "smb", "level_label": "2-2", "death_bucket": 72, "death_x": 1158}
+    f.write_text(json.dumps(a) + "\n" + json.dumps(b) + "\n")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", f)
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    remix._resolve_request(a)
+    left = remix._read_requests()
+    assert len(left) == 1 and left[0]["level_label"] == "2-2"   # only 1-3 removed
+    assert json.loads(cleared.read_text().strip())["level_label"] == "1-3"
+
+
+def test_resolve_matches_on_game_level_and_bucket(tmp_path, monkeypatch):
+    # same level label in two games must not cross-resolve
+    f = tmp_path / "demo_requests.jsonl"
+    monkeypatch.setattr(remix, "REQUESTS_FILE", f)
+    monkeypatch.setattr(remix, "CLEARED_FILE", tmp_path / "c.jsonl")
+    smb = {"game": "smb", "level_label": "1-1", "death_bucket": 5, "death_x": 100}
+    lost = {"game": "smb_lost", "level_label": "1-1", "death_bucket": 5, "death_x": 100}
+    f.write_text(json.dumps(smb) + "\n" + json.dumps(lost) + "\n")
+    remix._resolve_request(smb)
+    assert [r["game"] for r in remix._read_requests()] == ["smb_lost"]
+
+
+def test_furthest_reads_checkpoint_meta(tmp_path, monkeypatch):
+    ck = tmp_path / "checkpoints"
+    (ck / "smb").mkdir(parents=True)
+    (ck / "smb" / "furthest.json").write_text('{"label":"2-2","progress":160}')
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", ck)
+    assert remix._furthest("smb") == ("2-2", 160)
+    assert remix._furthest("zelda") == ("start", 0)           # missing = start
+
+
+def test_past_margin_is_a_real_crossing():
+    # the teach goal is death_x + margin: a toe over the edge is not a pass
+    assert remix.PAST_MARGIN >= 16

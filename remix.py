@@ -1,109 +1,92 @@
 #!/usr/bin/env python3
-"""Billy Mitchell REMIX — a NES-Remix-style gauntlet where YOU play, and Billy learns.
+"""Billy Mitchell REMIX — teach Billy past his next wall, across games, until he finishes.
 
-Each challenge drops YOU into control at a hard spot in a game with one short goal (cross the
-lift, clear the pit, walk out of town). You play it in the window; the moment you succeed, your
-run is verified and banked as a demo — a cache entry + a transferable skill — so **Billy learns
-the line from you** and can do it himself forever after. Short segments, clear goals, you're the
-one holding the controller.
+This is a HANDS-ON, DYNAMIC, MULTI-GAME gauntlet. It doesn't hand you a fixed card of tricks —
+it surfaces the walls Billy is ACTUALLY stuck at right now, one per game, and drops you in to
+teach each one. Your run banks as a demo (cache entry + skill), Billy learns the line, and next
+time he gets further before hitting the NEXT wall. The goals never get artificially harder — the
+only thing that moves is Billy, forward through each game, toward finishing it.
 
-    .venv/bin/python remix.py                 # play the whole gauntlet (needs a window)
-    .venv/bin/python remix.py --only lift     # one challenge
-    .venv/bin/python remix.py --list          # show the card
+How a run goes:
+  1. SCOUT (headless, quick): Billy plays each game himself from his furthest checkpoint. Where
+     search + self-training still can't pass, he files a demo request — his real next wall.
+  2. TEACH (you, in the window): each wall becomes a challenge. You're dropped in right before it
+     with one goal: get past the spot Billy keeps dying at. Clear it and he owns the line.
+  3. SCOREBOARD: how far Billy can now get in each game — his march to the ending.
 
-Controls (the game window must have focus):
-    arrows = move   ·   Z = A (jump / confirm)   ·   X = B (run / cancel)
-    Tab = Start   ·   ENTER = finish now   ·   ESC = skip this challenge
-    Gamepad: run `teleop.py calibrate` once (saves data/pad_map.json).
+    .venv/bin/python remix.py               # scout, then teach every open wall
+    .venv/bin/python remix.py --only zelda  # just one game
+    .venv/bin/python remix.py --no-scout    # skip scouting; teach the walls already on file
+    .venv/bin/python remix.py --list        # show Billy's frontier + open walls
+
+Controls (click the game window first):  arrows/pad = move · Z = jump/confirm · X = run/cancel
+    Tab = Start · ENTER = finish now · ESC = skip this wall.  (Gamepad: teleop.py calibrate once.)
 """
 from __future__ import annotations
 
 import argparse
-import datetime as _dt
 import json
 import os
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from billy import config
 
-PROGRESS_FILE = config.DATA_DIR / "remix_progress.json"
-_STAR = {"gold": 3, "silver": 2, "bronze": 1, "none": 0}
-_MEDAL_ICON = {"gold": "🥇", "silver": "🥈", "bronze": "🥉", "none": "⬜"}
+REQUESTS_FILE = config.DATA_DIR / "demo_requests.jsonl"
+CLEARED_FILE = config.DATA_DIR / "remix_cleared.jsonl"
+PAST_MARGIN = 24                 # must end this far past Billy's death spot (a real crossing)
 
-
-@dataclass
-class Challenge:
-    id: str
-    title: str
-    game: str                       # run.py GAMES key
-    goal_text: str                  # what YOU need to do (shown on screen)
-    goal_kind: str                  # "clear" | "advance" | "psii_exit"
-    time_s: int                     # budget for one try
-    medals: tuple                   # (gold_s, silver_s) — seconds to finish; slower = bronze
-    goal_px: int = 0                # for "advance": how far past the start counts as done
-    from_state: str = ""            # savestate to drop you in at; "" = play from the game's start
-    tries: int = 3
-    hint: str = ""
-
-    def reached(self, start_obs, obs) -> bool:
-        """True once YOU have accomplished the goal (survive is implicit — death ends the try)."""
-        if not getattr(obs.raw, "in_play", True):
-            return False
-        if self.goal_kind == "clear":
-            return tuple(obs.level_key[:2]) != tuple(start_obs.level_key[:2])
-        if self.goal_kind == "advance":
-            return obs.progress >= start_obs.progress + self.goal_px
-        if self.goal_kind == "psii_exit":
-            sp, op = start_obs.raw.place, obs.raw.place
-            return bool(op[2]) and op[:2] != sp[:2]        # a NEW outdoor place = out of Paseo
-        return False
-
-    def medal(self, seconds: float | None) -> str:
-        if seconds is None:
-            return "none"
-        g, s = self.medals
-        return "gold" if seconds <= g else "silver" if seconds <= s else "bronze"
+# The campaign roster: games with a completion arc worth marching. Skipped gracefully if the
+# ROM/integration isn't present.
+CAMPAIGN = ["smb", "smb_lost", "zelda", "psii"]
+_ENDING = {                      # a game is "finished" when its furthest label reaches here
+    "smb": "8-4", "smb_lost": "8-4", "zelda": "level-9", "psii": "end",
+}
 
 
 # ---------------------------------------------------------------------------------------------
-# The card. Each is a short, human-played line at a spot where teaching Billy actually matters.
+# Billy's state on disk: his frontier per game, and the walls he's asked for help on.
 # ---------------------------------------------------------------------------------------------
-CHALLENGES: list[Challenge] = [
-    Challenge("flagpole", "SMB 1-1 · To the Flagpole", "smb",
-              "Reach the flagpole — clear World 1-1.", "clear",
-              time_s=75, medals=(45, 65), hint="Run right; jump the pits and Goombas."),
-    Challenge("lift", "SMB 1-3 · Ride the Lift", "smb",
-              "Cross the moving-lift gap and reach solid ground.", "advance", goal_px=180,
-              time_s=40, medals=(12, 22), from_state="data/states/smb_1_3_lift_approach.state",
-              hint="Time the jump onto the lift, ride it, hop off before it drops."),
-    Challenge("wall", "SMB 2-1 · Over the Wall", "smb",
-              "Get past the wall and keep moving right.", "advance", goal_px=140,
-              time_s=35, medals=(10, 20), from_state="data/states/smb_2_1_wall.state",
-              hint="Back up for a run-up, then a full running jump."),
-    Challenge("paseo", "Phantasy Star II · Escape Paseo", "psii",
-              "Walk Rolf out of town onto the Mota overworld.", "psii_exit",
-              time_s=60, medals=(25, 45),
-              hint="Head for a street that leaves town — cross the edge onto open ground."),
-]
-_BY_ID = {c.id: c for c in CHALLENGES}
-
-
-def _load_progress() -> dict:
-    if PROGRESS_FILE.is_file():
+def _furthest(game: str) -> tuple[str, int]:
+    """(furthest level label, progress) Billy has checkpointed in this game — his march front."""
+    meta = config.CHECKPOINTS_DIR / game / "furthest.json"
+    if meta.is_file():
         try:
-            return json.loads(PROGRESS_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
+            d = json.loads(meta.read_text())
+            return d.get("label", "start"), int(d.get("progress", 0))
+        except (json.JSONDecodeError, OSError, ValueError):
             pass
-    return {}
+    return "start", 0
 
 
-def _save_progress(prog: dict) -> None:
-    PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROGRESS_FILE.write_text(json.dumps(prog, indent=2) + "\n")
+def _read_requests() -> list[dict]:
+    if not REQUESTS_FILE.is_file():
+        return []
+    out = []
+    for line in REQUESTS_FILE.read_text().splitlines():
+        if line.strip():
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return out
+
+
+def _resolve_request(req: dict) -> None:
+    """Drop a taught wall from the open queue and log it as cleared (Billy owns it now)."""
+    kept = []
+    for r in _read_requests():
+        same = (r.get("game") == req.get("game")
+                and r.get("level_label") == req.get("level_label")
+                and r.get("death_bucket") == req.get("death_bucket"))
+        if not same:
+            kept.append(r)
+    REQUESTS_FILE.write_text("".join(json.dumps(r) + "\n" for r in kept))
+    config.ensure_dirs()
+    with CLEARED_FILE.open("a") as f:
+        f.write(json.dumps(req) + "\n")
 
 
 def _game(name: str):
@@ -111,74 +94,149 @@ def _game(name: str):
     return GAMES[name]()
 
 
-def _play_once(ch: Challenge, session, game, start_state: bytes, start_obs) -> tuple[str, float]:
-    """One try: YOU play; on success verify+bank the demo. Returns (outcome, seconds)."""
-    from billy.teleop import TeleopRecorder
+def _observe(session, game):
+    st = session.read_state()
+    return game.observe(st.frame, st.ram, getattr(st, "rgb", None))
 
-    session.restore(start_state)
+
+# ---------------------------------------------------------------------------------------------
+# SCOUT: let Billy play each game himself from his checkpoint, so he surfaces his current wall.
+# ---------------------------------------------------------------------------------------------
+def _scout(game_key: str, attempts: int) -> str:
+    """Run Billy headless from his furthest checkpoint; he files a demo request at any wall his
+    own search + self-training can't pass. Returns the furthest level label reached."""
+    os.environ["BILLY_HEADLESS"] = "1"
+    os.environ.setdefault("BILLY_TURBO", "1")
+    from billy.abstractions import BootError
+    from billy.director import Director
+    from billy.knowledge import KnowledgeBase, SkillLibrary
+
+    try:
+        game = _game(game_key)
+        game.cli_name = game_key
+        director = Director(game, KnowledgeBase(), use_llm=False, skills=SkillLibrary())
+        director.session.reset()
+        director.session.wait_until_live()
+        director.boot()
+        try:
+            director.resume_from_checkpoint()
+        except Exception:
+            pass                                    # no checkpoint yet — scout from the start
+        try:
+            for n in range(1, attempts + 1):
+                director.run_attempt(n)
+        finally:
+            if getattr(director, "pool", None) is not None:
+                director.pool.close()
+            director.session.close()
+    except (BootError, FileNotFoundError) as e:
+        return f"(unavailable: {type(e).__name__})"
+    return _furthest(game_key)[0]
+
+
+# ---------------------------------------------------------------------------------------------
+# TEACH: drop the human in at a wall's state and bank their crossing as a demo Billy keeps.
+# ---------------------------------------------------------------------------------------------
+def _teach_wall(req: dict) -> bool:
+    """One wall: restore its state, YOU play past Billy's death spot, verify + bank. True if
+    banked (Billy learned it)."""
+    os.environ["BILLY_HEADLESS"] = "0"
+    os.environ.setdefault("BILLY_TURBO", "1")
+    from billy.abstractions import BootError
+
+    game_key = req["game"]
+    death_x = int(req.get("death_x", 0))
+    target = death_x + PAST_MARGIN
+    label = req.get("level_label", "?")
+    state_path = Path(req.get("state", ""))
+    print(f"\n{'═' * 64}\n  ▶  {game_key} · {label}  —  Billy's wall at x≈{death_x} "
+          f"({req.get('deaths', '?')} deaths)\n     GOAL: get past x≈{death_x} and keep going — "
+          f"clear it and Billy learns the line.\n{'═' * 64}")
+    if not state_path.is_file():
+        print(f"     ⚠  drop-in state missing ({state_path}) — skipping.")
+        return False
+
+    game = _game(game_key)
+    session = game.system.connect()
+    try:
+        session.wait_until_live()
+        session.restore(state_path.read_bytes())
+        if not session.ensure_viewer():
+            print("     ⚠  no game window (headless?). The remix needs a window to play in.")
+            return False
+        print("     🎮 controller ready." if session.reopen_joystick()
+              else "     ⌨  keyboard (arrows / Z / X / Tab).")
+        start_state = session.clone_state()
+        start_obs = _observe(session, game)
+
+        for t in range(1, 4):
+            if t > 1:
+                print(f"     try {t}/3…")
+            outcome, secs, plan = _play_wall(session, game, start_obs, target, death_x)
+            if outcome == "win":
+                print(f"     ✓ you cleared it in {secs:.1f}s")
+                return _bank(game_key, session, game, start_state, start_obs, plan)
+            if outcome == "skip":
+                print("     ↷ skipped.")
+                return False
+            print(f"     ✗ {outcome} at {secs:.1f}s — try again.")
+        print("     (out of tries — the wall stays open for next time.)")
+        return False
+    except BootError as e:
+        print(f"     ⚠  couldn't start ({e}).")
+        return False
+    finally:
+        session.close()
+
+
+def _play_wall(session, game, start_obs, target: int, death_x: int) -> tuple[str, float, list]:
+    from billy.teleop import TeleopRecorder
     session.teleop_reset()
     rec = TeleopRecorder()
-    budget = ch.time_s * 60
+    budget = 45 * 60
     frames = 0
-    outcome = "timeout"
-
-    def overlay(remaining: float, prog_note: str = ""):
-        session.set_overlay([f"▶ {ch.goal_text}",
-                             f"{remaining:4.0f}s   {prog_note}",
-                             "controller or keys · reach the goal to win · ESC=skip"])
-
-    overlay(ch.time_s)
     obs = start_obs
+
+    def overlay(rem):
+        session.set_overlay([f"▶ Get past x≈{death_x} and keep going",
+                             f"{rem:4.0f}s   at x={obs.progress}  →  need {target}",
+                             "controller or keys · ESC = skip"])
+    overlay(45)
     while frames < budget:
         mask, finish, abort = session.teleop_poll()
         if abort:
-            outcome = "skip"
-            break
+            return "skip", frames / 60.0, []
         session.teleop_step(mask)
         rec.record(mask, 1)
         frames += 1
         obs = _observe(session, game)
         if obs.dead:
-            outcome = "died"
-            break
-        if ch.reached(start_obs, obs) or finish:
-            outcome = "win"
-            break
+            return "died", frames / 60.0, []
+        alive_past = getattr(obs.raw, "in_play", True) and obs.progress >= target
+        if alive_past or finish:
+            return "win", frames / 60.0, rec.plan()
         if frames % 15 == 0:
-            gained = obs.progress - start_obs.progress
-            overlay((budget - frames) / 60, f"+{gained}")
-
-    seconds = frames / 60.0
-    if outcome != "win":
-        session.set_overlay([f"✗ {outcome.upper()}", f"{ch.goal_text}", "…"])
-        return outcome, seconds
-
-    # You made it — turn your run into something Billy keeps.
-    plan = rec.plan()
-    banked = _bank(ch, session, game, start_state, start_obs, plan)
-    session.set_overlay([f"✓ CLEARED in {seconds:.1f}s",
-                         "Billy learned it." if banked else "(nice — run didn't verify to bank)",
-                         ""])
-    return "win", seconds
+            overlay((budget - frames) / 60)
+    return "timeout", frames / 60.0, []
 
 
-def _bank(ch: Challenge, session, game, start_state: bytes, start_obs, plan) -> bool:
-    """Verify the human demo on the SAME session (stable-retro allows only one emulator per
-    process) and, if it survives+advances, bank it for Billy: a SolutionCache entry (exact
-    replay) + a distilled transferable skill. A FRESH game object does the observing so the
-    live run's monotonic progress high-water mark can't mask the demo's gain (as teleop does)."""
+def _bank(game_key: str, session, game, start_state: bytes, start_obs, plan) -> bool:
+    """Verify the human demo on the SAME emulator (search_mode, invisible) and bank it: a
+    SolutionCache entry (exact replay) + a distilled transferable skill."""
     from billy.config import SOLUTIONS_FILE
     from billy.knowledge.cache import SolutionCache
     from billy.teleop import bank_demo, verify_demo
 
-    verify_game = _game(ch.game)                    # fresh observer, same emulator session
-    result = verify_demo(session, verify_game, start_state, plan, min_progress=8)
+    if not plan:
+        return False
+    result = verify_demo(session, _game(game_key), start_state, plan, min_progress=8)
     print(f"     verify: {result.summary()}")
     if not result.bankable:
+        print("     (run didn't verify to bank — survive AND advance past the spot; try again.)")
         return False
     cache = SolutionCache(path=SOLUTIONS_FILE)
     key = bank_demo(cache, start_obs, plan, result.end_progress)
-    print(f"     ⇒ banked demo at {key} (reach {result.end_progress}) — Billy replays it now.")
+    print(f"     ⇒ 🧠 Billy learned it — banked at {key} (reach {result.end_progress}).")
     try:
         from billy.knowledge.distill import distill_solution
         from billy.knowledge.skills import SkillLibrary
@@ -186,124 +244,80 @@ def _bank(ch: Challenge, session, game, start_state: bytes, start_obs, plan) -> 
                             level_label=start_obs.level_label, plan=plan,
                             start_x=start_obs.progress, reach=result.end_progress,
                             source="demo", console=getattr(game.system, "name", "nes")):
-            print("     ⇒ distilled into a transferable skill (seeds search on similar spots).")
+            print("     ⇒ distilled a transferable skill (helps at similar spots, other games too).")
     except Exception as e:
         print(f"     (skill distill skipped: {type(e).__name__})")
     return True
 
 
-def _observe(session, game):
-    st = session.read_state()
-    return game.observe(st.frame, st.ram, getattr(st, "rgb", None))
-
-
-def _run_challenge(ch: Challenge) -> tuple[str, float | None]:
-    from billy.abstractions import BootError
-
-    print(f"\n{'═' * 64}\n  ▶  {ch.title}\n     GOAL: {ch.goal_text}")
-    if ch.hint:
-        print(f"     hint: {ch.hint}")
-    print(f"{'═' * 64}")
-    game = _game(ch.game)
-    session = game.system.connect()
-    try:
-        session.wait_until_live()
-        if ch.from_state:
-            p = Path(ch.from_state)
-            if not p.is_file():
-                print(f"     ⚠  start state missing ({p}) — skipping. "
-                      f"(capture it with teleop.py capture)")
-                return "none", None
-            session.restore(p.read_bytes())
-        else:
-            game.boot(session)
-        if not session.ensure_viewer():
-            print("     ⚠  no game window (are you headless?). Remix needs a window to play in.")
-            return "none", None
-        # Wake a gamepad that was asleep when the window opened (else it silently falls back to
-        # the keyboard). Uses your saved calibration (data/pad_map.json — teleop.py calibrate).
-        if session.reopen_joystick():
-            print("     🎮 controller ready.")
-        else:
-            print("     ⌨  no gamepad found — using the keyboard (arrows / Z / X / Tab).")
-        start_state = session.clone_state()
-        start_obs = _observe(session, game)
-
-        best: float | None = None
-        for t in range(1, ch.tries + 1):
-            if t > 1:
-                print(f"     try {t}/{ch.tries}…")
-            outcome, secs = _play_once(ch, session, game, start_state, start_obs)
-            if outcome == "win":
-                best = secs if best is None else min(best, secs)
-                print(f"     ✓ cleared in {secs:.1f}s — {_MEDAL_ICON[ch.medal(secs)]}")
-                break
-            if outcome == "skip":
-                print("     ↷ skipped.")
-                break
-            print(f"     ✗ {outcome} at {secs:.1f}s.")
-        return ch.medal(best), best
-    except BootError as e:
-        print(f"     ⚠  couldn't start ({e}).")
-        return "none", None
-    finally:
-        session.close()
-
-
-def _scoreboard(prog: dict) -> None:
-    print(f"\n{'━' * 64}\n  REMIX — YOUR MEDALS  (and what Billy learned from you)\n{'━' * 64}")
-    stars = 0
-    for ch in CHALLENGES:
-        best = prog.get(ch.id, {}).get("best")
-        medal = ch.medal(best)
-        stars += _STAR[medal]
-        val = f"{best:.1f}s" if best is not None else "—"
-        print(f"  {_MEDAL_ICON[medal]}  {ch.title:<34} {val}")
-    mx = 3 * len(CHALLENGES)
-    filled = round(12 * stars / mx) if mx else 0
-    print(f"{'━' * 64}\n  MASTERY  [{'█'*filled}{'░'*(12-filled)}]  {stars}/{mx} stars")
-    print("  Every medal you earn is a line Billy can now run himself." + ("  👑" if stars == mx else ""))
-    print("━" * 64)
+# ---------------------------------------------------------------------------------------------
+def _scoreboard(games: list[str], taught: int) -> None:
+    print(f"\n{'━' * 64}\n  BILLY'S MARCH — how far he can get in each game now\n{'━' * 64}")
+    for g in games:
+        label, prog = _furthest(g)
+        end = _ENDING.get(g, "?")
+        done = "🏁 FINISHED" if label == end else f"at {label}"
+        open_walls = sum(1 for r in _read_requests() if r.get("game") == g)
+        wtxt = f"  ·  {open_walls} wall(s) to teach" if open_walls else ""
+        print(f"  {g:<9} {done:<14} (goal {end}){wtxt}")
+    print(f"{'━' * 64}\n  You taught Billy {taught} new line(s) this session. "
+          f"Every one moves him closer to the ending.\n{'━' * 64}")
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Billy Mitchell Remix — YOU play, Billy learns.")
-    p.add_argument("--only", default="", help="comma-separated challenge ids (see --list)")
-    p.add_argument("--list", action="store_true", help="show the challenge card and exit")
+    p = argparse.ArgumentParser(description="Billy Mitchell Remix — teach his next wall, per game.")
+    p.add_argument("--only", default="", help="comma-separated game keys (default: all campaign games)")
+    p.add_argument("--no-scout", action="store_true", help="skip scouting; teach walls already on file")
+    p.add_argument("--scout-attempts", type=int, default=2, help="attempts per game while scouting")
+    p.add_argument("--list", action="store_true", help="show Billy's frontier + open walls and exit")
     args = p.parse_args(argv)
 
+    games = [g for g in CAMPAIGN if not args.only or g in
+             {s.strip() for s in args.only.split(",")}]
+    config.ensure_dirs()
+
     if args.list:
-        print("  Billy Mitchell Remix — challenges (you play each one):")
-        for c in CHALLENGES:
-            where = f"from {c.from_state}" if c.from_state else "from the start"
-            print(f"    {c.id:<10} {c.title:<34} — {c.goal_text}  [{where}]")
+        print("  Billy's frontier + open walls:")
+        for g in games:
+            label, prog = _furthest(g)
+            walls = [r for r in _read_requests() if r.get("game") == g]
+            wtxt = ", ".join(f"{w['level_label']}@{w['death_x']}" for w in walls) or "—"
+            print(f"    {g:<9} at {label:<8} (goal {_ENDING.get(g,'?')})  "
+                  f"— {len(walls)} open wall(s): {wtxt}")
         return 0
 
-    if os.environ.get("BILLY_HEADLESS", "0") == "1":
-        print("[remix] Remix is a HANDS-ON gauntlet — it needs a game window. "
-              "Run it without BILLY_HEADLESS (e.g. the Desktop launcher).")
-        return 2
+    print("🎮  BILLY MITCHELL — REMIX\n    Teach Billy past his next wall in each game. "
+          "He keeps every line you show him.\n")
 
-    chosen = CHALLENGES
-    if args.only:
-        want = {s.strip() for s in args.only.split(",")}
-        chosen = [c for c in CHALLENGES if c.id in want]
-        if not chosen:
-            print(f"[remix] no matching challenges in {sorted(want)} — see --list.")
-            return 1
+    # 1) SCOUT — let Billy find his current walls (headless, quick).
+    if not args.no_scout:
+        print("  Scouting… (Billy plays each game himself to find where he's stuck)")
+        for g in games:
+            before = _furthest(g)[0]
+            reached = _scout(g, args.scout_attempts)
+            print(f"    · {g:<9} reached {reached}"
+                  + (f"  (was {before})" if reached != before else ""))
 
-    config.ensure_dirs()
-    prog = _load_progress()
-    print("🎮  BILLY MITCHELL — REMIX\n    You take the controller. Clear each line and Billy "
-          "learns it from you.\n")
-    for ch in chosen:
-        _, best = _run_challenge(ch)
-        if best is not None:
-            prev = prog.get(ch.id, {}).get("best")
-            prog[ch.id] = {"best": min(best, prev) if prev is not None else best,
-                           "updated": _dt.datetime.now().isoformat(timespec="seconds")}
-            _save_progress(prog)
-    _scoreboard(prog)
+    # 2) TEACH — the human clears each open wall (needs a window).
+    walls = [r for r in _read_requests() if r.get("game") in set(games)]
+    if not walls:
+        print("\n  No open walls right now — Billy is cruising. "
+              "Run again later (or with more --scout-attempts) to find the next one.")
+        _scoreboard(games, 0)
+        return 0
+    if os.environ.get("REMIX_SCOUT_ONLY") == "1":
+        print(f"\n  {len(walls)} wall(s) waiting — run without REMIX_SCOUT_ONLY to teach them.")
+        _scoreboard(games, 0)
+        return 0
+
+    print(f"\n  Billy needs help at {len(walls)} wall(s). Take the controller —")
+    taught = 0
+    for req in sorted(walls, key=lambda r: (r["game"], r.get("death_x", 0))):
+        if _teach_wall(req):
+            _resolve_request(req)
+            taught += 1
+
+    _scoreboard(games, taught)
     return 0
 
 
