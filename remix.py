@@ -125,7 +125,7 @@ def _play_once(ch: Challenge, session, game, start_state: bytes, start_obs) -> t
     def overlay(remaining: float, prog_note: str = ""):
         session.set_overlay([f"▶ {ch.goal_text}",
                              f"{remaining:4.0f}s   {prog_note}",
-                             "Z=jump  X=run  arrows=move   ENTER=done  ESC=skip"])
+                             "controller or keys · reach the goal to win · ESC=skip"])
 
     overlay(ch.time_s)
     obs = start_obs
@@ -224,6 +224,12 @@ def _run_challenge(ch: Challenge) -> tuple[str, float | None]:
         if not session.ensure_viewer():
             print("     ⚠  no game window (are you headless?). Remix needs a window to play in.")
             return "none", None
+        # Wake a gamepad that was asleep when the window opened (else it silently falls back to
+        # the keyboard). Uses your saved calibration (data/pad_map.json — teleop.py calibrate).
+        if session.reopen_joystick():
+            print("     🎮 controller ready.")
+        else:
+            print("     ⌨  no gamepad found — using the keyboard (arrows / Z / X / Tab).")
         start_state = session.clone_state()
         start_obs = _observe(session, game)
 
