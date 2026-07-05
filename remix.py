@@ -1,35 +1,34 @@
 #!/usr/bin/env python3
-"""Billy Mitchell REMIX — a NES-Remix-style gauntlet of short, varied challenges.
+"""Billy Mitchell REMIX — a NES-Remix-style gauntlet where YOU play, and Billy learns.
 
-Each challenge is a tiny goal on one game ("clear 1-1", "survive the swarm", "cross the
-pit", "wander out of Paseo"). Billy attempts it under a frame budget; clearing it earns a
-medal by how well he did. The engine's whole learning stack runs underneath, and cache /
-tapes / skills persist to disk — so **Billy gets greater as he plays**: a solution banked in
-one challenge (even a skill distilled in another game) carries into the next.
+Each challenge drops YOU into control at a hard spot in a game with one short goal (cross the
+lift, clear the pit, walk out of town). You play it in the window; the moment you succeed, your
+run is verified and banked as a demo — a cache entry + a transferable skill — so **Billy learns
+the line from you** and can do it himself forever after. Short segments, clear goals, you're the
+one holding the controller.
 
-    .venv/bin/python remix.py                 # run the whole gauntlet (watchable)
-    .venv/bin/python remix.py --only smb_11   # one challenge
+    .venv/bin/python remix.py                 # play the whole gauntlet (needs a window)
+    .venv/bin/python remix.py --only lift     # one challenge
     .venv/bin/python remix.py --list          # show the card
 
-When a challenge is run in a WINDOW and Billy can't crack it on his own, it drops into a
-DEMO ROUND: press and hold **T** in the game window to take the controller and show him the
-line, then let go — the takeover banks a cache entry + tape + skill, and the medal is his to
-keep on the retry. (Headless runs skip the demo round.)
+Controls (the game window must have focus):
+    arrows = move   ·   Z = A (jump / confirm)   ·   X = B (run / cancel)
+    Tab = Start   ·   ENTER = finish now   ·   ESC = skip this challenge
+    Gamepad: run `teleop.py calibrate` once (saves data/pad_map.json).
 """
 from __future__ import annotations
 
 import argparse
-import contextlib
 import datetime as _dt
 import json
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from billy import config
-from billy.abstractions import BootError
-from billy.director import Director
-from billy.knowledge import KnowledgeBase, SkillLibrary
 
 PROGRESS_FILE = config.DATA_DIR / "remix_progress.json"
 _STAR = {"gold": 3, "silver": 2, "bronze": 1, "none": 0}
@@ -40,83 +39,55 @@ _MEDAL_ICON = {"gold": "🥇", "silver": "🥈", "bronze": "🥉", "none": "⬜"
 class Challenge:
     id: str
     title: str
-    game: str                    # run.py GAMES key
-    blurb: str
-    kind: str                    # "clear" (fastest time wins) | "reach" (farther/longer wins)
-    medals: tuple                # clear: (gold_s, silver_s); reach: (gold, silver, bronze)
-    unit: str = "px"
-    attempts: int = 3
-    env: dict = field(default_factory=dict)
-    demo_hint: str = ""
+    game: str                       # run.py GAMES key
+    goal_text: str                  # what YOU need to do (shown on screen)
+    goal_kind: str                  # "clear" | "advance" | "psii_exit"
+    time_s: int                     # budget for one try
+    medals: tuple                   # (gold_s, silver_s) — seconds to finish; slower = bronze
+    goal_px: int = 0                # for "advance": how far past the start counts as done
+    from_state: str = ""            # savestate to drop you in at; "" = play from the game's start
+    tries: int = 3
+    hint: str = ""
 
-    # -- scoring ---------------------------------------------------------------------------
-    def attempt_value(self, r) -> float | None:
-        """The headline number for one attempt, or None if the goal wasn't met."""
-        if self.kind == "clear":
-            return r.fastest_clear_frames / 60.0 if (
-                r.outcome == "clear" and r.fastest_clear_frames) else None
-        best = max(r.max_x, r.level_frontier)          # progress / survival
-        return float(best) if best >= self.medals[-1] else None
+    def reached(self, start_obs, obs) -> bool:
+        """True once YOU have accomplished the goal (survive is implicit — death ends the try)."""
+        if not getattr(obs.raw, "in_play", True):
+            return False
+        if self.goal_kind == "clear":
+            return tuple(obs.level_key[:2]) != tuple(start_obs.level_key[:2])
+        if self.goal_kind == "advance":
+            return obs.progress >= start_obs.progress + self.goal_px
+        if self.goal_kind == "psii_exit":
+            sp, op = start_obs.raw.place, obs.raw.place
+            return bool(op[2]) and op[:2] != sp[:2]        # a NEW outdoor place = out of Paseo
+        return False
 
-    def better(self, a: float | None, b: float | None) -> float | None:
-        """Fold two attempt values, keeping the better one (min time / max reach)."""
-        vals = [v for v in (a, b) if v is not None]
-        if not vals:
-            return None
-        return min(vals) if self.kind == "clear" else max(vals)
-
-    def medal(self, value: float | None) -> str:
-        if value is None:
+    def medal(self, seconds: float | None) -> str:
+        if seconds is None:
             return "none"
-        if self.kind == "clear":
-            g, s = self.medals
-            return "gold" if value <= g else "silver" if value <= s else "bronze"
-        g, s, b = self.medals
-        return "gold" if value >= g else "silver" if value >= s else "bronze" if value >= b else "none"
-
-    def render_value(self, value: float | None) -> str:
-        if value is None:
-            return "—"
-        return f"{value:.1f}s" if self.kind == "clear" else f"{int(value)}{self.unit}"
+        g, s = self.medals
+        return "gold" if seconds <= g else "silver" if seconds <= s else "bronze"
 
 
 # ---------------------------------------------------------------------------------------------
-# The card. Ordered easy → spicy. Every game here plays with the ROMs already imported.
+# The card. Each is a short, human-played line at a spot where teaching Billy actually matters.
 # ---------------------------------------------------------------------------------------------
 CHALLENGES: list[Challenge] = [
-    # Thresholds are tuned so a strong solo run lands SILVER — gold is reserved for genuine
-    # mastery (a record clear, crossing the wall, reaching the next area), the target a demo or
-    # more banked learning unlocks.
-    Challenge("smb_11", "World 1-1 Sprint", "smb",
-              "Clear Super Mario Bros 1-1. The faster, the shinier the medal.",
-              kind="clear", medals=(38, 48), attempts=3,
-              env={"BILLY_REPEAT_LEVEL": "1", "BILLY_MAX_FRAMES": "9000"},
-              demo_hint="Run right, jump the pits and Goombas, hit the flagpole."),
-    Challenge("shmup_survive", "Airstriker: Hold the Line", "shmup",
-              "Survive the shooter as long as you can — dodge, weave, keep firing.",
-              kind="reach", medals=(320, 230, 150), unit="",
-              attempts=3, env={"BILLY_MAX_FRAMES": "6000"},
-              demo_hint="Strafe under the gaps in the falling fire; never stop shooting."),
-    Challenge("pixel_pit", "Pixel Pioneer", "pixel",
-              "Play Mario FROM PIXELS ALONE (no RAM) and push as far right as you can.",
-              kind="reach", medals=(1500, 1000, 600), unit="px",
-              attempts=3, env={"BILLY_MAX_FRAMES": "8000"},
-              demo_hint="Time a running jump at the pit's edge (x≈1120)."),
-    Challenge("smb2j_start", "Lost Levels: First Steps", "smb_lost",
-              "SMB2-Japan is brutal. Get as deep a run off the line as you can.",
-              kind="reach", medals=(4000, 2000, 900), unit="px",
-              attempts=3, env={"BILLY_MAX_FRAMES": "9000"},
-              demo_hint="Same moves as SMB, but the jumps are meaner — commit."),
-    Challenge("zelda_start", "Zelda: Leave the Cave", "zelda",
-              "Get Link moving through the overworld and banking ground.",
-              kind="reach", medals=(5000, 2500, 1000), unit="",
-              attempts=3, env={"BILLY_MAX_FRAMES": "9000"},
-              demo_hint="Grab the sword, then push through a screen edge."),
-    Challenge("psii_wander", "Paseo Wanderer", "psii",
-              "Phantasy Star II — explore Paseo, then reach the Mota overworld.",
-              kind="reach", medals=(2500, 1000, 300), unit="",
-              attempts=2, env={"BILLY_MAX_FRAMES": "14000"},
-              demo_hint="Walk the streets to the town edge and out onto Mota."),
+    Challenge("flagpole", "SMB 1-1 · To the Flagpole", "smb",
+              "Reach the flagpole — clear World 1-1.", "clear",
+              time_s=75, medals=(45, 65), hint="Run right; jump the pits and Goombas."),
+    Challenge("lift", "SMB 1-3 · Ride the Lift", "smb",
+              "Cross the moving-lift gap and reach solid ground.", "advance", goal_px=180,
+              time_s=40, medals=(12, 22), from_state="data/states/smb_1_3_lift_approach.state",
+              hint="Time the jump onto the lift, ride it, hop off before it drops."),
+    Challenge("wall", "SMB 2-1 · Over the Wall", "smb",
+              "Get past the wall and keep moving right.", "advance", goal_px=140,
+              time_s=35, medals=(10, 20), from_state="data/states/smb_2_1_wall.state",
+              hint="Back up for a run-up, then a full running jump."),
+    Challenge("paseo", "Phantasy Star II · Escape Paseo", "psii",
+              "Walk Rolf out of town onto the Mota overworld.", "psii_exit",
+              time_s=60, medals=(25, 45),
+              hint="Head for a street that leaves town — cross the edge onto open ground."),
 ]
 _BY_ID = {c.id: c for c in CHALLENGES}
 
@@ -135,107 +106,181 @@ def _save_progress(prog: dict) -> None:
     PROGRESS_FILE.write_text(json.dumps(prog, indent=2) + "\n")
 
 
-@contextlib.contextmanager
-def _env(overrides: dict):
-    prev = {k: os.environ.get(k) for k in overrides}
-    os.environ.update({k: str(v) for k, v in overrides.items()})
-    try:
-        yield
-    finally:
-        for k, v in prev.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-
-def _build_director(game_key: str, skills: SkillLibrary) -> Director:
+def _game(name: str):
     from run import GAMES
-    game = GAMES[game_key]()
-    game.cli_name = game_key
-    # No LLM, no guide ingestion: keep the gauntlet fast + offline. The reflex/cache/search/
-    # tape/skill stack (the parts that compound) all run regardless.
-    return Director(game, KnowledgeBase(), use_llm=False, skills=skills, guide=None)
+    return GAMES[name]()
 
 
-def _run_challenge(ch: Challenge, skills: SkillLibrary, allow_demo: bool) -> tuple[str, float | None]:
-    print(f"\n{'═' * 68}\n  ▶  {ch.title}  ·  {ch.game}\n     {ch.blurb}\n{'═' * 68}")
-    best: float | None = None
-    with _env(ch.env):
-        try:
-            director = _build_director(ch.game, skills)
-            director.session.reset()            # same bring-up run_session does before attempts
-            director.session.wait_until_live()
-            director.boot()
-        except (BootError, FileNotFoundError) as e:
-            print(f"     ⚠  unavailable ({type(e).__name__}: {e}) — skipping.")
+def _play_once(ch: Challenge, session, game, start_state: bytes, start_obs) -> tuple[str, float]:
+    """One try: YOU play; on success verify+bank the demo. Returns (outcome, seconds)."""
+    from billy.teleop import TeleopRecorder
+
+    session.restore(start_state)
+    session.teleop_reset()
+    rec = TeleopRecorder()
+    budget = ch.time_s * 60
+    frames = 0
+    outcome = "timeout"
+
+    def overlay(remaining: float, prog_note: str = ""):
+        session.set_overlay([f"▶ {ch.goal_text}",
+                             f"{remaining:4.0f}s   {prog_note}",
+                             "Z=jump  X=run  arrows=move   ENTER=done  ESC=skip"])
+
+    overlay(ch.time_s)
+    obs = start_obs
+    while frames < budget:
+        mask, finish, abort = session.teleop_poll()
+        if abort:
+            outcome = "skip"
+            break
+        session.teleop_step(mask)
+        rec.record(mask, 1)
+        frames += 1
+        obs = _observe(session, game)
+        if obs.dead:
+            outcome = "died"
+            break
+        if ch.reached(start_obs, obs) or finish:
+            outcome = "win"
+            break
+        if frames % 15 == 0:
+            gained = obs.progress - start_obs.progress
+            overlay((budget - frames) / 60, f"+{gained}")
+
+    seconds = frames / 60.0
+    if outcome != "win":
+        session.set_overlay([f"✗ {outcome.upper()}", f"{ch.goal_text}", "…"])
+        return outcome, seconds
+
+    # You made it — turn your run into something Billy keeps.
+    plan = rec.plan()
+    banked = _bank(ch, game, start_state, start_obs, plan)
+    session.set_overlay([f"✓ CLEARED in {seconds:.1f}s",
+                         "Billy learned it." if banked else "(nice — run didn't verify to bank)",
+                         ""])
+    return "win", seconds
+
+
+def _bank(ch: Challenge, game, start_state: bytes, start_obs, plan) -> bool:
+    """Verify the human demo on a clone and, if it survives+advances, bank it for Billy:
+    a SolutionCache entry (exact replay) + a distilled transferable skill."""
+    from billy.config import SOLUTIONS_FILE
+    from billy.knowledge.cache import SolutionCache
+    from billy.teleop import bank_demo, verify_demo
+
+    verify_game = _game(ch.game)                    # fresh: avoid the live progress high-water mark
+    session2 = verify_game.system.connect()
+    session2.wait_until_live()
+    try:
+        result = verify_demo(session2, verify_game, start_state, plan,
+                             min_progress=config._MIN_PROGRESS_PX if hasattr(config, "_MIN_PROGRESS_PX") else 8)
+    finally:
+        session2.close()
+    print(f"     verify: {result.summary()}")
+    if not result.bankable:
+        return False
+    cache = SolutionCache(path=SOLUTIONS_FILE)
+    key = bank_demo(cache, start_obs, plan, result.end_progress)
+    print(f"     ⇒ banked demo at {key} (reach {result.end_progress}) — Billy replays it now.")
+    try:
+        from billy.knowledge.distill import distill_solution
+        from billy.knowledge.skills import SkillLibrary
+        if distill_solution(SkillLibrary(), summary=start_obs.summary,
+                            level_label=start_obs.level_label, plan=plan,
+                            start_x=start_obs.progress, reach=result.end_progress,
+                            source="demo", console=getattr(game.system, "name", "nes")):
+            print("     ⇒ distilled into a transferable skill (seeds search on similar spots).")
+    except Exception as e:
+        print(f"     (skill distill skipped: {type(e).__name__})")
+    return True
+
+
+def _observe(session, game):
+    st = session.read_state()
+    return game.observe(st.frame, st.ram, getattr(st, "rgb", None))
+
+
+def _run_challenge(ch: Challenge) -> tuple[str, float | None]:
+    from billy.abstractions import BootError
+
+    print(f"\n{'═' * 64}\n  ▶  {ch.title}\n     GOAL: {ch.goal_text}")
+    if ch.hint:
+        print(f"     hint: {ch.hint}")
+    print(f"{'═' * 64}")
+    game = _game(ch.game)
+    session = game.system.connect()
+    try:
+        session.wait_until_live()
+        if ch.from_state:
+            p = Path(ch.from_state)
+            if not p.is_file():
+                print(f"     ⚠  start state missing ({p}) — skipping. "
+                      f"(capture it with teleop.py capture)")
+                return "none", None
+            session.restore(p.read_bytes())
+        else:
+            game.boot(session)
+        if not session.ensure_viewer():
+            print("     ⚠  no game window (are you headless?). Remix needs a window to play in.")
             return "none", None
+        start_state = session.clone_state()
+        start_obs = _observe(session, game)
 
-        try:
-            total = ch.attempts + (1 if allow_demo else 0)
-            for n in range(1, total + 1):
-                demo_round = n > ch.attempts
-                # only spend the demo round if he hasn't already passed on his own
-                if demo_round and best is not None:
-                    break
-                if demo_round:
-                    print(f"\n     🎬 DEMO ROUND — Billy is stuck. HOLD **T** in the game window "
-                          f"to take over and show him:\n        “{ch.demo_hint}”\n        …then "
-                          f"let go. He learns from what you do.")
-                try:
-                    r = director.run_attempt(n)
-                except BootError as e:
-                    print(f"     ⚠  attempt failed ({e}) — skipping.")
-                    break
-                val = ch.attempt_value(r)
-                best = ch.better(best, val)
-                tag = "✅ GOAL" if val is not None else "·"
-                print(f"     attempt {n}{' (demo)' if demo_round else ''}: "
-                      f"{r.outcome} · reached {r.world_stage} · best so far "
-                      f"{ch.render_value(best)}  {tag}")
-                if best is not None and ch.medal(best) == "gold":
-                    break                    # already maxed — no need to grind further
-        finally:
-            if getattr(director, "pool", None) is not None:
-                director.pool.close()
-    return ch.medal(best), best
+        best: float | None = None
+        for t in range(1, ch.tries + 1):
+            if t > 1:
+                print(f"     try {t}/{ch.tries}…")
+            outcome, secs = _play_once(ch, session, game, start_state, start_obs)
+            if outcome == "win":
+                best = secs if best is None else min(best, secs)
+                print(f"     ✓ cleared in {secs:.1f}s — {_MEDAL_ICON[ch.medal(secs)]}")
+                break
+            if outcome == "skip":
+                print("     ↷ skipped.")
+                break
+            print(f"     ✗ {outcome} at {secs:.1f}s.")
+        return ch.medal(best), best
+    except BootError as e:
+        print(f"     ⚠  couldn't start ({e}).")
+        return "none", None
+    finally:
+        session.close()
 
 
 def _scoreboard(prog: dict) -> None:
-    print(f"\n{'━' * 68}\n  BILLY MITCHELL — REMIX SCOREBOARD\n{'━' * 68}")
-    print(f"  {'medal':<6} {'challenge':<26} {'game':<9} best")
+    print(f"\n{'━' * 64}\n  REMIX — YOUR MEDALS  (and what Billy learned from you)\n{'━' * 64}")
     stars = 0
     for ch in CHALLENGES:
         best = prog.get(ch.id, {}).get("best")
-        medal = ch.medal(best)                 # derive from best: thresholds are the source of truth
+        medal = ch.medal(best)
         stars += _STAR[medal]
-        val = ch.render_value(best) if best is not None else "—"
-        print(f"  {_MEDAL_ICON[medal]:<5} {ch.title:<26} {ch.game:<9} {val}")
-    max_stars = 3 * len(CHALLENGES)
-    filled = round(12 * stars / max_stars) if max_stars else 0
-    bar = "█" * filled + "░" * (12 - filled)
-    print(f"{'━' * 68}\n  MASTERY  [{bar}]  {stars}/{max_stars} stars")
-    if stars == max_stars:
-        print("  👑 PERFECT RUN. Billy is, and has always been, the greatest of all time.")
-    elif stars >= max_stars * 0.6:
-        print("  🔥 Billy is on a tear. A few lines left to master.")
-    else:
-        print("  🎮 The gauntlet awaits. Teach him the hard lines with a demo (hold T).")
-    print("━" * 68)
+        val = f"{best:.1f}s" if best is not None else "—"
+        print(f"  {_MEDAL_ICON[medal]}  {ch.title:<34} {val}")
+    mx = 3 * len(CHALLENGES)
+    filled = round(12 * stars / mx) if mx else 0
+    print(f"{'━' * 64}\n  MASTERY  [{'█'*filled}{'░'*(12-filled)}]  {stars}/{mx} stars")
+    print("  Every medal you earn is a line Billy can now run himself." + ("  👑" if stars == mx else ""))
+    print("━" * 64)
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Billy Mitchell Remix — a gauntlet of short game challenges.")
+    p = argparse.ArgumentParser(description="Billy Mitchell Remix — YOU play, Billy learns.")
     p.add_argument("--only", default="", help="comma-separated challenge ids (see --list)")
     p.add_argument("--list", action="store_true", help="show the challenge card and exit")
-    p.add_argument("--no-demo", action="store_true", help="never drop into a demo round on failure")
     args = p.parse_args(argv)
 
     if args.list:
-        print("  Billy Mitchell Remix — challenges:")
+        print("  Billy Mitchell Remix — challenges (you play each one):")
         for c in CHALLENGES:
-            print(f"    {c.id:<14} {c.title:<26} [{c.game}] — {c.blurb}")
+            where = f"from {c.from_state}" if c.from_state else "from the start"
+            print(f"    {c.id:<10} {c.title:<34} — {c.goal_text}  [{where}]")
         return 0
+
+    if os.environ.get("BILLY_HEADLESS", "0") == "1":
+        print("[remix] Remix is a HANDS-ON gauntlet — it needs a game window. "
+              "Run it without BILLY_HEADLESS (e.g. the Desktop launcher).")
+        return 2
 
     chosen = CHALLENGES
     if args.only:
@@ -245,30 +290,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[remix] no matching challenges in {sorted(want)} — see --list.")
             return 1
 
-    # A window means demos are possible; headless/turbo benchmarks skip the demo round.
-    windowed = os.environ.get("BILLY_HEADLESS", "0") != "1"
-    allow_demo = windowed and not args.no_demo
-
     config.ensure_dirs()
-    skills = SkillLibrary()          # shared across the gauntlet → cross-game carry-forward
     prog = _load_progress()
-
-    print("🎮  BILLY MITCHELL — REMIX")
-    print(f"    {len(chosen)} challenge(s) · Billy keeps everything he learns.\n")
-
+    print("🎮  BILLY MITCHELL — REMIX\n    You take the controller. Clear each line and Billy "
+          "learns it from you.\n")
     for ch in chosen:
-        medal, best = _run_challenge(ch, skills, allow_demo)
-        prev = prog.get(ch.id, {})
-        prev_best = prev.get("best")
-        # keep the best result ever seen for this challenge
-        merged = ch.better(prev_best, best) if best is not None else prev_best
-        prog[ch.id] = {                        # store best only; medal is derived from thresholds
-            "best": merged,
-            "updated": _dt.datetime.now().isoformat(timespec="seconds"),
-        }
-        _save_progress(prog)
-        print(f"     ⇒ {_MEDAL_ICON[ch.medal(merged)]}  {ch.title}: {ch.render_value(merged)}")
-
+        _, best = _run_challenge(ch)
+        if best is not None:
+            prev = prog.get(ch.id, {}).get("best")
+            prog[ch.id] = {"best": min(best, prev) if prev is not None else best,
+                           "updated": _dt.datetime.now().isoformat(timespec="seconds")}
+            _save_progress(prog)
     _scoreboard(prog)
     return 0
 
