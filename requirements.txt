@@ -2,5 +2,4 @@
 stable-retro>=1.0.1   # in-process libretro NES emulator (RAM access + state cloning)
 requests>=2.31        # LM Studio OpenAI-compatible HTTP client
 numpy>=1.24           # action vectors + fast cosine (pulled in by stable-retro anyway)
-sounddevice>=0.4      # speaker output for live windowed play (music + SFX); optional at runtime
 # Optional RL tier (PPO controller): see requirements-rl.txt (torch + stable-baselines3).
