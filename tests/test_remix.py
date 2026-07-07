@@ -298,3 +298,181 @@ def test_discover_zelda_uses_teleop_state(tmp_path, monkeypatch):
     walls = remix._discover_walls(["zelda"])
     assert walls[0]["game"] == "zelda"
     assert "teleop_121.state" in walls[0]["state"]
+
+
+# --- tape-bank + on-screen replay: the demo now sticks (moving hazards) AND you see it land ---
+
+def test_anchor_is_level_entry_gates_by_game_and_source():
+    # Only a real level/screen entry is a valid tape anchor (restored AT level-begin).
+    assert remix._anchor_is_level_entry("smb", "start of 1-3") is True
+    assert remix._anchor_is_level_entry("smb", "approach at 1-3") is False   # mid-level → cache only
+    assert remix._anchor_is_level_entry("zelda", "approach at overworld#121") is True   # screen-keyed
+
+
+def test_bank_tape_skips_mid_level_smb_anchor(tmp_path, monkeypatch):
+    # A mid-level SMB approach must NOT become a per-level tape — it would replay from mid-level
+    # on every entry, skipping the level's first half. The cache entry carries it instead.
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    from billy.knowledge.tape import TapeLibrary
+    monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
+    obs = SimpleNamespace(level_key=(0, 1, 3))
+    result = SimpleNamespace(end_level_key=(0, 1, 3), end_progress=800)
+    banked = remix._bank_tape("smb", obs, b"MIDLEVEL", [Step(5, 1)], result, "approach at 1-3")
+    assert banked is False
+    assert len(TapeLibrary(path=tmp_path / "tapes.jsonl")) == 0
+
+
+def test_bank_tape_writes_entry_anchored_tape_from_level_start(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    from billy.knowledge.tape import TapeLibrary
+    monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
+    obs = SimpleNamespace(level_key=(0, 1, 3))
+    result = SimpleNamespace(end_level_key=(0, 1, 3), end_progress=800)   # crossed, level not cleared
+    assert remix._bank_tape("smb", obs, b"LEVELSTART", [Step(5, 1)], result, "start of 1-3") is True
+    lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    entry = lib.get((0, 1, 3))
+    assert entry is not None
+    assert entry.entry_state == b"LEVELSTART"      # the anchor that makes it reproduce
+    assert entry.clears_level is False             # a mid-level crossing is a partial tape
+
+
+def test_bank_tape_zelda_screen_crossing_clears_the_unit(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    from billy.knowledge.tape import TapeLibrary
+    monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
+    obs = SimpleNamespace(level_key=("overworld", 121))
+    result = SimpleNamespace(end_level_key=("overworld", 122), end_progress=60)
+    assert remix._bank_tape("zelda", obs, b"SCREEN", [Step(4, 2)], result, "approach at overworld#121")
+    entry = TapeLibrary(path=tmp_path / "tapes.jsonl").get(("overworld", 121))
+    assert entry.clears_level is True              # crossing east advanced the screen unit
+
+
+class _ReplaySession:
+    """Captures the visible-replay calls without an emulator."""
+    def __init__(self):
+        self.restored = None
+        self.masks: list[int] = []
+        self.overlays: list[list] = []
+
+    def restore(self, snap):
+        self.restored = snap
+
+    def set_overlay(self, lines):
+        self.overlays.append(lines)
+
+    def teleop_step(self, mask):
+        self.masks.append(mask)
+
+
+def test_replay_taught_line_restores_and_replays_every_frame():
+    from billy.abstractions import Step
+    sess = _ReplaySession()
+    remix._replay_taught_line(sess, b"ENTRY", [Step(3, 1), Step(2, 4)], "cross the pit")
+    assert sess.restored == b"ENTRY"               # replays from the exact taught state
+    assert sess.masks == [1, 1, 1, 4, 4]           # every frame, in order (run-length expanded)
+    assert sess.overlays and any("WATCH BILLY" in l for l in sess.overlays[0])
+
+
+def test_replay_taught_line_is_non_fatal_on_window_error():
+    # A windowing hiccup mid-replay must never blow up a successful bank.
+    class _Boom(_ReplaySession):
+        def teleop_step(self, mask):
+            raise RuntimeError("viewer died")
+    from billy.abstractions import Step
+    remix._replay_taught_line(_Boom(), b"E", [Step(1, 1)], "goal")   # no exception escapes
+
+
+# --- BC warm-start: the 4th carrier — persist the seed train_section.py --demo consumes --------
+
+def test_bc_seed_writes_state_and_demo_for_smb(tmp_path, monkeypatch):
+    import json as _json
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    monkeypatch.setattr(remix.config, "DATA_DIR", tmp_path)
+    obs = SimpleNamespace(level_label="1-3", progress=630)
+    result = SimpleNamespace(end_progress=780)
+    path = remix._write_bc_seed("smb", obs, b"STATE", [Step(6, 1), Step(3, 3)], result)
+    assert path is not None
+    demo = tmp_path / "rl" / "demos" / "smb" / "1_3_x630.demo.json"
+    state = tmp_path / "rl" / "demos" / "smb" / "1_3_x630.state"
+    assert state.read_bytes() == b"STATE"
+    assert _json.loads(demo.read_text())["steps"] == [[6, 1], [3, 3]]   # the exact input stream
+
+
+def test_bc_seed_skipped_for_non_section_games(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    monkeypatch.setattr(remix.config, "DATA_DIR", tmp_path)
+    obs = SimpleNamespace(level_label="overworld #121", progress=200)
+    result = SimpleNamespace(end_progress=260)
+    # SectionEnv is SMB-shaped — no BC carrier for Zelda.
+    assert remix._write_bc_seed("zelda", obs, b"S", [Step(1, 1)], result) is None
+    assert not (tmp_path / "rl" / "demos" / "zelda").exists()
+
+
+# --- the compounding march: teach → re-scout → next wall, in one sitting ----------------------
+
+def test_teach_game_marches_until_no_walls_left():
+    # Each taught line clears that wall; re-scout surfaces the next. Loop ends when walls run out.
+    remaining = [
+        [{"game": "smb", "level_label": "3-4", "death_x": 525}],
+        [{"game": "smb", "level_label": "4-1", "death_x": 300}],
+        [],                                          # after two teaches, Billy is unstuck
+    ]
+    scouted = []
+    resolved = []
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=True,
+        teach=lambda req: True,                      # you clear every wall
+        scout=lambda g, n: scouted.append(g) or "next",
+        open_walls=lambda games: remaining.pop(0) if remaining else [],
+        resolve=lambda req: resolved.append(req["level_label"]))
+    assert taught == 2
+    assert resolved == ["3-4", "4-1"]
+    assert scouted == ["smb", "smb"]                 # re-scouted after each taught line
+
+
+def test_teach_game_stops_when_a_wall_cannot_be_taught():
+    # A skipped/failed wall ends the march (it stays open for next time) — no re-scout after it.
+    scouted = []
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=True,
+        teach=lambda req: False,                     # you skip the wall
+        scout=lambda g, n: scouted.append(g) or "x",
+        open_walls=lambda games: [{"game": "smb", "level_label": "3-4", "death_x": 525}],
+        resolve=lambda req: None)
+    assert taught == 0 and scouted == []             # never advanced, never re-scouted
+
+
+def test_teach_game_no_rescout_teaches_one_and_stops():
+    calls = {"n": 0}
+
+    def _open(games):
+        calls["n"] += 1
+        return [{"game": "smb", "level_label": "3-4", "death_x": 525}]
+
+    scouted = []
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=False,      # --no-scout: teach what's on file, don't hunt
+        teach=lambda req: True, scout=lambda g, n: scouted.append(g),
+        open_walls=_open, resolve=lambda req: None)
+    assert taught == 1 and scouted == [] and calls["n"] == 1
+
+
+def test_teach_game_respects_the_per_game_cap():
+    # An always-stuck game (bank never actually unblocks him) must not loop forever.
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=True,
+        teach=lambda req: True,
+        scout=lambda g, n: "same",
+        open_walls=lambda games: [{"game": "smb", "level_label": "3-4", "death_x": 525}],
+        resolve=lambda req: None)
+    assert taught == remix.MAX_WALLS_PER_GAME
