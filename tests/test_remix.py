@@ -386,3 +386,93 @@ def test_replay_taught_line_is_non_fatal_on_window_error():
             raise RuntimeError("viewer died")
     from billy.abstractions import Step
     remix._replay_taught_line(_Boom(), b"E", [Step(1, 1)], "goal")   # no exception escapes
+
+
+# --- BC warm-start: the 4th carrier — persist the seed train_section.py --demo consumes --------
+
+def test_bc_seed_writes_state_and_demo_for_smb(tmp_path, monkeypatch):
+    import json as _json
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    monkeypatch.setattr(remix.config, "DATA_DIR", tmp_path)
+    obs = SimpleNamespace(level_label="1-3", progress=630)
+    result = SimpleNamespace(end_progress=780)
+    path = remix._write_bc_seed("smb", obs, b"STATE", [Step(6, 1), Step(3, 3)], result)
+    assert path is not None
+    demo = tmp_path / "rl" / "demos" / "smb" / "1_3_x630.demo.json"
+    state = tmp_path / "rl" / "demos" / "smb" / "1_3_x630.state"
+    assert state.read_bytes() == b"STATE"
+    assert _json.loads(demo.read_text())["steps"] == [[6, 1], [3, 3]]   # the exact input stream
+
+
+def test_bc_seed_skipped_for_non_section_games(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    monkeypatch.setattr(remix.config, "DATA_DIR", tmp_path)
+    obs = SimpleNamespace(level_label="overworld #121", progress=200)
+    result = SimpleNamespace(end_progress=260)
+    # SectionEnv is SMB-shaped — no BC carrier for Zelda.
+    assert remix._write_bc_seed("zelda", obs, b"S", [Step(1, 1)], result) is None
+    assert not (tmp_path / "rl" / "demos" / "zelda").exists()
+
+
+# --- the compounding march: teach → re-scout → next wall, in one sitting ----------------------
+
+def test_teach_game_marches_until_no_walls_left():
+    # Each taught line clears that wall; re-scout surfaces the next. Loop ends when walls run out.
+    remaining = [
+        [{"game": "smb", "level_label": "3-4", "death_x": 525}],
+        [{"game": "smb", "level_label": "4-1", "death_x": 300}],
+        [],                                          # after two teaches, Billy is unstuck
+    ]
+    scouted = []
+    resolved = []
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=True,
+        teach=lambda req: True,                      # you clear every wall
+        scout=lambda g, n: scouted.append(g) or "next",
+        open_walls=lambda games: remaining.pop(0) if remaining else [],
+        resolve=lambda req: resolved.append(req["level_label"]))
+    assert taught == 2
+    assert resolved == ["3-4", "4-1"]
+    assert scouted == ["smb", "smb"]                 # re-scouted after each taught line
+
+
+def test_teach_game_stops_when_a_wall_cannot_be_taught():
+    # A skipped/failed wall ends the march (it stays open for next time) — no re-scout after it.
+    scouted = []
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=True,
+        teach=lambda req: False,                     # you skip the wall
+        scout=lambda g, n: scouted.append(g) or "x",
+        open_walls=lambda games: [{"game": "smb", "level_label": "3-4", "death_x": 525}],
+        resolve=lambda req: None)
+    assert taught == 0 and scouted == []             # never advanced, never re-scouted
+
+
+def test_teach_game_no_rescout_teaches_one_and_stops():
+    calls = {"n": 0}
+
+    def _open(games):
+        calls["n"] += 1
+        return [{"game": "smb", "level_label": "3-4", "death_x": 525}]
+
+    scouted = []
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=False,      # --no-scout: teach what's on file, don't hunt
+        teach=lambda req: True, scout=lambda g, n: scouted.append(g),
+        open_walls=_open, resolve=lambda req: None)
+    assert taught == 1 and scouted == [] and calls["n"] == 1
+
+
+def test_teach_game_respects_the_per_game_cap():
+    # An always-stuck game (bank never actually unblocks him) must not loop forever.
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=True,
+        teach=lambda req: True,
+        scout=lambda g, n: "same",
+        open_walls=lambda games: [{"game": "smb", "level_label": "3-4", "death_x": 525}],
+        resolve=lambda req: None)
+    assert taught == remix.MAX_WALLS_PER_GAME

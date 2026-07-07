@@ -40,6 +40,7 @@ REQUESTS_FILE = config.DATA_DIR / "demo_requests.jsonl"
 CLEARED_FILE = config.DATA_DIR / "remix_cleared.jsonl"
 PAST_MARGIN = 24                 # must end this far past Billy's death spot (a real crossing)
 ZELDA_MIN_PROGRESS = 48          # trivial link_x nudges must not count as teaching #121
+MAX_WALLS_PER_GAME = 6           # per-session cap on the teach→re-scout→next-wall march
 
 # The campaign roster: games with a completion arc worth marching. Skipped gracefully if the
 # ROM/integration isn't present.
@@ -584,32 +585,45 @@ def _teach_wall(req: dict) -> bool:
         if game_key == "zelda":
             print("     🗡  Fight through the screen and walk EAST to the next screen alive.")
 
+        # Bank EVERY clean crossing in the try budget, not just the first. A second, faster or
+        # further line replaces the banked one (cache force=True / tape frontier) — Billy keeps
+        # your best. The take-control gate is the opt-out: once you've banked, step away and the
+        # "afk" timeout ends the wall (a success, not a failure).
+        banked = 0
         for t in range(1, 4):
             if t > 1:
-                print(f"     try {t}/3…")
+                print(f"     try {t}/3 — land a cleaner line (Billy keeps the best), "
+                      f"or step away to move on." if banked else f"     try {t}/3…")
             session.restore(dropin)
             outcome, secs, plan, start_state, start_obs = _play_wall(
                 session, game, game_key, req, death_x)
             if outcome == "win":
                 print(f"     ✓ you cleared it in {secs:.1f}s")
                 params = _teach_params(game_key, req, start_obs)
-                return _bank(game_key, session, start_state, start_obs, plan, req=req,
-                               min_progress=params["min_progress"], source=source)
+                if _bank(game_key, session, start_state, start_obs, plan, req=req,
+                         min_progress=params["min_progress"], source=source):
+                    banked += 1
+                continue
             if outcome == "skip":
-                print("     ↷ skipped.")
-                return False
+                print("     ↷ done with this wall." if banked else "     ↷ skipped.")
+                break
             if outcome == "afk":
+                if banked:
+                    break                     # taught it, then stepped away — done, not a failure
                 print("     ⏳ no input — you didn't take the controller. Skipping this wall.")
                 return False
             if outcome == "bad_dropin":
                 print("     ⚠  this drop-in coasts past the wall on its own — can't teach it "
                       "cleanly. Skipping (needs an earlier start state).")
-                return False
+                return banked > 0
             if outcome == "early_finish":
                 print(f"     ✗ ENTER pressed too soon ({secs:.1f}s) — cross the wall first, "
                       f"then ENTER (Zelda: march east to the next screen alive).")
                 continue
             print(f"     ✗ {outcome} at {secs:.1f}s — try again.")
+        if banked:
+            print(f"     🏅 banked {banked} clean crossing(s) — Billy keeps your best line.")
+            return True
         print("     (out of tries — the wall stays open for next time.)")
         return False
     except BootError as e:
@@ -710,6 +724,7 @@ def _bank(game_key: str, session, start_state: bytes, start_obs, plan, *,
     key = bank_demo(cache, start_obs, plan, result.end_progress)
     print(f"     ⇒ 🧠 Billy learned it — banked at {key} (reach {result.end_progress}).")
     _bank_tape(game_key, start_obs, start_state, plan, result, source)
+    _write_bc_seed(game_key, start_obs, start_state, plan, result)
     try:
         from billy.knowledge.distill import distill_solution
         from billy.knowledge.skills import SkillLibrary
@@ -774,6 +789,63 @@ def _replay_taught_line(session, entry_state: bytes, plan, goal: str) -> None:
         print(f"     (replay skipped: {type(e).__name__}: {e})")
 
 
+# SectionEnv (the hazard sub-policy trainer) is SMB-shaped — its action vocabulary and features
+# are the platformer's, so the BC warm-start carrier applies to the SMB family.
+_BC_GAMES = {"smb", "smb_lost"}
+
+
+def _write_bc_seed(game_key: str, start_obs, start_state: bytes, plan, result) -> str | None:
+    """The 4th demo carrier: persist the crossing as a behavior-cloning warm start — the exact
+    start savestate + its input stream (.demo.json), the two artifacts `train_section.py --demo`
+    clones into a hazard sub-policy (one human crossing turns PPO-from-scratch into fine-tuning).
+    Remix does NOT run the heavy, offline PPO here; it writes the seed and prints the command."""
+    if game_key not in _BC_GAMES:
+        return None
+    try:
+        demos = config.DATA_DIR / "rl" / "demos" / game_key
+        demos.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^0-9A-Za-z]+", "_", str(start_obs.level_label)).strip("_")
+        stem = f"{slug}_x{int(start_obs.progress)}"
+        state_path = demos / f"{stem}.state"
+        demo_path = demos / f"{stem}.demo.json"
+        state_path.write_bytes(start_state)
+        demo_path.write_text(json.dumps({"steps": [[s.frames, s.buttons] for s in plan]}))
+        goal_x = max(int(result.end_progress), int(start_obs.progress) + PAST_MARGIN)
+        print(f"     ⇒ 🤖 BC seed saved ({demo_path.name}). Fine-tune a sub-policy offline:")
+        print(f"        .venv/bin/python train_section.py --state {state_path} "
+              f"--demo {demo_path} --goal-x {goal_x}")
+        return str(demo_path)
+    except Exception as e:
+        print(f"     (BC seed skipped: {type(e).__name__}: {e})")
+        return None
+
+
+# ---------------------------------------------------------------------------------------------
+def _teach_game(game: str, *, scout_attempts: int, rescout: bool,
+                teach=_teach_wall, scout=_scout, open_walls=_open_walls,
+                resolve=_resolve_request) -> int:
+    """Teach this game's walls one after another — the compounding march in one sitting. After
+    each taught line, re-scout so Billy (now owning that line) surfaces his NEXT wall; teach that
+    too. Stops when he has no open wall left, when a wall can't be taught, or at the per-game cap.
+    Deps are injectable so the loop is unit-testable without an emulator. Returns lines taught."""
+    taught = 0
+    for _ in range(MAX_WALLS_PER_GAME):
+        walls = [w for w in open_walls([game]) if w.get("game") == game]
+        if not walls:
+            break
+        req = min(walls, key=lambda r: r.get("death_x", 0))
+        if not teach(req):
+            break                       # skipped / couldn't cross — leave it open for next time
+        resolve(req)
+        taught += 1
+        if not rescout:
+            break                       # --no-scout: teach what's on file, don't hunt the next
+        reached = scout(game, scout_attempts)
+        print(f"    · after your line, Billy now reaches {reached} in {game} — "
+              f"finding his next wall…")
+    return taught
+
+
 # ---------------------------------------------------------------------------------------------
 def _scoreboard(games: list[str], taught: int) -> None:
     print(f"\n{'━' * 64}\n  BILLY'S MARCH — how far he can get in each game now\n{'━' * 64}")
@@ -836,12 +908,11 @@ def main(argv: list[str] | None = None) -> int:
         _scoreboard(games, 0)
         return 0
 
-    print(f"\n  Billy needs help at {len(walls)} wall(s). Take the controller —")
+    print(f"\n  Billy needs help at {len(walls)} wall(s). Take the controller — and after each "
+          f"line, he re-scouts to find his NEXT wall, so one sitting marches him forward.")
     taught = 0
-    for req in sorted(walls, key=lambda r: (r["game"], r.get("death_x", 0))):
-        if _teach_wall(req):
-            _resolve_request(req)
-            taught += 1
+    for g in games:
+        taught += _teach_game(g, scout_attempts=args.scout_attempts, rescout=not args.no_scout)
 
     _scoreboard(games, taught)
     return 0
