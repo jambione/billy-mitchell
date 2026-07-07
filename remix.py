@@ -3,9 +3,10 @@
 
 This is a HANDS-ON, DYNAMIC, MULTI-GAME gauntlet. It doesn't hand you a fixed card of tricks —
 it surfaces the walls Billy is ACTUALLY stuck at right now, one per game, and drops you in to
-teach each one. Your run banks as a demo (cache entry + skill), Billy learns the line, and next
-time he gets further before hitting the NEXT wall. The goals never get artificially harder — the
-only thing that moves is Billy, forward through each game, toward finishing it.
+teach each one. Your run banks as a demo (cache entry + entry-anchored tape + skill) and then —
+the payoff — Billy REPLAYS your exact line back in the window so you watch him nail the spot he
+kept dying at. Next time he gets further before hitting the NEXT wall. The goals never get
+artificially harder — the only thing that moves is Billy, forward through each game, to the end.
 
 How a run goes:
   1. SCOUT (headless, quick): Billy plays each game himself from his furthest checkpoint. Where
@@ -593,7 +594,7 @@ def _teach_wall(req: dict) -> bool:
                 print(f"     ✓ you cleared it in {secs:.1f}s")
                 params = _teach_params(game_key, req, start_obs)
                 return _bank(game_key, session, start_state, start_obs, plan, req=req,
-                               min_progress=params["min_progress"])
+                               min_progress=params["min_progress"], source=source)
             if outcome == "skip":
                 print("     ↷ skipped.")
                 return False
@@ -684,9 +685,11 @@ def _play_wall(session, game, game_key: str, req: dict, death_x: int):
 
 
 def _bank(game_key: str, session, start_state: bytes, start_obs, plan, *,
-          req: dict | None = None, min_progress: int = 8) -> bool:
+          req: dict | None = None, min_progress: int = 8, source: str = "") -> bool:
     """Verify the human demo on the SAME emulator (search_mode, invisible) and bank it: a
-    SolutionCache entry (exact replay) + a distilled transferable skill."""
+    SolutionCache entry (exact replay) + an entry-anchored TAPE (deterministic whole-trajectory
+    reproduction, the only carrier that beats a MOVING hazard) + a distilled transferable skill.
+    Then replay the line back IN THE WINDOW so you watch Billy run what you just taught."""
     from billy.config import SOLUTIONS_FILE
     from billy.knowledge.cache import SolutionCache
     from billy.teleop import bank_demo, verify_demo
@@ -706,6 +709,7 @@ def _bank(game_key: str, session, start_state: bytes, start_obs, plan, *,
     cache = SolutionCache(path=SOLUTIONS_FILE)
     key = bank_demo(cache, start_obs, plan, result.end_progress)
     print(f"     ⇒ 🧠 Billy learned it — banked at {key} (reach {result.end_progress}).")
+    _bank_tape(game_key, start_obs, start_state, plan, result, source)
     try:
         from billy.knowledge.distill import distill_solution
         from billy.knowledge.skills import SkillLibrary
@@ -717,7 +721,57 @@ def _bank(game_key: str, session, start_state: bytes, start_obs, plan, *,
             print("     ⇒ distilled a transferable skill (helps at similar spots, other games too).")
     except Exception as e:
         print(f"     (skill distill skipped: {type(e).__name__}: {e})")
+    _replay_taught_line(session, start_state, plan, _goal_blurb(game_key, req or {}))
     return True
+
+
+def _anchor_is_level_entry(game_key: str, source: str) -> bool:
+    """Only the tape carrier's anchor gets restored AT LEVEL/SCREEN BEGIN — so it's valid only
+    when the demo started from a real entry. Zelda is screen-keyed and its drop-in IS the screen
+    entry. For SMB the drop-in must be the level-start checkpoint ("start of …"): a mid-level
+    approach capture would anchor a per-LEVEL tape mid-level, replaying from there every entry
+    (skipping the level's first half). The cache entry still carries those mid-level walls."""
+    return game_key == "zelda" or source.startswith("start of")
+
+
+def _bank_tape(game_key: str, start_obs, entry_state: bytes, plan, result, source: str) -> bool:
+    """Bank the crossing as an entry-state-anchored tape when the anchor is a legitimate
+    level/screen entry. This is the carrier that reproduces MOVING hazards deterministically — a
+    position-keyed cache entry re-searches them each pass; the tape restores the exact state and
+    replays the exact stream. Safe either way: the Director clone-VERIFIES a tape before ever
+    replaying it, so a bad anchor just fails verify and self-drops. Returns True if banked."""
+    if not _anchor_is_level_entry(game_key, source):
+        return False
+    try:
+        from billy.knowledge.tape import TapeLibrary
+        tapes = TapeLibrary()
+        clears = tuple(result.end_level_key) != tuple(start_obs.level_key)
+        tapes.put(start_obs.level_key, plan, result.end_progress,
+                  clears_level=clears, entry_state=entry_state)
+        print("     ⇒ 🎞  banked an entry-anchored tape — reproduces this spot deterministically "
+              "(even moving hazards, where a cache entry alone re-searches).")
+        return True
+    except Exception as e:
+        print(f"     (tape bank skipped: {type(e).__name__}: {e})")
+        return False
+
+
+def _replay_taught_line(session, entry_state: bytes, plan, goal: str) -> None:
+    """The payoff: restore the exact state you took control from and replay YOUR inputs in the
+    window, paced at 60fps (teleop_step forces real-time even under BILLY_TURBO), so you watch
+    Billy run the line you just taught. Non-fatal — a windowing hiccup never fails the bank."""
+    if not plan:
+        return
+    try:
+        session.restore(entry_state)
+        session.set_overlay(["🎬 WATCH BILLY RUN YOUR LINE", goal, "(the line you just taught him)"])
+        for step in plan:
+            for _ in range(step.frames):
+                session.teleop_step(step.buttons)
+        session.set_overlay(["🏆 Billy owns this line now", "on to the next wall…"])
+        print("     🎬 replayed your line back — that's Billy running what you taught.")
+    except Exception as e:
+        print(f"     (replay skipped: {type(e).__name__}: {e})")
 
 
 # ---------------------------------------------------------------------------------------------

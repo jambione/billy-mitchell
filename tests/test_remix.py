@@ -298,3 +298,91 @@ def test_discover_zelda_uses_teleop_state(tmp_path, monkeypatch):
     walls = remix._discover_walls(["zelda"])
     assert walls[0]["game"] == "zelda"
     assert "teleop_121.state" in walls[0]["state"]
+
+
+# --- tape-bank + on-screen replay: the demo now sticks (moving hazards) AND you see it land ---
+
+def test_anchor_is_level_entry_gates_by_game_and_source():
+    # Only a real level/screen entry is a valid tape anchor (restored AT level-begin).
+    assert remix._anchor_is_level_entry("smb", "start of 1-3") is True
+    assert remix._anchor_is_level_entry("smb", "approach at 1-3") is False   # mid-level → cache only
+    assert remix._anchor_is_level_entry("zelda", "approach at overworld#121") is True   # screen-keyed
+
+
+def test_bank_tape_skips_mid_level_smb_anchor(tmp_path, monkeypatch):
+    # A mid-level SMB approach must NOT become a per-level tape — it would replay from mid-level
+    # on every entry, skipping the level's first half. The cache entry carries it instead.
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    from billy.knowledge.tape import TapeLibrary
+    monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
+    obs = SimpleNamespace(level_key=(0, 1, 3))
+    result = SimpleNamespace(end_level_key=(0, 1, 3), end_progress=800)
+    banked = remix._bank_tape("smb", obs, b"MIDLEVEL", [Step(5, 1)], result, "approach at 1-3")
+    assert banked is False
+    assert len(TapeLibrary(path=tmp_path / "tapes.jsonl")) == 0
+
+
+def test_bank_tape_writes_entry_anchored_tape_from_level_start(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    from billy.knowledge.tape import TapeLibrary
+    monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
+    obs = SimpleNamespace(level_key=(0, 1, 3))
+    result = SimpleNamespace(end_level_key=(0, 1, 3), end_progress=800)   # crossed, level not cleared
+    assert remix._bank_tape("smb", obs, b"LEVELSTART", [Step(5, 1)], result, "start of 1-3") is True
+    lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
+    entry = lib.get((0, 1, 3))
+    assert entry is not None
+    assert entry.entry_state == b"LEVELSTART"      # the anchor that makes it reproduce
+    assert entry.clears_level is False             # a mid-level crossing is a partial tape
+
+
+def test_bank_tape_zelda_screen_crossing_clears_the_unit(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from billy.abstractions import Step
+    from billy.knowledge.tape import TapeLibrary
+    monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
+    obs = SimpleNamespace(level_key=("overworld", 121))
+    result = SimpleNamespace(end_level_key=("overworld", 122), end_progress=60)
+    assert remix._bank_tape("zelda", obs, b"SCREEN", [Step(4, 2)], result, "approach at overworld#121")
+    entry = TapeLibrary(path=tmp_path / "tapes.jsonl").get(("overworld", 121))
+    assert entry.clears_level is True              # crossing east advanced the screen unit
+
+
+class _ReplaySession:
+    """Captures the visible-replay calls without an emulator."""
+    def __init__(self):
+        self.restored = None
+        self.masks: list[int] = []
+        self.overlays: list[list] = []
+
+    def restore(self, snap):
+        self.restored = snap
+
+    def set_overlay(self, lines):
+        self.overlays.append(lines)
+
+    def teleop_step(self, mask):
+        self.masks.append(mask)
+
+
+def test_replay_taught_line_restores_and_replays_every_frame():
+    from billy.abstractions import Step
+    sess = _ReplaySession()
+    remix._replay_taught_line(sess, b"ENTRY", [Step(3, 1), Step(2, 4)], "cross the pit")
+    assert sess.restored == b"ENTRY"               # replays from the exact taught state
+    assert sess.masks == [1, 1, 1, 4, 4]           # every frame, in order (run-length expanded)
+    assert sess.overlays and any("WATCH BILLY" in l for l in sess.overlays[0])
+
+
+def test_replay_taught_line_is_non_fatal_on_window_error():
+    # A windowing hiccup mid-replay must never blow up a successful bank.
+    class _Boom(_ReplaySession):
+        def teleop_step(self, mask):
+            raise RuntimeError("viewer died")
+    from billy.abstractions import Step
+    remix._replay_taught_line(_Boom(), b"E", [Step(1, 1)], "goal")   # no exception escapes
