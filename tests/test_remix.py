@@ -80,6 +80,19 @@ def test_dropin_prefers_the_level_checkpoint(tmp_path, monkeypatch):
     assert data == b"LEVELSTART" and "start of 1-3" in source
 
 
+def test_dropin_prefers_remix_approach_over_level_checkpoint(tmp_path, monkeypatch):
+    ck = tmp_path / "checkpoints" / "smb"
+    ck.mkdir(parents=True)
+    (ck / "2_4.state").write_bytes(b"LEVELSTART")
+    approach = tmp_path / "auto" / "2_4_d114_remix.state"
+    approach.parent.mkdir(parents=True)
+    approach.write_bytes(b"AT_PIT")
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", tmp_path / "checkpoints")
+    req = {"game": "smb", "level_label": "2-4", "state": str(approach), "death_x": 1832}
+    data, source = remix._dropin_state(req)
+    assert data == b"AT_PIT" and "approach at 2-4" in source
+
+
 def test_dropin_falls_back_to_approach_without_a_checkpoint(tmp_path, monkeypatch):
     approach = tmp_path / "approach.state"
     approach.write_bytes(b"APPROACH")
@@ -111,13 +124,177 @@ class _FakeSession:
         self.steps += 1
 
 
+def _smb_req(death_x=771):
+    return {"game": "smb", "level_label": "1-3", "death_x": death_x}
+
+
 def test_no_input_never_auto_wins():
     # The exact regression: the drop-in's momentum must NOT complete the wall for you.
     fake = _FakeSession([(0, False, False)] * 6000)     # you never touch the controls
-    outcome = remix._play_wall(fake, object(), target=795, death_x=771)[0]
+    outcome = remix._play_wall(fake, object(), "smb", _smb_req(), death_x=771)[0]
     assert outcome == "afk"                              # not "win"
 
 
 def test_esc_before_taking_control_skips():
     fake = _FakeSession([(0, False, True)])             # ESC right away
-    assert remix._play_wall(fake, object(), 795, 771)[0] == "skip"
+    assert remix._play_wall(fake, object(), "smb", _smb_req(), 771)[0] == "skip"
+
+
+def test_enter_before_move_does_not_arm():
+    # ENTER alone during the wait loop must not start recording (was instant-win bug).
+    fake = _FakeSession([(0, True, False)] * 10)
+    assert remix._play_wall(fake, object(), "smb", _smb_req(), 771)[0] == "afk"
+
+
+def test_resolve_clears_whole_level_not_one_bucket(tmp_path, monkeypatch):
+    f = tmp_path / "demo_requests.jsonl"
+    cleared = tmp_path / "cleared.jsonl"
+    a = {"game": "zelda", "level_label": "overworld #121", "death_bucket": 178, "death_x": 2857}
+    b = {"game": "zelda", "level_label": "overworld #121", "death_bucket": 177, "death_x": 2841}
+    f.write_text(json.dumps(a) + "\n" + json.dumps(b) + "\n")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", f)
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    remix._resolve_request(a)
+    assert remix._read_requests() == []
+
+
+def test_discover_walls_from_stuck_json(tmp_path, monkeypatch):
+    """demo_requests empty + stuck.json has deaths → remix still has walls to teach."""
+    data = tmp_path / "data"
+    data.mkdir()
+    ck = data / "checkpoints" / "smb"
+    ck.mkdir(parents=True)
+    (ck / "furthest.json").write_text('{"label":"2-2","progress":160}')
+    (ck / "2_2.state").write_bytes(b"CK")
+    (data / "stuck.json").write_text(json.dumps([
+        {   # behind frontier — must not surface
+            "level_label": "1-3",
+            "death_bucket": 17,
+            "deaths": 87,
+            "last_death_x": 283,
+            "remediated": False,
+            "captured_states": [],
+        },
+        {
+            "level_label": "2-3",
+            "death_bucket": 67,
+            "deaths": 43,
+            "last_death_x": 1085,
+            "remediated": False,
+            "captured_states": [],
+        },
+    ]))
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", data / "remix_cleared.jsonl")
+
+    walls = remix._discover_walls(["smb"])
+    assert len(walls) == 1
+    assert walls[0]["level_label"] == "2-3"
+    assert walls[0]["death_x"] == 1085
+    assert walls[0]["state"].endswith("2_2.state") or "2_3_" in walls[0]["state"]
+
+
+def test_discover_skips_when_banked_despite_stuck_history(tmp_path, monkeypatch):
+    """Cleared + solution in cache → don't re-queue even if stuck.json still has old deaths."""
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "solutions.jsonl").write_text(
+        json.dumps({"level": ["overworld", 121], "bucket": 173, "plan": [[1, 1]], "reach_after": 2974}) + "\n")
+    cleared = data / "remix_cleared.jsonl"
+    cleared.write_text(json.dumps({
+        "game": "zelda", "level_label": "overworld #121", "death_bucket": 178, "death_x": 2857,
+    }) + "\n")
+    (data / "stuck.json").write_text(json.dumps([
+        {"level_label": "overworld #121", "death_bucket": 178, "deaths": 57,
+         "last_death_x": 2857, "remediated": False, "captured_states": []},
+    ]))
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "SOLUTIONS_FILE", data / "solutions.jsonl")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    assert remix._discover_walls(["zelda"]) == []
+
+
+def test_discover_requeues_when_still_stuck(tmp_path, monkeypatch):
+    """A level in remix_cleared but still dying in stuck.json must come back."""
+    data = tmp_path / "data"
+    zelda_states = data / "zelda" / "states"
+    zelda_states.mkdir(parents=True)
+    (zelda_states / "teleop_121.state").write_bytes(b"Z")
+    cleared = data / "remix_cleared.jsonl"
+    cleared.write_text(json.dumps({
+        "game": "zelda", "level_label": "overworld #121", "death_bucket": 178, "death_x": 2857,
+    }) + "\n")
+    (data / "stuck.json").write_text(json.dumps([
+        {"level_label": "overworld #121", "death_bucket": 178, "deaths": 57,
+         "last_death_x": 2857, "remediated": False, "captured_states": []},
+    ]))
+    (data / "solutions.jsonl").write_text("")   # cleared but teach never banked
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "SOLUTIONS_FILE", data / "solutions.jsonl")
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    walls = remix._discover_walls(["zelda"])
+    assert len(walls) == 1 and walls[0]["level_label"] == "overworld #121"
+
+
+def test_discover_skips_already_cleared_levels(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    cleared = data / "remix_cleared.jsonl"
+    cleared.write_text(json.dumps({
+        "game": "zelda", "level_label": "overworld #121", "death_bucket": 178, "death_x": 2857,
+    }) + "\n")
+    (data / "stuck.json").write_text(json.dumps([
+        {"level_label": "overworld #121", "death_bucket": 182, "deaths": 2,
+         "last_death_x": 2921, "remediated": False, "captured_states": []},
+    ]))
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    assert remix._discover_walls(["zelda"]) == []
+
+
+def test_discover_skips_already_cleared_walls(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    cleared = data / "remix_cleared.jsonl"
+    cleared.write_text(json.dumps({
+        "game": "smb", "level_label": "2-3", "death_bucket": 67, "death_x": 1085,
+    }) + "\n")
+    (data / "stuck.json").write_text(json.dumps([{
+        "level_label": "2-3", "death_bucket": 67, "deaths": 43,
+        "last_death_x": 1085, "remediated": False, "captured_states": [],
+    }]))
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    assert remix._discover_walls(["smb"]) == []
+
+
+def test_discover_zelda_uses_teleop_state(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    zelda_states = data / "zelda" / "states"
+    zelda_states.mkdir(parents=True)
+    (zelda_states / "teleop_121.state").write_bytes(b"Z")
+    (data / "stuck.json").write_text(json.dumps([{
+        "level_label": "overworld #121",
+        "death_bucket": 182,
+        "deaths": 27,
+        "last_death_x": 2921,
+        "remediated": False,
+        "captured_states": [],
+    }]))
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", data / "remix_cleared.jsonl")
+
+    walls = remix._discover_walls(["zelda"])
+    assert walls[0]["game"] == "zelda"
+    assert "teleop_121.state" in walls[0]["state"]
