@@ -154,12 +154,79 @@ def test_enter_before_move_does_not_arm():
 def test_resolve_clears_whole_level_not_one_bucket(tmp_path, monkeypatch):
     f = tmp_path / "demo_requests.jsonl"
     cleared = tmp_path / "cleared.jsonl"
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "stuck.json").write_text("[]")
     a = {"game": "zelda", "level_label": "overworld #121", "death_bucket": 178, "death_x": 2857}
     b = {"game": "zelda", "level_label": "overworld #121", "death_bucket": 177, "death_x": 2841}
     f.write_text(json.dumps(a) + "\n" + json.dumps(b) + "\n")
     monkeypatch.setattr(remix, "REQUESTS_FILE", f)
     monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
     remix._resolve_request(a)
+    assert remix._read_requests() == []
+
+
+def test_resolve_marks_stuck_remediated_so_wall_does_not_requeue(tmp_path, monkeypatch):
+    """After a successful teach, historical death counts must not re-offer the same wall."""
+    data = tmp_path / "data"
+    data.mkdir()
+    auto = data / "rl" / "states" / "auto"
+    auto.mkdir(parents=True)
+    (auto / "3_4_d32_x359.state").write_bytes(b"APPROACH")
+    ck = data / "checkpoints" / "smb"
+    ck.mkdir(parents=True)
+    (ck / "furthest.json").write_text('{"label":"3-4","progress":105}')
+    stuck = data / "stuck.json"
+    stuck.write_text(json.dumps([
+        {"game": "smb", "level_label": "3-4", "death_bucket": 32, "deaths": 60,
+         "last_death_x": 525, "frontier_at_first": 288, "remediated": False,
+         "captured_states": []},
+    ]))
+    reqs = data / "demo_requests.jsonl"
+    req = {"game": "smb", "level_label": "3-4", "death_bucket": 32, "death_x": 525,
+           "deaths": 60, "state": str(auto / "3_4_d32_x359.state")}
+    reqs.write_text(json.dumps(req) + "\n")
+    cleared = data / "remix_cleared.jsonl"
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", reqs)
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+
+    remix._resolve_request(req)
+
+    assert remix._read_requests() == []
+    rows = json.loads(stuck.read_text())
+    assert rows[0]["remediated"] is True
+    assert rows[0]["deaths"] == 0
+    assert remix._still_stuck_on_level("smb", "3-4") is False
+    assert remix._discover_walls(["smb"]) == []
+    # open_walls must not re-offer from leftover history either
+    assert all(w["level_label"] != "3-4" for w in remix._open_walls(["smb"], persist=False))
+
+
+def test_open_walls_drops_stale_taught_requests(tmp_path, monkeypatch):
+    """demo_requests leftovers for a taught, non-stuck wall are purged on open."""
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "stuck.json").write_text(json.dumps([
+        {"game": "smb", "level_label": "3-4", "death_bucket": 32, "deaths": 0,
+         "last_death_x": 525, "remediated": True, "captured_states": []},
+    ]))
+    cleared = data / "remix_cleared.jsonl"
+    cleared.write_text(json.dumps({
+        "game": "smb", "level_label": "3-4", "death_bucket": 32, "death_x": 525,
+    }) + "\n")
+    reqs = data / "demo_requests.jsonl"
+    reqs.write_text(json.dumps({
+        "game": "smb", "level_label": "3-4", "death_bucket": 32, "death_x": 525, "deaths": 60,
+    }) + "\n")
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix, "REQUESTS_FILE", reqs)
+    monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+
+    walls = remix._open_walls(["smb"], persist=True)
+    assert walls == []
     assert remix._read_requests() == []
 
 

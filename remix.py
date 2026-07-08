@@ -279,11 +279,10 @@ def _discover_walls(games: list[str]) -> list[dict]:
         if level_key in existing:
             continue
         if level_key in cleared_levels:
-            if (_has_banked_solution(game, level_label)
-                    and not _still_stuck_on_level(game, level_label)):
-                continue                    # teach worked and deaths stopped
+            # Taught before. Only re-queue if Billy is dying here AGAIN (fresh streak after
+            # remediate was cleared by new deaths). Stale historical counts must not re-offer.
             if not _still_stuck_on_level(game, level_label):
-                continue                    # cleared and Billy moved past it
+                continue
         state = _state_for_wall(game, level_label, rec)
         if not state:
             continue
@@ -306,11 +305,31 @@ def _discover_walls(games: list[str]) -> list[dict]:
     return list(by_game.values())
 
 
+def _wall_is_stale(req: dict) -> bool:
+    """True when this wall was already taught and Billy is not stuck there again.
+
+    Prevents demo_requests.jsonl leftovers (or re-appends from old death history) from
+    re-offering a wall the human already banked."""
+    game, label = req.get("game"), req.get("level_label")
+    if not game or not label:
+        return False
+    if (game, label) not in _read_cleared_levels():
+        return False
+    return not _still_stuck_on_level(game, label)
+
+
 def _open_walls(games: list[str], *, persist: bool = True) -> list[dict]:
     """Open teach queue: explicit demo requests, plus stuck.json discovery per game."""
     game_set = set(games)
-    reqs = _dedupe_walls_by_level(
-        [r for r in _read_requests() if r.get("game") in game_set])
+    raw_reqs = [r for r in _read_requests() if r.get("game") in game_set]
+    stale = [r for r in raw_reqs if _wall_is_stale(r)]
+    reqs = _dedupe_walls_by_level([r for r in raw_reqs if not _wall_is_stale(r)])
+    if persist and stale:
+        # Drop taught walls from the on-disk queue so the next launch doesn't re-offer them.
+        kept = [r for r in _read_requests() if not _wall_is_stale(r)]
+        REQUESTS_FILE.write_text("".join(json.dumps(r) + "\n" for r in kept))
+        print(f"  [remix] dropped {len(stale)} already-taught wall(s) from the queue "
+              f"(Billy owns those lines; re-queue only if he dies there again).")
     covered = {r.get("game") for r in reqs}
     need_discovery = [g for g in games if g not in covered]
     discovered = _discover_walls(need_discovery) if need_discovery else []
@@ -336,7 +355,11 @@ def _open_walls(games: list[str], *, persist: bool = True) -> list[dict]:
 
 
 def _resolve_request(req: dict) -> None:
-    """Drop a taught wall from the open queue and log it as cleared (Billy owns it now)."""
+    """Drop a taught wall from the open queue, log it cleared, and mark stuck remediated.
+
+    Marking the whole level remediated zeros historical death counts so discovery does not
+    immediately re-queue the same wall. New deaths after this clear `remediated` and can
+    re-open the wall if Billy is truly stuck again."""
     game, label = req.get("game"), req.get("level_label")
     kept = [r for r in _read_requests()
             if not (r.get("game") == game and r.get("level_label") == label)]
@@ -349,6 +372,15 @@ def _resolve_request(req: dict) -> None:
                 f.write(b"\n")
     with CLEARED_FILE.open("a") as f:
         f.write(json.dumps(req) + "\n")
+    if game and label:
+        try:
+            from billy.stuck_trainer import StuckTracker
+            n = StuckTracker().mark_level_remediated(str(game), str(label))
+            if n:
+                print(f"     ⇒ stuck log: marked {label} remediated ({n} bucket(s)) — "
+                      f"won't re-queue until Billy dies there again.")
+        except Exception as e:
+            print(f"     (stuck remediate skipped: {type(e).__name__}: {e})")
 
 
 def _game(name: str):

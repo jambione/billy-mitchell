@@ -46,6 +46,29 @@ def test_remediation_marks_done(tmp_path):
     assert tracker.stuck_at("smb", "1-3", 769, threshold=2) is None
 
 
+def test_mark_level_remediated_clears_all_buckets(tmp_path):
+    tracker = StuckTracker(path=tmp_path / "stuck.json")
+    tracker.note_death("smb", "3-4", 525, frontier=288)
+    tracker.note_death("smb", "3-4", 525, frontier=288)
+    tracker.note_death("smb", "3-4", 800, frontier=288)  # different bucket
+    n = tracker.mark_level_remediated("smb", "3-4")
+    assert n == 2
+    assert tracker.stuck_at("smb", "3-4", 525, threshold=1) is None
+    assert tracker.stuck_at("smb", "3-4", 800, threshold=1) is None
+
+
+def test_new_death_after_remediate_starts_fresh_streak(tmp_path):
+    tracker = StuckTracker(path=tmp_path / "stuck.json")
+    tracker.note_death("smb", "3-4", 525, frontier=288)
+    tracker.note_death("smb", "3-4", 525, frontier=288)
+    tracker.mark_level_remediated("smb", "3-4")
+    assert tracker.stuck_at("smb", "3-4", 525, threshold=2) is None
+    tracker.note_death("smb", "3-4", 525, frontier=288)  # first death after teach
+    assert tracker.stuck_at("smb", "3-4", 525, threshold=2) is None
+    tracker.note_death("smb", "3-4", 525, frontier=288)  # second — stuck again
+    assert tracker.stuck_at("smb", "3-4", 525, threshold=2) is not None
+
+
 def test_auto_state_path_deterministic():
     p = auto_state_path("1-3", 769, 724)
     assert "1_3" in p

@@ -25,6 +25,20 @@ from .knowledge.cache import SolutionCache
 
 RemedyKind = Literal["frame_search", "pit_search", "section_train"]
 
+def _stuck_file() -> Path:
+    """Live path — always follows config.DATA_DIR (tests monkeypatch that)."""
+    return config.DATA_DIR / "stuck.json"
+
+
+def _auto_state_dir() -> Path:
+    return config.DATA_DIR / "rl" / "states" / "auto"
+
+
+def _demo_requests_file() -> Path:
+    return config.DATA_DIR / "demo_requests.jsonl"
+
+
+# Module-level names kept for importers; prefer the helpers above when DATA_DIR may change.
 _STUCK_FILE = config.DATA_DIR / "stuck.json"
 _AUTO_STATE_DIR = config.DATA_DIR / "rl" / "states" / "auto"
 _DEMO_REQUESTS_FILE = config.DATA_DIR / "demo_requests.jsonl"
@@ -60,7 +74,7 @@ class StuckTracker:
     """Cross-attempt death clustering — persists so progress compounds session-to-session."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or _STUCK_FILE
+        self.path = path if path is not None else _stuck_file()
         self.records: dict[tuple[str, str, int], StuckRecord] = {}
         self._load()
 
@@ -78,7 +92,13 @@ class StuckTracker:
             rec = StuckRecord(level_label=level_label, death_bucket=key[2],
                               game=game, frontier_at_first=frontier)
             self.records[key] = rec
-        rec.deaths += 1
+        if rec.remediated:
+            # Fresh failure after a teach / auto-remedy — start a new death streak.
+            rec.remediated = False
+            rec.deaths = 1
+            rec.frontier_at_first = frontier
+        else:
+            rec.deaths += 1
         rec.last_death_x = death_x
         if frontier > rec.frontier_at_first + config.CACHE_BUCKET_PX * 2:
             rec.deaths = 0
@@ -113,6 +133,27 @@ class StuckTracker:
             rec.remediated = True
             rec.deaths = 0
             self._save()
+
+    def mark_level_remediated(self, game: str, level_label: str) -> int:
+        """Mark every death-bucket on this level as taught/fixed (Remix success).
+
+        Zeros death counts so discovery does not re-queue from stale history. New deaths after
+        this call clear `remediated` via note_death and can re-open the wall. Returns how many
+        records were updated. Also backfills empty `game` on legacy rows that match the label."""
+        n = 0
+        for rec in self.records.values():
+            if rec.level_label != level_label:
+                continue
+            if rec.game and rec.game != game:
+                continue
+            rec.remediated = True
+            rec.deaths = 0
+            if not rec.game:
+                rec.game = game
+            n += 1
+        if n:
+            self._save()
+        return n
 
     def _load(self) -> None:
         if not self.path.is_file():
