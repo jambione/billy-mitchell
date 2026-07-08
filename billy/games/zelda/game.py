@@ -1,6 +1,8 @@
 """The Legend of Zelda (NES) — Game adapter binding perception + top-down reflexes."""
 from __future__ import annotations
 
+import re
+
 from stable_retro.data import Integrations
 
 from ...abstractions import BootError, Game, Observation, ReflexPolicy, Session
@@ -118,6 +120,49 @@ class ZeldaGame(Game):
 
     def search_area_advance(self, start_key: tuple, end_key: tuple) -> bool:
         return False   # room id jumps are not SMB-style pipe warps
+
+    def _remix_target_screen(self, req: dict, obs: Observation) -> int:
+        m = re.search(r"#(\d+)", req.get("level_label", ""))
+        if m:
+            return int(m.group(1)) + 1
+        return int(getattr(obs.raw, "map_location", 0)) + 1
+
+    def remix_goal(self, req: dict) -> str:
+        label = req.get("level_label", "?")
+        m = re.search(r"#(\d+)", label)
+        n = int(m.group(1)) if m else 0
+        return f"clear {label} alive and march east to screen #{n + 1}"
+
+    def remix_min_progress(self) -> int:
+        return 48          # trivial link_x nudges must not count as teaching #121
+
+    def remix_win(self, obs: Observation, req: dict, start_obs: Observation) -> bool:
+        target = self._remix_target_screen(req, start_obs)
+        return (getattr(obs.raw, "in_play", True)
+                and int(getattr(obs.raw, "map_location", 0)) >= target)
+
+    def remix_dropin_ok(self, obs: Observation, req: dict) -> bool:
+        return int(getattr(obs.raw, "map_location", 0)) < self._remix_target_screen(req, obs)
+
+    def remix_anchor_ok(self, source: str) -> bool:
+        return True          # screen-keyed: the drop-in IS the screen entry
+
+    def remix_overlay_hint(self, obs: Observation, req: dict) -> str:
+        target = self._remix_target_screen(req, obs)
+        s = obs.raw
+        return f"screen #{s.map_location}  →  need #{target}"
+
+    def remix_wall_at(self, req: dict) -> str:
+        return f"screen {req.get('level_label', '?')}"
+
+    def remix_approach_progress_window(self, req: dict) -> tuple[int, int]:
+        death_x = int(req.get("death_x", 0))
+        x_min = max(0, death_x - 128)
+        x_max = max(x_min + 16, death_x - 16)
+        return x_min, x_max
+
+    def remix_on_ground(self, obs: Observation) -> bool:
+        return getattr(obs.raw, "in_play", True) and not obs.dead
 
     def boot(self, session: Session) -> Observation:
         def obs() -> Observation:

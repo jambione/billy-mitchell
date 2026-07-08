@@ -193,3 +193,89 @@ class Game(ABC):
     @property
     def evolves_tapes(self) -> bool:
         return bool(self.tape_moves())
+
+    # --- Remix teach contract (Phase 1) -------------------------------------------------------
+    # Optional hooks so a new title joins the gauntlet without editing remix.py. Defaults suit
+    # progress-keyed platformers (SMB family); Zelda/PSII override for screen/battle wins.
+
+    def remix_past_margin(self) -> int:
+        """How far past Billy's death spot a crossing must end (anti-trivial-win for platformers)."""
+        return 24
+
+    def remix_goal(self, req: dict) -> str:
+        """Human-readable challenge line shown during teach."""
+        death_x = int(req.get("death_x", 0))
+        return f"get past x≈{death_x} and keep going"
+
+    def remix_min_progress(self) -> int:
+        """Minimum progress gain for verify_demo to bank a crossing."""
+        return 8
+
+    def remix_win(self, obs: "Observation", req: dict, start_obs: "Observation") -> bool:
+        """True when the human crossed the wall (survived and advanced past Billy's death spot)."""
+        death_x = int(req.get("death_x", 0))
+        return (getattr(obs.raw, "in_play", True)
+                and obs.progress >= death_x + self.remix_past_margin())
+
+    def remix_dropin_ok(self, obs: "Observation", req: dict) -> bool:
+        """False if the drop-in already coasted to/past the wall before the human takes control."""
+        death_x = int(req.get("death_x", 0))
+        return obs.progress < death_x
+
+    def remix_anchor_ok(self, source: str) -> bool:
+        """True when the drop-in is a legitimate level/screen entry for entry-anchored tapes."""
+        return source.startswith("start of")
+
+    def remix_overlay_hint(self, obs: "Observation", req: dict) -> str:
+        """Progress readout shown during teach (overlay line 2)."""
+        death_x = int(req.get("death_x", 0))
+        return f"x={obs.progress}  →  need {death_x + self.remix_past_margin()}"
+
+    def remix_wall_at(self, req: dict) -> str:
+        """Where Billy is stuck — shown in the teach banner."""
+        return f"x≈{int(req.get('death_x', 0))}"
+
+    def remix_demo_end_ok(self, result, req: dict) -> bool:
+        """Extra verify gate before banking (e.g. demo must end on the taught level)."""
+        return True
+
+    def stuck_death_threshold(self) -> int:
+        """Deaths at one hazard before Billy files a demo request / Remix surfaces the wall."""
+        from . import config
+        return config.STUCK_DEATH_THRESHOLD
+
+    def remix_needs_approach_capture(self, req: dict) -> bool:
+        """Drive Billy headless to just-before-the-wall when no drop-in state exists yet."""
+        return True
+
+    def remix_approach_progress_window(self, req: dict) -> tuple[int, int]:
+        """Progress band [lo, hi] to snapshot for a teachable drop-in just before the wall."""
+        death_x = int(req.get("death_x", 0))
+        x_min = max(32, death_x - 100)
+        x_max = max(x_min + 16, death_x - 4)   # right up to the lip (settle stops coast auto-win)
+        return x_min, x_max
+
+    def remix_on_ground(self, obs: "Observation") -> bool:
+        """Whether obs is safe to snapshot (on-ground equivalent — airborne won't reproduce)."""
+        return getattr(obs.raw, "on_ground", True)
+
+    def remix_dropin_level_ok(self, obs: "Observation", req: dict) -> bool:
+        """Drop-in must be on the taught level/screen."""
+        return obs.level_label == req.get("level_label", "")
+
+    def remix_capture_ready(self, session: "Session", observe, req: dict
+                            ) -> tuple[bool, "Observation"]:
+        """Settle motion and confirm obs is reproducible before approach snapshot."""
+        obs = observe()
+        if obs.dead or not self.remix_on_ground(obs):
+            return False, obs
+        if not self.remix_dropin_level_ok(obs, req):
+            return False, obs
+        x_min, x_max = self.remix_approach_progress_window(req)
+        if not (x_min <= obs.progress <= x_max):
+            return False, obs
+        return True, obs
+
+    def remix_director_sections(self):
+        """Optional SectionController for headless approach capture (SMB family)."""
+        return None

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal
@@ -46,6 +48,7 @@ class StuckRemedy:
 class StuckRecord:
     level_label: str
     death_bucket: int
+    game: str = ""              # cli_name scope — smb vs smb_lost no longer collide on "1-1"
     deaths: int = 0
     last_death_x: int = 0
     frontier_at_first: int = 0
@@ -58,22 +61,22 @@ class StuckTracker:
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or _STUCK_FILE
-        self.records: dict[tuple[str, int], StuckRecord] = {}
+        self.records: dict[tuple[str, str, int], StuckRecord] = {}
         self._load()
 
     @staticmethod
     def death_bucket(death_x: int) -> int:
         return death_x // config.CACHE_BUCKET_PX
 
-    def _key(self, level_label: str, death_x: int) -> tuple[str, int]:
-        return level_label, self.death_bucket(death_x)
+    def _key(self, game: str, level_label: str, death_x: int) -> tuple[str, str, int]:
+        return game, level_label, self.death_bucket(death_x)
 
-    def note_death(self, level_label: str, death_x: int, frontier: int) -> StuckRecord:
-        key = self._key(level_label, death_x)
+    def note_death(self, game: str, level_label: str, death_x: int, frontier: int) -> StuckRecord:
+        key = self._key(game, level_label, death_x)
         rec = self.records.get(key)
         if rec is None:
-            rec = StuckRecord(level_label=level_label, death_bucket=key[1],
-                              frontier_at_first=frontier)
+            rec = StuckRecord(level_label=level_label, death_bucket=key[2],
+                              game=game, frontier_at_first=frontier)
             self.records[key] = rec
         rec.deaths += 1
         rec.last_death_x = death_x
@@ -83,8 +86,8 @@ class StuckTracker:
         self._save()
         return rec
 
-    def note_capture(self, level_label: str, death_x: int, state_path: str) -> None:
-        key = self._key(level_label, death_x)
+    def note_capture(self, game: str, level_label: str, death_x: int, state_path: str) -> None:
+        key = self._key(game, level_label, death_x)
         rec = self.records.get(key)
         if rec is None:
             return
@@ -92,9 +95,9 @@ class StuckTracker:
             rec.captured_states.append(state_path)
             self._save()
 
-    def stuck_at(self, level_label: str, death_x: int, *,
+    def stuck_at(self, game: str, level_label: str, death_x: int, *,
                  threshold: int | None = None) -> StuckRecord | None:
-        key = self._key(level_label, death_x)
+        key = self._key(game, level_label, death_x)
         rec = self.records.get(key)
         if rec is None:
             return None
@@ -103,8 +106,8 @@ class StuckTracker:
             return rec
         return None
 
-    def mark_remediated(self, level_label: str, death_x: int) -> None:
-        key = self._key(level_label, death_x)
+    def mark_remediated(self, game: str, level_label: str, death_x: int) -> None:
+        key = self._key(game, level_label, death_x)
         rec = self.records.get(key)
         if rec:
             rec.remediated = True
@@ -119,7 +122,8 @@ class StuckTracker:
         except (json.JSONDecodeError, OSError):
             return
         for row in rows:
-            key = (row["level_label"], row["death_bucket"])
+            game = row.get("game", "")
+            key = (game, row["level_label"], row["death_bucket"])
             self.records[key] = StuckRecord(**{k: row[k] for k in StuckRecord.__dataclass_fields__
                                                if k in row})
 
@@ -128,6 +132,7 @@ class StuckTracker:
         rows = []
         for rec in self.records.values():
             rows.append({
+                "game": rec.game,
                 "level_label": rec.level_label,
                 "death_bucket": rec.death_bucket,
                 "deaths": rec.deaths,
@@ -360,6 +365,24 @@ def auto_state_path(level_label: str, death_x: int, approach_x: int) -> str:
     return str(_AUTO_STATE_DIR / f"{label}_d{bucket}_x{approach_x}.state")
 
 
+def notify_remix_wall(game_name: str, remedy: StuckRemedy, record: StuckRecord) -> None:
+    """Surface a filed wall for the human: one-line inbox + macOS notification."""
+    config.ensure_dirs()
+    inbox = config.DATA_DIR / "remix_inbox.txt"
+    line = (f"Billy needs you at {game_name} {remedy.level_label} "
+            f"(x≈{remedy.death_x}, {record.deaths} deaths)")
+    inbox.write_text(line + "\n")
+    if platform.system() != "Darwin":
+        return
+    msg = f"Billy needs you at {game_name} {remedy.level_label}"
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'display notification "{msg}" with title "Billy Mitchell"'],
+            check=False, timeout=5, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def request_demo(game_name: str, remedy: StuckRemedy, record: StuckRecord,
                  state_paths: list[str], *, requests_file: Path | None = None) -> str | None:
     """The final remedy: every autonomous tier failed here — ask the human for ONE demo.
@@ -394,6 +417,7 @@ def request_demo(game_name: str, remedy: StuckRemedy, record: StuckRecord,
     with requests_file.open("a") as f:
         f.write(json.dumps({**key, "death_x": remedy.death_x, "deaths": record.deaths,
                             "state": state}) + "\n")
+    notify_remix_wall(game_name, remedy, record)
     cmd = (f".venv/bin/python teleop.py play --game {game_name} "
            f"--from-state {state} --bank")
     print(f"\n  [stuck] 🙋 BILLY REQUESTS A DEMO — {remedy.level_label} x≈{remedy.death_x}: "

@@ -12,29 +12,38 @@ from billy.stuck_trainer import StuckTracker, auto_state_path, write_trail_snaps
 def test_stuck_tracker_clusters_deaths(tmp_path):
     path = tmp_path / "stuck.json"
     tracker = StuckTracker(path=path)
-    tracker.note_death("1-3", 769, frontier=576)
-    tracker.note_death("1-3", 771, frontier=580)
-    rec = tracker.stuck_at("1-3", 769, threshold=2)
+    tracker.note_death("smb", "1-3", 769, frontier=576)
+    tracker.note_death("smb", "1-3", 771, frontier=580)
+    rec = tracker.stuck_at("smb", "1-3", 769, threshold=2)
     assert rec is not None
     assert rec.deaths == 2
     assert rec.last_death_x == 771
 
 
+def test_stuck_tracker_scopes_by_game(tmp_path):
+    tracker = StuckTracker(path=tmp_path / "stuck.json")
+    tracker.note_death("smb", "1-1", 100, frontier=80)
+    tracker.note_death("smb_lost", "1-1", 1057, frontier=3152)
+    assert tracker.stuck_at("smb", "1-1", 100, threshold=1).deaths == 1
+    assert tracker.stuck_at("smb_lost", "1-1", 1057, threshold=1).deaths == 1
+    assert tracker.stuck_at("smb_lost", "1-1", 100, threshold=1) is None
+
+
 def test_frontier_advance_resets_death_count(tmp_path):
     tracker = StuckTracker(path=tmp_path / "stuck.json")
-    tracker.note_death("1-3", 769, frontier=576)
-    tracker.note_death("1-3", 769, frontier=576)
-    tracker.note_death("1-3", 769, frontier=900)
-    rec = tracker.stuck_at("1-3", 769, threshold=2)
+    tracker.note_death("smb", "1-3", 769, frontier=576)
+    tracker.note_death("smb", "1-3", 769, frontier=576)
+    tracker.note_death("smb", "1-3", 769, frontier=900)
+    rec = tracker.stuck_at("smb", "1-3", 769, threshold=2)
     assert rec is None
 
 
 def test_remediation_marks_done(tmp_path):
     tracker = StuckTracker(path=tmp_path / "stuck.json")
-    tracker.note_death("1-3", 769, frontier=576)
-    tracker.note_death("1-3", 769, frontier=576)
-    tracker.mark_remediated("1-3", 769)
-    assert tracker.stuck_at("1-3", 769, threshold=2) is None
+    tracker.note_death("smb", "1-3", 769, frontier=576)
+    tracker.note_death("smb", "1-3", 769, frontier=576)
+    tracker.mark_remediated("smb", "1-3", 769)
+    assert tracker.stuck_at("smb", "1-3", 769, threshold=2) is None
 
 
 def test_auto_state_path_deterministic():
@@ -53,6 +62,17 @@ def test_smb_lift_stuck_remedy():
     assert len(remedy.savestate_paths) >= 2
 
 
+def test_smb_generic_platformer_stuck_remedy():
+    hooks = SmbHazardHooks()
+    remedy = hooks.stuck_remedy("1-1", 1057)
+    assert remedy is not None
+    assert remedy.goal_x == 1057 + 24
+    assert remedy.bank_x_lo <= 1057 <= remedy.bank_x_hi + 64
+    band = hooks.approach_capture_band("1-1", 1057)
+    assert band is not None
+    assert band[0] <= 1057 - 50 <= band[1]
+
+
 def test_smb_approach_capture_band():
     hooks = SmbHazardHooks()
     band = hooks.approach_capture_band("1-3", 769)
@@ -60,6 +80,13 @@ def test_smb_approach_capture_band():
     lo, hi = band
     assert lo <= 508 < hi
     assert lo < 769 < hi + 64
+
+
+def test_smb_34_approach_capture_includes_jump_takeoff():
+    """3-4 pit@525: Billy's last on-ground frame before the jump is ~359, not in a 100px band."""
+    hooks = SmbHazardHooks()
+    lo, hi = hooks.approach_capture_band("3-4", 525)
+    assert lo <= 359 <= hi
 
 
 def test_write_trail_snapshot(tmp_path):
@@ -72,6 +99,7 @@ def test_write_trail_snapshot(tmp_path):
 def test_tracker_persists(tmp_path):
     path = tmp_path / "stuck.json"
     t1 = StuckTracker(path=path)
-    t1.note_death("1-3", 769, frontier=576)
+    t1.note_death("smb", "1-3", 769, frontier=576)
     t2 = StuckTracker(path=path)
-    assert ("1-3", 769 // CACHE_BUCKET_PX) in t2.records
+    assert ("smb", "1-3", 769 // CACHE_BUCKET_PX) in t2.records
+    assert t2.records[("smb", "1-3", 769 // CACHE_BUCKET_PX)].game == "smb"

@@ -77,6 +77,49 @@ class PsiiGame(Game):
     def search_area_advance(self, start_key: tuple, end_key: tuple) -> bool:
         return False                       # place ids aren't ordered — no warp semantics
 
+    def remix_goal(self, req: dict) -> str:
+        label = req.get("level_label", "?")
+        if req.get("wall_kind") == "menu" or "menu" in label.lower():
+            return f"close the menu at {label} and keep exploring"
+        death_x = int(req.get("death_x", 0))
+        return f"explore past progress≈{death_x} at {label}"
+
+    def remix_min_progress(self) -> int:
+        return 16          # one new tile of exploration credit
+
+    def remix_past_margin(self) -> int:
+        return 32          # exploration credit units, not pixels
+
+    def remix_win(self, obs: Observation, req: dict, start_obs: Observation) -> bool:
+        if getattr(start_obs.raw, "menu_open", False):
+            return (not getattr(obs.raw, "menu_open", False)
+                    and obs.progress > start_obs.progress)
+        target = int(req.get("death_x", 0)) + self.remix_past_margin()
+        return obs.raw.in_play and obs.progress >= target
+
+    def remix_dropin_ok(self, obs: Observation, req: dict) -> bool:
+        if getattr(obs.raw, "menu_open", False):
+            return True
+        return obs.progress < int(req.get("death_x", 0))
+
+    def remix_on_ground(self, obs: Observation) -> bool:
+        return obs.raw.in_play
+
+    def remix_anchor_ok(self, source: str) -> bool:
+        return True          # place-keyed: drop-in is the place entry
+
+    def remix_wall_at(self, req: dict) -> str:
+        label = req.get("level_label", "?")
+        if req.get("wall_kind") == "menu":
+            return f"menu @ {label}"
+        return f"progress≈{int(req.get('death_x', 0))} @ {label}"
+
+    def remix_overlay_hint(self, obs: Observation, req: dict) -> str:
+        if getattr(obs.raw, "menu_open", False):
+            return "menu open  →  close it and move on"
+        target = int(req.get("death_x", 0)) + self.remix_past_margin()
+        return f"progress={obs.progress}  →  need {target}"
+
     def boot(self, session: Session) -> Observation:
         """The integration's Start.state anchors IN PLAY (Rolf's doorstep, Paseo) — reset and
         settle a moment; no dance needed (that one-time cost lives in emulator/make_psii_state)."""

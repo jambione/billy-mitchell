@@ -23,13 +23,17 @@ GOAL_X = 700
 
 def make_env(state: str, goal_x: int, seed: int = 0, *, landing_waits: int = 0,
              randomize_frames: int = 36, max_steps: int = 220, start_x: int = 126,
-             back_x: int = 80, milestones: tuple[tuple[int, float], ...] = ((300, 20.0), (500, 50.0))):
+             back_x: int = 80, level_label: str = "1-3",
+             milestones: tuple[tuple[int, float], ...] = ((300, 20.0), (500, 50.0)),
+             game=None):
     from billy.rl.section_env import SectionEnv
 
     def _init():
-        env = SectionEnv(state, goal_x=goal_x, landing_waits=landing_waits,
+        env = SectionEnv(state, level_label=level_label, goal_x=goal_x,
+                         landing_waits=landing_waits,
                          randomize_frames=randomize_frames, max_steps=max_steps,
-                         start_x=start_x, back_x=back_x, milestones=milestones)
+                         start_x=start_x, back_x=back_x, milestones=milestones,
+                         game=game)
         env.reset(seed=seed)
         return env
     return _init
@@ -95,14 +99,23 @@ def main() -> int:
                    help="teleop .demo.json to behavior-clone as a warm start (repeatable). "
                         "One good human crossing turns PPO-from-scratch into fine-tuning.")
     p.add_argument("--bc-epochs", type=int, default=200)
+    p.add_argument("--game", default="smb", choices=["smb", "smb_lost"],
+                   help="which ROM integration the savestate belongs to")
+    p.add_argument("--level-label", default="",
+                   help="level label for this section (default: 1-3, or 1-1 for smb_lost)")
     args = p.parse_args()
 
     from stable_baselines3 import PPO
+    from run import GAMES
 
+    game_cls = GAMES[args.game]
+    level_label = args.level_label or ("1-1" if args.game == "smb_lost" else "1-3")
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     milestones = ((300, 20.0), (500, 50.0))
     if "lift" in args.out or args.landing_waits:
         milestones = ((760, 25.0), (800, 45.0), (850, 70.0), (900, 100.0))
+    elif args.game == "smb_lost":
+        milestones = ((1050, 25.0), (1065, 50.0), (1080, 100.0))
     states = [s.strip() for s in args.state.split(",") if s.strip()]
 
     # BC warm-start pass 1: map demos to the action vocabulary and collect on-trajectory
@@ -111,17 +124,18 @@ def main() -> int:
     # collection env must be closed before an in-process (n_envs=1) training env exists.
     bc_pairs = []
     if args.demo:
-        from billy.rl.bc import collect_bc_pairs, demo_to_actions, load_demo
+        from billy.rl.bc import collect_bc_pairs_from_plan, load_demo
         from billy.rl.section_env import SectionEnv
 
-        env = SectionEnv(states[0], goal_x=args.goal_x, landing_waits=args.landing_waits,
-                         randomize_frames=0, max_steps=args.max_steps,
-                         start_x=args.start_x, back_x=args.back_x, milestones=milestones)
+        env = SectionEnv(states[0], level_label=level_label, goal_x=args.goal_x,
+                         landing_waits=args.landing_waits, randomize_frames=0,
+                         max_steps=args.max_steps, start_x=args.start_x, back_x=args.back_x,
+                         milestones=milestones, game=game_cls)
         for demo_path in args.demo:
-            action_idxs = demo_to_actions(load_demo(demo_path))
-            pairs = collect_bc_pairs(env, action_idxs)
+            plan = load_demo(demo_path)
+            pairs = collect_bc_pairs_from_plan(env, plan)
             bc_pairs.extend(pairs)
-            print(f"[section] demo {demo_path}: {len(action_idxs)} actions -> "
+            print(f"[section] demo {demo_path}: {len(plan)} steps -> "
                   f"{len(pairs)} BC pairs")
         env.close()
 
@@ -129,7 +143,7 @@ def main() -> int:
                         landing_waits=args.landing_waits,
                         randomize_frames=args.randomize_frames,
                         max_steps=args.max_steps, start_x=args.start_x, back_x=args.back_x,
-                        milestones=milestones)
+                        level_label=level_label, milestones=milestones, game=game_cls)
     report = _Report()
 
     if args.resume:

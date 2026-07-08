@@ -128,22 +128,27 @@ def _smb_req(death_x=771):
     return {"game": "smb", "level_label": "1-3", "death_x": death_x}
 
 
+def _smb_game():
+    from billy.games.smb.game import SmbGame
+    return SmbGame()
+
+
 def test_no_input_never_auto_wins():
     # The exact regression: the drop-in's momentum must NOT complete the wall for you.
     fake = _FakeSession([(0, False, False)] * 6000)     # you never touch the controls
-    outcome = remix._play_wall(fake, object(), "smb", _smb_req(), death_x=771)[0]
+    outcome = remix._play_wall(fake, _smb_game(), _smb_req())[0]
     assert outcome == "afk"                              # not "win"
 
 
 def test_esc_before_taking_control_skips():
     fake = _FakeSession([(0, False, True)])             # ESC right away
-    assert remix._play_wall(fake, object(), "smb", _smb_req(), 771)[0] == "skip"
+    assert remix._play_wall(fake, _smb_game(), _smb_req())[0] == "skip"
 
 
 def test_enter_before_move_does_not_arm():
     # ENTER alone during the wait loop must not start recording (was instant-win bug).
     fake = _FakeSession([(0, True, False)] * 10)
-    assert remix._play_wall(fake, object(), "smb", _smb_req(), 771)[0] == "afk"
+    assert remix._play_wall(fake, _smb_game(), _smb_req())[0] == "afk"
 
 
 def test_resolve_clears_whole_level_not_one_bucket(tmp_path, monkeypatch):
@@ -196,8 +201,45 @@ def test_discover_walls_from_stuck_json(tmp_path, monkeypatch):
     assert walls[0]["state"].endswith("2_2.state") or "2_3_" in walls[0]["state"]
 
 
+def test_open_walls_discovers_games_without_explicit_requests(tmp_path, monkeypatch):
+    """smb_lost on demo_requests must not hide smb walls discovered from stuck.json."""
+    data = tmp_path / "data"
+    data.mkdir()
+    auto = data / "rl" / "states" / "auto"
+    auto.mkdir(parents=True)
+    (auto / "3_4_d32_x359.state").write_bytes(b"APPROACH")
+    ck = data / "checkpoints" / "smb"
+    ck.mkdir(parents=True)
+    (ck / "furthest.json").write_text('{"label":"3-4","progress":105}')
+    (data / "demo_requests.jsonl").write_text(json.dumps({
+        "game": "smb_lost", "level_label": "1-2", "death_bucket": 91,
+        "death_x": 1460, "deaths": 14, "state": str(auto / "1_2_d91_x1427.state"),
+    }) + "\n")
+    (data / "stuck.json").write_text(json.dumps([
+        {"game": "smb", "level_label": "3-4", "death_bucket": 32, "deaths": 44,
+         "last_death_x": 525, "remediated": False, "captured_states": []},
+    ]))
+    (data / "remix_cleared.jsonl").write_text(json.dumps({
+        "game": "smb", "level_label": "3-4", "death_bucket": 32, "death_x": 525,
+    }) + "\n")
+    (data / "solutions.jsonl").write_text(
+        json.dumps({"level": [0, 3, 4], "bucket": 22, "plan": [[1, 1]], "reach_after": 546}) + "\n")
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix.config, "SOLUTIONS_FILE", data / "solutions.jsonl")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", data / "remix_cleared.jsonl")
+
+    walls = remix._open_walls(["smb", "smb_lost"], persist=False)
+    games = {w["game"] for w in walls}
+    assert games == {"smb", "smb_lost"}
+    smb = next(w for w in walls if w["game"] == "smb")
+    assert smb["level_label"] == "3-4"
+    assert smb["death_x"] == 525
+
+
 def test_discover_skips_when_banked_despite_stuck_history(tmp_path, monkeypatch):
-    """Cleared + solution in cache → don't re-queue even if stuck.json still has old deaths."""
+    """Cleared + banked solution + deaths below threshold → don't re-queue stale history."""
     data = tmp_path / "data"
     data.mkdir()
     (data / "solutions.jsonl").write_text(
@@ -207,7 +249,7 @@ def test_discover_skips_when_banked_despite_stuck_history(tmp_path, monkeypatch)
         "game": "zelda", "level_label": "overworld #121", "death_bucket": 178, "death_x": 2857,
     }) + "\n")
     (data / "stuck.json").write_text(json.dumps([
-        {"level_label": "overworld #121", "death_bucket": 178, "deaths": 57,
+        {"level_label": "overworld #121", "death_bucket": 178, "deaths": 2,
          "last_death_x": 2857, "remediated": False, "captured_states": []},
     ]))
     monkeypatch.setattr(remix.config, "DATA_DIR", data)
@@ -266,14 +308,45 @@ def test_discover_skips_already_cleared_walls(tmp_path, monkeypatch):
     cleared.write_text(json.dumps({
         "game": "smb", "level_label": "2-3", "death_bucket": 67, "death_x": 1085,
     }) + "\n")
+    (data / "solutions.jsonl").write_text(
+        json.dumps({"level": [0, 2, 3], "bucket": 67, "plan": [[1, 1]], "reach_after": 1200}) + "\n")
     (data / "stuck.json").write_text(json.dumps([{
-        "level_label": "2-3", "death_bucket": 67, "deaths": 43,
+        "level_label": "2-3", "death_bucket": 67, "deaths": 2,
         "last_death_x": 1085, "remediated": False, "captured_states": [],
     }]))
     monkeypatch.setattr(remix.config, "DATA_DIR", data)
     monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix.config, "SOLUTIONS_FILE", data / "solutions.jsonl")
     monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
     monkeypatch.setattr(remix, "CLEARED_FILE", cleared)
+    assert remix._discover_walls(["smb"]) == []
+
+
+def test_discover_smb_lost_wall_with_game_field(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    auto = data / "rl" / "states" / "auto"
+    auto.mkdir(parents=True)
+    (auto / "1_1_d66_x1000.state").write_bytes(b"APPROACH")
+    (data / "stuck.json").write_text(json.dumps([{
+        "game": "smb_lost",
+        "level_label": "1-1",
+        "death_bucket": 66,
+        "deaths": 12,
+        "last_death_x": 1057,
+        "frontier_at_first": 3152,
+        "remediated": False,
+        "captured_states": [],
+    }]))
+    monkeypatch.setattr(remix.config, "DATA_DIR", data)
+    monkeypatch.setattr(remix.config, "CHECKPOINTS_DIR", data / "checkpoints")
+    monkeypatch.setattr(remix, "REQUESTS_FILE", data / "demo_requests.jsonl")
+    monkeypatch.setattr(remix, "CLEARED_FILE", data / "remix_cleared.jsonl")
+
+    walls = remix._discover_walls(["smb_lost"])
+    assert len(walls) == 1
+    assert walls[0]["game"] == "smb_lost"
+    assert walls[0]["death_x"] == 1057
     assert remix._discover_walls(["smb"]) == []
 
 
@@ -309,17 +382,80 @@ def test_anchor_is_level_entry_gates_by_game_and_source():
     assert remix._anchor_is_level_entry("zelda", "approach at overworld#121") is True   # screen-keyed
 
 
+def test_prepare_approach_reuses_existing_auto_state(tmp_path, monkeypatch):
+    auto = tmp_path / "rl" / "states" / "auto"
+    auto.mkdir(parents=True)
+    (auto / "3_4_d21_x500.state").write_bytes(b"APPROACH")
+    monkeypatch.setattr(remix.config, "DATA_DIR", tmp_path)
+    from billy.games.smb.game import SmbGame
+    req = {"level_label": "3-4", "death_x": 525}
+    assert remix._prepare_approach(req, SmbGame()) == str(auto / "3_4_d21_x500.state")
+
+
+def test_fake_game_joins_remix_via_game_hooks_only():
+    """Phase 1 acceptance: a new Game plugs into teach flow without remix.py edits."""
+    from types import SimpleNamespace
+
+    from billy.abstractions import Game, Observation
+
+    class _FakeRemixGame(Game):
+        name = "Fake Quest"
+        system = SimpleNamespace(name="fake")
+
+        def observe(self, frame, ram, rgb=None):
+            raise NotImplementedError
+
+        def boot(self, session):
+            raise NotImplementedError
+
+        def make_reflex(self):
+            raise NotImplementedError
+
+        def remix_goal(self, req):
+            return f"beat boss at {req['level_label']}"
+
+        def remix_min_progress(self):
+            return 99
+
+        def remix_win(self, obs, req, start_obs):
+            return obs.progress >= int(req["death_x"]) + 50
+
+        def remix_dropin_ok(self, obs, req):
+            return obs.progress < int(req["death_x"])
+
+        def remix_anchor_ok(self, source):
+            return "entry" in source
+
+        def remix_wall_at(self, req):
+            return f"boss room {req['level_label']}"
+
+    game = _FakeRemixGame()
+    req = {"level_label": "dungeon-9", "death_x": 400}
+    assert game.remix_goal(req) == "beat boss at dungeon-9"
+    assert game.remix_min_progress() == 99
+    assert game.remix_wall_at(req) == "boss room dungeon-9"
+    assert game.remix_anchor_ok("entry checkpoint") is True
+    assert game.remix_anchor_ok("mid-fight") is False
+    start = Observation(frame=0, progress=380, score=0, level_label="dungeon-9",
+                        level_key=("dungeon", 9), dead=False, summary="", ascii_map="",
+                        raw=SimpleNamespace(in_play=True))
+    assert game.remix_dropin_ok(start, req) is True
+    win = Observation(**{**start.__dict__, "progress": 460})
+    assert game.remix_win(win, req, start) is True
+
+
 def test_bank_tape_skips_mid_level_smb_anchor(tmp_path, monkeypatch):
     # A mid-level SMB approach must NOT become a per-level tape — it would replay from mid-level
     # on every entry, skipping the level's first half. The cache entry carries it instead.
     from types import SimpleNamespace
 
     from billy.abstractions import Step
+    from billy.games.smb.game import SmbGame
     from billy.knowledge.tape import TapeLibrary
     monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
     obs = SimpleNamespace(level_key=(0, 1, 3))
     result = SimpleNamespace(end_level_key=(0, 1, 3), end_progress=800)
-    banked = remix._bank_tape("smb", obs, b"MIDLEVEL", [Step(5, 1)], result, "approach at 1-3")
+    banked = remix._bank_tape(SmbGame(), obs, b"MIDLEVEL", [Step(5, 1)], result, "approach at 1-3")
     assert banked is False
     assert len(TapeLibrary(path=tmp_path / "tapes.jsonl")) == 0
 
@@ -328,11 +464,12 @@ def test_bank_tape_writes_entry_anchored_tape_from_level_start(tmp_path, monkeyp
     from types import SimpleNamespace
 
     from billy.abstractions import Step
+    from billy.games.smb.game import SmbGame
     from billy.knowledge.tape import TapeLibrary
     monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
     obs = SimpleNamespace(level_key=(0, 1, 3))
     result = SimpleNamespace(end_level_key=(0, 1, 3), end_progress=800)   # crossed, level not cleared
-    assert remix._bank_tape("smb", obs, b"LEVELSTART", [Step(5, 1)], result, "start of 1-3") is True
+    assert remix._bank_tape(SmbGame(), obs, b"LEVELSTART", [Step(5, 1)], result, "start of 1-3") is True
     lib = TapeLibrary(path=tmp_path / "tapes.jsonl")
     entry = lib.get((0, 1, 3))
     assert entry is not None
@@ -344,11 +481,13 @@ def test_bank_tape_zelda_screen_crossing_clears_the_unit(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from billy.abstractions import Step
+    from billy.games.zelda.game import ZeldaGame
     from billy.knowledge.tape import TapeLibrary
     monkeypatch.setattr(remix.config, "TAPES_FILE", tmp_path / "tapes.jsonl")
     obs = SimpleNamespace(level_key=("overworld", 121))
     result = SimpleNamespace(end_level_key=("overworld", 122), end_progress=60)
-    assert remix._bank_tape("zelda", obs, b"SCREEN", [Step(4, 2)], result, "approach at overworld#121")
+    assert remix._bank_tape(ZeldaGame(), obs, b"SCREEN", [Step(4, 2)], result,
+                            "approach at overworld#121")
     entry = TapeLibrary(path=tmp_path / "tapes.jsonl").get(("overworld", 121))
     assert entry.clears_level is True              # crossing east advanced the screen unit
 
@@ -359,9 +498,14 @@ class _ReplaySession:
         self.restored = None
         self.masks: list[int] = []
         self.overlays: list[list] = []
+        self.viewer_refreshed = False
 
     def restore(self, snap):
         self.restored = snap
+
+    def ensure_viewer(self):
+        self.viewer_refreshed = True
+        return True
 
     def set_overlay(self, lines):
         self.overlays.append(lines)
@@ -375,6 +519,7 @@ def test_replay_taught_line_restores_and_replays_every_frame():
     sess = _ReplaySession()
     remix._replay_taught_line(sess, b"ENTRY", [Step(3, 1), Step(2, 4)], "cross the pit")
     assert sess.restored == b"ENTRY"               # replays from the exact taught state
+    assert sess.viewer_refreshed                     # same window, not a second spawn
     assert sess.masks == [1, 1, 1, 4, 4]           # every frame, in order (run-length expanded)
     assert sess.overlays and any("WATCH BILLY" in l for l in sess.overlays[0])
 
@@ -452,19 +597,26 @@ def test_teach_game_stops_when_a_wall_cannot_be_taught():
     assert taught == 0 and scouted == []             # never advanced, never re-scouted
 
 
-def test_teach_game_no_rescout_teaches_one_and_stops():
-    calls = {"n": 0}
+def test_teach_game_no_rescout_teaches_open_walls_without_hunting():
+    # --no-scout: teach every wall already on file; never re-scout for new ones.
+    open_list = [
+        {"game": "smb", "level_label": "3-4", "death_x": 525},
+        {"game": "smb", "level_label": "4-1", "death_x": 300},
+    ]
 
     def _open(games):
-        calls["n"] += 1
-        return [{"game": "smb", "level_label": "3-4", "death_x": 525}]
+        return list(open_list[:1]) if open_list else []
+
+    def resolve(req):
+        if open_list and open_list[0]["level_label"] == req["level_label"]:
+            open_list.pop(0)
 
     scouted = []
     taught = remix._teach_game(
-        "smb", scout_attempts=1, rescout=False,      # --no-scout: teach what's on file, don't hunt
+        "smb", scout_attempts=1, rescout=False,
         teach=lambda req: True, scout=lambda g, n: scouted.append(g),
-        open_walls=_open, resolve=lambda req: None)
-    assert taught == 1 and scouted == [] and calls["n"] == 1
+        open_walls=_open, resolve=resolve)
+    assert taught == 2 and scouted == [] and open_list == []
 
 
 def test_teach_game_respects_the_per_game_cap():
@@ -476,3 +628,157 @@ def test_teach_game_respects_the_per_game_cap():
         open_walls=lambda games: [{"game": "smb", "level_label": "3-4", "death_x": 525}],
         resolve=lambda req: None)
     assert taught == remix.MAX_WALLS_PER_GAME
+
+
+# --- one emulator per process: teach window vs re-scout / approach -----------------------
+
+class _FakeTeachSession:
+    def __init__(self, events: list, name: str):
+        self.events = events
+        self.name = name
+        self.closed = False
+        events.append(f"open:{name}")
+
+    def wait_until_live(self):
+        pass
+
+    def close(self):
+        self.closed = True
+        self.events.append(f"close:{self.name}")
+
+
+def test_teach_game_closes_window_before_rescout(monkeypatch):
+    """stable-retro allows one emulator per process — re-scout must not open while teach lives."""
+    events: list[str] = []
+    n = {"i": 0}
+
+    def open_sess(game_key):
+        n["i"] += 1
+        return _FakeTeachSession(events, f"s{n['i']}")
+
+    monkeypatch.setattr(remix, "_open_teach_session", open_sess)
+    monkeypatch.setattr(remix, "_attach_approach_state", lambda req: dict(req))
+    monkeypatch.setattr(remix, "_approach_needs_live_drive", lambda req: False)
+
+    remaining = [
+        [{"game": "smb", "level_label": "3-4", "death_x": 525}],
+        [{"game": "smb", "level_label": "4-1", "death_x": 300}],
+        [],
+    ]
+
+    def teach(req, session=None):
+        assert session is not None and not session.closed
+        events.append(f"teach:{req['level_label']}")
+        return True
+
+    def scout(g, n_attempts):
+        # Teach session must already be closed before scout opens its own emulator.
+        assert events[-1].startswith("close:"), events
+        events.append("scout")
+        return "next"
+
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=True, reuse_window=True,
+        teach=teach, scout=scout,
+        open_walls=lambda games: remaining.pop(0) if remaining else [],
+        resolve=lambda req: None)
+    assert taught == 2
+    # teach → close → scout → open next → teach → close → scout
+    assert events == [
+        "open:s1", "teach:3-4", "close:s1", "scout",
+        "open:s2", "teach:4-1", "close:s2", "scout",
+    ]
+
+
+def test_teach_game_no_rescout_teaches_all_open_walls_one_window(monkeypatch):
+    """--no-scout marches through every open wall in one window (no second spawn)."""
+    events: list[str] = []
+    n = {"i": 0}
+
+    def open_sess(game_key):
+        n["i"] += 1
+        return _FakeTeachSession(events, f"s{n['i']}")
+
+    monkeypatch.setattr(remix, "_open_teach_session", open_sess)
+    monkeypatch.setattr(remix, "_attach_approach_state", lambda req: dict(req))
+    monkeypatch.setattr(remix, "_approach_needs_live_drive", lambda req: False)
+
+    open_list = [
+        {"game": "smb", "level_label": "3-4", "death_x": 525},
+        {"game": "smb", "level_label": "4-1", "death_x": 300},
+    ]
+
+    def open_walls(games):
+        return list(open_list[:1]) if open_list else []
+
+    def resolve(req):
+        if open_list and open_list[0]["level_label"] == req["level_label"]:
+            open_list.pop(0)
+
+    taught_sessions = []
+
+    def teach(req, session=None):
+        taught_sessions.append(session)
+        events.append(f"teach:{req['level_label']}")
+        return True
+
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=False, reuse_window=True,
+        teach=teach, scout=lambda g, n: events.append("scout") or "x",
+        open_walls=open_walls, resolve=resolve)
+    assert taught == 2
+    assert events.count("scout") == 0
+    assert n["i"] == 1                                 # one window only
+    assert taught_sessions[0] is taught_sessions[1]     # same session object
+    assert events == ["open:s1", "teach:3-4", "teach:4-1", "close:s1"]
+
+
+def test_teach_game_releases_window_before_live_approach(monkeypatch):
+    """Live approach capture needs the emulator — teach window must be closed first."""
+    events: list[str] = []
+    n = {"i": 0}
+
+    def open_sess(game_key):
+        n["i"] += 1
+        return _FakeTeachSession(events, f"s{n['i']}")
+
+    monkeypatch.setattr(remix, "_open_teach_session", open_sess)
+
+    # First wall: no live drive. Second wall: needs live approach → must close s1 first.
+    drive = {"3-4": False, "4-1": True}
+
+    def needs_drive(req):
+        return drive[req["level_label"]]
+
+    def attach(req):
+        events.append(f"approach:{req['level_label']}")
+        return dict(req)
+
+    monkeypatch.setattr(remix, "_approach_needs_live_drive", needs_drive)
+    monkeypatch.setattr(remix, "_attach_approach_state", attach)
+
+    open_list = [
+        {"game": "smb", "level_label": "3-4", "death_x": 525},
+        {"game": "smb", "level_label": "4-1", "death_x": 300},
+    ]
+
+    def open_walls(games):
+        return list(open_list[:1]) if open_list else []
+
+    def resolve(req):
+        if open_list and open_list[0]["level_label"] == req["level_label"]:
+            open_list.pop(0)
+
+    def teach(req, session=None):
+        events.append(f"teach:{req['level_label']}")
+        return True
+
+    taught = remix._teach_game(
+        "smb", scout_attempts=1, rescout=False, reuse_window=True,
+        teach=teach, scout=lambda g, n: "x",
+        open_walls=open_walls, resolve=resolve)
+    assert taught == 2
+    assert events == [
+        "approach:3-4", "open:s1", "teach:3-4",
+        "close:s1", "approach:4-1", "open:s2", "teach:4-1", "close:s2",
+    ]

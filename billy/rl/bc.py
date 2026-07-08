@@ -37,6 +37,41 @@ def _similarity(demo_mask: int, action_mask: int) -> float:
     return 1.0 - bin(diff).count("1") / 6.0
 
 
+def trim_demo_start(plan: Plan) -> Plan:
+    """Drop take-control wiggles before the crossing maneuver begins.
+
+    Remix teleop often starts with brief left/up taps while the human grabs the pad.
+    Bare-right run-ups before the jump are also dropped when a sprint/jump follows — at a
+    pit lip savestate (x≈1040) a long right-only cruise walks Mario off before the arc."""
+    for i, step in enumerate(plan):
+        names = set(C.names_from_mask(step.buttons))
+        if "left" in names or ("up" in names and "right" not in names):
+            continue
+        if "right" in names and ("B" in names or "A" in names):
+            return plan[i:]
+    for i, step in enumerate(plan):
+        names = set(C.names_from_mask(step.buttons))
+        if "right" in names and "left" not in names:
+            return plan[i:]
+    return list(plan)
+
+
+def step_to_action(step: Step, actions=SECTION_ACTIONS) -> int:
+    """Map one teleop run-length step onto the nearest section-action index."""
+    frames = [step.buttons] * step.frames
+    best_k, best_score = 0, -1.0
+    for k, (names, hold) in enumerate(actions):
+        mask = C.mask_from_names(list(names))
+        window = frames[:hold]
+        if not window:
+            continue
+        score = sum(_similarity(m, mask) for m in window) / len(window)
+        score += hold * 1e-4
+        if score > best_score:
+            best_score, best_k = score, k
+    return best_k
+
+
 def demo_to_actions(plan: Plan, actions=SECTION_ACTIONS) -> list[int]:
     """Greedily map an exact demo input stream onto the discrete section-action vocabulary.
 
@@ -78,7 +113,32 @@ def collect_bc_pairs(env, action_idxs: list[int]) -> list[tuple]:
         obs, _r, terminated, truncated, info = env.step(int(a))
         if terminated or truncated:
             if info.get("dead"):
-                pairs = pairs[:-4] if len(pairs) > 4 else []   # drop the doomed final inputs
+                pairs = pairs[:-4] if len(pairs) > 4 else []
+            break
+    return pairs
+
+
+def collect_bc_pairs_from_plan(env, plan: Plan) -> list[tuple]:
+    """Replay the EXACT human teleop stream, labeling each step with the nearest
+    section-action index — on-trajectory BC without lossy vocabulary reconstruction."""
+    from . import features
+
+    plan = trim_demo_start(plan)
+    pairs: list[tuple] = []
+    obs, _info = env.reset()
+    for step in plan:
+        action = step_to_action(step)
+        pairs.append((obs, action))
+        env.session.send_plan([step])
+        scene = env._observe()
+        x = scene.progress
+        dead = scene.dead or x < env.back_x
+        crossed = x >= env.goal_x
+        obs = features.featurize(scene.raw)
+        if dead:
+            pairs = pairs[:-4] if len(pairs) > 4 else []
+            break
+        if crossed:
             break
     return pairs
 

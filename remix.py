@@ -38,8 +38,9 @@ from billy import config
 
 REQUESTS_FILE = config.DATA_DIR / "demo_requests.jsonl"
 CLEARED_FILE = config.DATA_DIR / "remix_cleared.jsonl"
-PAST_MARGIN = 24                 # must end this far past Billy's death spot (a real crossing)
-ZELDA_MIN_PROGRESS = 48          # trivial link_x nudges must not count as teaching #121
+# Back-compat aliases — defaults live on Game.remix_past_margin() / remix_min_progress().
+PAST_MARGIN = 24
+ZELDA_MIN_PROGRESS = 48
 MAX_WALLS_PER_GAME = 6           # per-session cap on the teach→re-scout→next-wall march
 
 # The campaign roster: games with a completion arc worth marching. Skipped gracefully if the
@@ -140,6 +141,13 @@ def _has_banked_solution(game: str, level_label: str) -> bool:
     return False
 
 
+def _record_game(rec: dict) -> str | None:
+    """Campaign game key for a stuck.json row — explicit game field wins over label heuristics."""
+    if rec.get("game"):
+        return rec["game"]
+    return _game_for_level(rec.get("level_label", ""))
+
+
 def _still_stuck_on_level(game: str, level_label: str) -> bool:
     """True if Billy is STILL dying here — re-queue even if remix_cleared says we taught it."""
     stuck_path = config.DATA_DIR / "stuck.json"
@@ -151,12 +159,12 @@ def _still_stuck_on_level(game: str, level_label: str) -> bool:
         return False
     best = 0
     for rec in rows:
-        if _game_for_level(rec.get("level_label", "")) != game:
+        if _record_game(rec) != game:
             continue
         if rec.get("level_label") != level_label or rec.get("remediated"):
             continue
         best = max(best, int(rec.get("deaths", 0)))
-    return best >= config.STUCK_DEATH_THRESHOLD
+    return best >= _stuck_threshold(game)
 
 
 def _dedupe_walls_by_level(walls: list[dict]) -> list[dict]:
@@ -167,45 +175,6 @@ def _dedupe_walls_by_level(walls: list[dict]) -> list[dict]:
         if key not in best or int(w.get("deaths", 0)) > int(best[key].get("deaths", 0)):
             best[key] = w
     return list(best.values())
-
-
-def _goal_blurb(game_key: str, req: dict) -> str:
-    death_x = int(req.get("death_x", 0))
-    label = req.get("level_label", "?")
-    if game_key == "zelda":
-        m = re.search(r"#(\d+)", label)
-        n = int(m.group(1)) if m else 0
-        return f"clear {label} alive and march east to screen #{n + 1}"
-    return f"get past x≈{death_x} and keep going"
-
-
-def _teach_params(game_key: str, req: dict, obs) -> dict:
-    """Per-game win criteria. Zelda crosses screens; platformers use progress."""
-    death_x = int(req.get("death_x", 0))
-    if game_key == "zelda":
-        start_screen = int(getattr(obs.raw, "map_location", 0))
-        m = re.search(r"#(\d+)", req.get("level_label", ""))
-        wall_screen = int(m.group(1)) if m else start_screen
-        return {
-            "mode": "zelda_screen",
-            "start_screen": start_screen,
-            "target_screen": wall_screen + 1,
-            "min_progress": ZELDA_MIN_PROGRESS,
-            "overlay_need": f"screen #{wall_screen} → #{wall_screen + 1}",
-        }
-    return {
-        "mode": "progress",
-        "target": death_x + PAST_MARGIN,
-        "min_progress": 8,
-        "overlay_need": f"x={obs.progress}  →  need {death_x + PAST_MARGIN}",
-    }
-
-
-def _wall_cleared(game_key: str, obs, params: dict) -> bool:
-    if params["mode"] == "zelda_screen":
-        return (getattr(obs.raw, "in_play", True)
-                and int(getattr(obs.raw, "map_location", 0)) >= params["target_screen"])
-    return getattr(obs.raw, "in_play", True) and obs.progress >= params["target"]
 
 
 def _level_rank(label: str) -> tuple[int, int]:
@@ -298,11 +267,11 @@ def _discover_walls(games: list[str]) -> list[dict]:
     candidates: list[dict] = []
 
     for rec in rows:
-        if rec.get("remediated") or int(rec.get("deaths", 0)) < config.STUCK_DEATH_THRESHOLD:
-            continue
         level_label = rec.get("level_label", "")
-        game = _game_for_level(level_label)
+        game = _record_game(rec)
         if game is None or game not in game_set:
+            continue
+        if rec.get("remediated") or int(rec.get("deaths", 0)) < _stuck_threshold(game):
             continue
         if not _at_or_beyond_frontier(game, level_label):
             continue
@@ -310,8 +279,9 @@ def _discover_walls(games: list[str]) -> list[dict]:
         if level_key in existing:
             continue
         if level_key in cleared_levels:
-            if _has_banked_solution(game, level_label):
-                continue                    # teach worked — solution is in cache
+            if (_has_banked_solution(game, level_label)
+                    and not _still_stuck_on_level(game, level_label)):
+                continue                    # teach worked and deaths stopped
             if not _still_stuck_on_level(game, level_label):
                 continue                    # cleared and Billy moved past it
         state = _state_for_wall(game, level_label, rec)
@@ -337,25 +307,32 @@ def _discover_walls(games: list[str]) -> list[dict]:
 
 
 def _open_walls(games: list[str], *, persist: bool = True) -> list[dict]:
-    """Open teach queue: explicit demo requests, plus stuck.json discovery when empty."""
+    """Open teach queue: explicit demo requests, plus stuck.json discovery per game."""
     game_set = set(games)
     reqs = _dedupe_walls_by_level(
         [r for r in _read_requests() if r.get("game") in game_set])
-    if reqs:
-        return reqs
-
-    discovered = _discover_walls(games)
-    if not discovered:
+    covered = {r.get("game") for r in reqs}
+    need_discovery = [g for g in games if g not in covered]
+    discovered = _discover_walls(need_discovery) if need_discovery else []
+    walls = reqs + discovered
+    if not walls:
         return []
 
-    if persist:
+    if persist and discovered:
         config.ensure_dirs()
+        from billy.stuck_trainer import StuckRecord, StuckRemedy, notify_remix_wall
         with REQUESTS_FILE.open("a") as f:
             for r in discovered:
                 f.write(json.dumps(r) + "\n")
-        print(f"  [remix] queued {len(discovered)} stuck wall(s) from Billy's death log "
-              f"(demo_requests.jsonl was empty).")
-    return discovered
+                notify_remix_wall(
+                    r["game"],
+                    StuckRemedy(kind="frame_search", level_label=r["level_label"],
+                                death_x=int(r["death_x"]), goal_x=int(r["death_x"]) + 100),
+                    StuckRecord(level_label=r["level_label"],
+                                death_bucket=int(r["death_bucket"]),
+                                deaths=int(r["deaths"]), last_death_x=int(r["death_x"])))
+        print(f"  [remix] queued {len(discovered)} stuck wall(s) from Billy's death log.")
+    return walls
 
 
 def _resolve_request(req: dict) -> None:
@@ -387,8 +364,12 @@ def _approach_x_from_path(p: str) -> int:
         return 0
 
 
-def _prepare_smb_approach(req: dict) -> str | None:
-    """Headless capture at the real wall (e.g. 2-3 pit) using Billy's cache from his frontier."""
+def _stuck_threshold(game_key: str) -> int:
+    return _game(game_key).stuck_death_threshold()
+
+
+def _prepare_approach(req: dict, game) -> str | None:
+    """Headless capture just-before-the-wall using Billy's cache from his frontier."""
     label = req.get("level_label", "")
     death_x = int(req.get("death_x", 0))
     slug = label.replace("-", "_")
@@ -402,22 +383,23 @@ def _prepare_smb_approach(req: dict) -> str | None:
     if Path(capture_out).is_file():
         return capture_out
 
-    x_min = max(32, death_x - 100)
-    x_max = max(x_min + 16, death_x - 8)
-    print(f"     … driving Billy to {label} x≈{death_x} for a proper drop-in "
+    if not game.remix_needs_approach_capture(req):
+        return None
+
+    x_min, x_max = game.remix_approach_progress_window(req)
+    print(f"     … driving Billy to {label} for a proper drop-in "
           f"(headless from his frontier — may take 1–2 min)…")
     os.environ["BILLY_HEADLESS"] = "1"
     os.environ.setdefault("BILLY_TURBO", "1")
     from billy.director import Director
     from billy.knowledge import KnowledgeBase, SkillLibrary
-    from billy.rl.section_policy import SectionController, default_smb_sections
 
     auto_dir.mkdir(parents=True, exist_ok=True)
-    game = _game("smb")
-    game.cli_name = "smb"
+    sections = game.remix_director_sections()
     director = Director(
         game, KnowledgeBase(), use_llm=False, skills=SkillLibrary(),
-        sections=SectionController(default_smb_sections()))
+        sections=sections) if sections else Director(
+        game, KnowledgeBase(), use_llm=False, skills=SkillLibrary())
     director.session.reset()
     director.session.wait_until_live()
     grabbed: dict = {}
@@ -426,16 +408,15 @@ def _prepare_smb_approach(req: dict) -> str | None:
 
     def _try_grab(obs) -> None:
         nonlocal grabbing
-        if grabbed or grabbing or obs.level_label != label:
+        if grabbed or grabbing or not game.remix_dropin_level_ok(obs, req):
             return
-        if not (getattr(obs.raw, "on_ground", True) and x_min <= obs.progress <= x_max):
+        lo, hi = game.remix_approach_progress_window(req)
+        if not (game.remix_on_ground(obs) and lo <= obs.progress <= hi):
             return
         grabbing = True
         try:
-            from billy.games.smb.capture_util import settle_mario
-            ok, _ = settle_mario(director.session, orig_observe, allow_left=False)
-            obs2 = orig_observe()
-            if ok and obs2.level_label == label and x_min <= obs2.progress <= x_max:
+            ok, obs2 = game.remix_capture_ready(director.session, orig_observe, req)
+            if ok:
                 grabbed["bytes"] = director.session.clone_state()
                 grabbed["x"] = obs2.progress
         finally:
@@ -535,46 +516,121 @@ def _scout(game_key: str, attempts: int) -> str:
 # ---------------------------------------------------------------------------------------------
 # TEACH: drop the human in at a wall's state and bank their crossing as a demo Billy keeps.
 # ---------------------------------------------------------------------------------------------
-def _teach_wall(req: dict) -> bool:
+def _close_session(session) -> None:
+    """Tear down an emulator session (and its viewer). Idempotent; never raises."""
+    if session is None:
+        return
+    try:
+        session.close()
+    except Exception:
+        pass
+
+
+def _open_teach_session(game_key: str):
+    """Open ONE windowed session for teaching. Caller owns close via _close_session."""
+    os.environ["BILLY_HEADLESS"] = "0"
+    os.environ.setdefault("BILLY_TURBO", "1")
+    game_obj = _game(game_key)
+    game_obj.cli_name = game_key
+    session = game_obj.system.connect()
+    session.wait_until_live()
+    return session
+
+
+def _approach_needs_live_drive(req: dict) -> bool:
+    """True only when approach capture would open a headless Director (no cache hit)."""
+    game = _game(req["game"])
+    if not game.remix_needs_approach_capture(req):
+        return False
+    state = Path(str(req.get("state", "")))
+    if state.is_file() and _is_captured_approach(state):
+        return False
+    label = req.get("level_label", "")
+    if _auto_states_for_level(label):
+        return False
+    death_x = int(req.get("death_x", 0))
+    slug = label.replace("-", "_")
+    bucket = death_x // config.CACHE_BUCKET_PX
+    capture_out = config.DATA_DIR / "rl" / "states" / "auto" / f"{slug}_d{bucket}_remix.state"
+    return not capture_out.is_file()
+
+
+def _attach_approach_state(req: dict) -> dict | None:
+    """Return a copy of `req` with approach drop-in attached when the game needs one.
+
+    Runs headless Director capture if no cached approach exists — MUST be called with no other
+    emulator open (stable-retro: one instance per process). Returns None if capture is required
+    and fails."""
+    out = dict(req)
+    game_key = out["game"]
+    game = _game(game_key)
+    game.cli_name = game_key
+    if not game.remix_needs_approach_capture(out):
+        return out
+    if Path(str(out.get("state", ""))).is_file() and _is_captured_approach(Path(out["state"])):
+        return out
+    approach = _prepare_approach(out, game)
+    if not approach:
+        print(f"\n  ⚠  {game_key} {out.get('level_label')}: no approach state at the "
+              f"real wall — skipping (won't drop you in the wrong level).")
+        return None
+    out["state"] = approach
+    return out
+
+
+def _teach_wall(req: dict, *, session=None) -> bool:
     """One wall: restore its state, YOU play past Billy's death spot, verify + bank. True if
-    banked (Billy learned it)."""
+    banked (Billy learned it). Pass a live `session` to keep one game window across walls.
+
+    When `session` is provided, approach capture must already be attached on `req` (see
+    `_attach_approach_state`) — never opens a second emulator while the teach window is live."""
     os.environ["BILLY_HEADLESS"] = "0"
     os.environ.setdefault("BILLY_TURBO", "1")
     from billy.abstractions import BootError
 
     game_key = req["game"]
     req = dict(req)
-    if game_key == "smb":
-        approach = _prepare_smb_approach(req)
-        if not approach:
-            print(f"\n  ⚠  smb {req.get('level_label')}: no approach state at the real wall — "
-                  f"skipping (won't drop you in the wrong level).")
-            return False
-        req["state"] = approach
+    game = _game(game_key)
+    game.cli_name = game_key
+    owns_session = session is None
+    if game.remix_needs_approach_capture(req):
+        # Prefer caller-prepped state. Live drive only when we own the only emulator slot.
+        has_approach = (Path(str(req.get("state", ""))).is_file()
+                        and _is_captured_approach(Path(req["state"])))
+        if not has_approach:
+            if not owns_session:
+                print(f"\n  ⚠  {game_key} {req.get('level_label')}: approach capture needed "
+                      f"but teach window is already open — skipping.")
+                return False
+            approach = _prepare_approach(req, game)
+            if not approach:
+                print(f"\n  ⚠  {game_key} {req.get('level_label')}: no approach state at the "
+                      f"real wall — skipping (won't drop you in the wrong level).")
+                return False
+            req["state"] = approach
     death_x = int(req.get("death_x", 0))
     label = req.get("level_label", "?")
     dropin, source = _dropin_state(req)
-    goal = _goal_blurb(game_key, req)
-    wall_at = (f"screen {label}" if game_key == "zelda"
-               else f"x≈{death_x}")
+    goal = game.remix_goal(req)
+    wall_at = game.remix_wall_at(req)
     print(f"\n{'═' * 64}\n  ▶  {game_key} · {label}  —  Billy's wall at {wall_at} "
           f"({req.get('deaths', '?')} deaths)\n     GOAL: {goal} — "
           f"clear it and Billy learns the line.  (drop-in: {source})\n{'═' * 64}")
     if dropin is None:
         print("     ⚠  no drop-in state available — skipping.")
         return False
-
-    game = _game(game_key)
-    session = game.system.connect()
+    if owns_session:
+        session = game.system.connect()
     try:
-        session.wait_until_live()
+        if owns_session:
+            session.wait_until_live()
         session.restore(dropin)
         drop_obs = _observe(session, game)
-        if game_key == "smb" and drop_obs.level_label != label:
+        if not game.remix_dropin_level_ok(drop_obs, req):
             print(f"     ⚠  drop-in is {drop_obs.level_label}, not {label} — skipping.")
             return False
-        if game_key == "smb":
-            print(f"     📍 drop-in confirmed: {drop_obs.level_label} x={drop_obs.progress}")
+        print(f"     📍 drop-in confirmed: {drop_obs.level_label} "
+              f"progress={drop_obs.progress}")
         if not session.ensure_viewer():
             print("     ⚠  no game window (headless?). The remix needs a window to play in.")
             return False
@@ -582,8 +638,9 @@ def _teach_wall(req: dict) -> bool:
         print("     🎮 controller ready." if pad
               else "     ⌨  keyboard (arrows / Z / X / Tab).")
         print("     👉 Click the GAME window, then press an arrow (or Z) to take control.")
-        if game_key == "zelda":
-            print("     🗡  Fight through the screen and walk EAST to the next screen alive.")
+        if not game.remix_dropin_ok(drop_obs, req):
+            print("     ⚠  drop-in already past the wall — skipping.")
+            return False
 
         # Bank EVERY clean crossing in the try budget, not just the first. A second, faster or
         # further line replaces the banked one (cache force=True / tape frontier) — Billy keeps
@@ -595,13 +652,10 @@ def _teach_wall(req: dict) -> bool:
                 print(f"     try {t}/3 — land a cleaner line (Billy keeps the best), "
                       f"or step away to move on." if banked else f"     try {t}/3…")
             session.restore(dropin)
-            outcome, secs, plan, start_state, start_obs = _play_wall(
-                session, game, game_key, req, death_x)
+            outcome, secs, plan, start_state, start_obs = _play_wall(session, game, req)
             if outcome == "win":
                 print(f"     ✓ you cleared it in {secs:.1f}s")
-                params = _teach_params(game_key, req, start_obs)
-                if _bank(game_key, session, start_state, start_obs, plan, req=req,
-                         min_progress=params["min_progress"], source=source):
+                if _bank(game, session, start_state, start_obs, plan, req=req, source=source):
                     banked += 1
                 continue
             if outcome == "skip":
@@ -630,17 +684,18 @@ def _teach_wall(req: dict) -> bool:
         print(f"     ⚠  couldn't start ({e}).")
         return False
     finally:
-        session.close()
+        if owns_session and session is not None:
+            session.close()
 
 
-def _play_wall(session, game, game_key: str, req: dict, death_x: int):
+def _play_wall(session, game, req: dict):
     """Hand the controller to the human, then record their crossing. Returns
     (outcome, seconds, plan, armed_start_state, armed_start_obs). Nothing counts until YOU take
     control (fixes auto-completing on the drop-in's momentum): the demo begins the moment you
     first press something, re-anchored to that state."""
     from billy.teleop import TeleopRecorder
     session.teleop_reset()
-    goal = _goal_blurb(game_key, req)
+    goal = game.remix_goal(req)
 
     # 1) Wait for you to take the controller. The window stays live via neutral steps, but the
     #    goal is NOT armed and nothing is recorded — so the drop-in's coast can't auto-win.
@@ -662,11 +717,7 @@ def _play_wall(session, game, game_key: str, req: dict, death_x: int):
     #    wall before you took control, it can't teach the crossing — bail.
     start_state = session.clone_state()
     start_obs = _observe(session, game)
-    params = _teach_params(game_key, req, start_obs)
-    if params["mode"] == "zelda_screen":
-        if int(getattr(start_obs.raw, "map_location", 0)) >= params["target_screen"]:
-            return "bad_dropin", 0.0, [], None, None
-    elif start_obs.progress >= death_x:
+    if not game.remix_dropin_ok(start_obs, req):
         return "bad_dropin", 0.0, [], None, None
 
     rec = TeleopRecorder()
@@ -681,25 +732,19 @@ def _play_wall(session, game, game_key: str, req: dict, death_x: int):
         obs = _observe(session, game)
         if obs.dead:
             return "died", frames / 60.0, [], None, None
-        if _wall_cleared(game_key, obs, params):
+        if game.remix_win(obs, req, start_obs):
             return "win", frames / 60.0, rec.plan(), start_state, start_obs
         if finish:
             return "early_finish", frames / 60.0, [], None, None
         if frames % 15 == 0:
-            if params["mode"] == "zelda_screen":
-                s = obs.raw
-                session.set_overlay([f"▶ {goal}",
-                                     f"screen #{s.map_location}  →  need #{params['target_screen']}",
-                                     "cross east alive · ESC = skip"])
-            else:
-                session.set_overlay([f"▶ {goal}",
-                                     params["overlay_need"],
-                                     "controller or keys · ESC = skip"])
+            session.set_overlay([f"▶ {goal}",
+                                 game.remix_overlay_hint(obs, req),
+                                 "controller or keys · ESC = skip"])
     return "timeout", frames / 60.0, [], None, None
 
 
-def _bank(game_key: str, session, start_state: bytes, start_obs, plan, *,
-          req: dict | None = None, min_progress: int = 8, source: str = "") -> bool:
+def _bank(game, session, start_state: bytes, start_obs, plan, *,
+          req: dict | None = None, source: str = "") -> bool:
     """Verify the human demo on the SAME emulator (search_mode, invisible) and bank it: a
     SolutionCache entry (exact replay) + an entry-anchored TAPE (deterministic whole-trajectory
     reproduction, the only carrier that beats a MOVING hazard) + a distilled transferable skill.
@@ -710,52 +755,48 @@ def _bank(game_key: str, session, start_state: bytes, start_obs, plan, *,
 
     if not plan:
         return False
-    result = verify_demo(session, _game(game_key), start_state, plan,
-                         min_progress=min_progress)
+    result = verify_demo(session, game, start_state, plan,
+                         min_progress=game.remix_min_progress())
     print(f"     verify: {result.summary()}")
-    want = (req or {}).get("level_label", "")
-    if game_key == "smb" and want and result.end_label != want:
+    if not game.remix_demo_end_ok(result, req or {}):
+        want = (req or {}).get("level_label", "")
         print(f"     (demo ended on {result.end_label}, not {want} — won't bank for this wall.)")
         return False
     if not result.bankable:
         print("     (run didn't verify to bank — survive AND advance past the spot; try again.)")
         return False
-    cache = SolutionCache(path=SOLUTIONS_FILE)
+    game_key = str(getattr(game, "cli_name", "") or (req or {}).get("game", ""))
+    cache = SolutionCache(path=SOLUTIONS_FILE, game_id=game_key or "smb")
     key = bank_demo(cache, start_obs, plan, result.end_progress)
     print(f"     ⇒ 🧠 Billy learned it — banked at {key} (reach {result.end_progress}).")
-    _bank_tape(game_key, start_obs, start_state, plan, result, source)
-    _write_bc_seed(game_key, start_obs, start_state, plan, result)
+    _bank_tape(game, start_obs, start_state, plan, result, source)
+    _write_bc_seed(game_key, start_obs, start_state, plan, result, game)
     try:
         from billy.knowledge.distill import distill_solution
         from billy.knowledge.skills import SkillLibrary
-        fresh = _game(game_key)
         if distill_solution(SkillLibrary(), summary=start_obs.summary,
                             level_label=start_obs.level_label, plan=plan,
                             start_x=start_obs.progress, reach=result.end_progress,
-                            source="demo", console=getattr(fresh.system, "name", "nes")):
+                            source="demo", console=getattr(game.system, "name", "nes")):
             print("     ⇒ distilled a transferable skill (helps at similar spots, other games too).")
     except Exception as e:
         print(f"     (skill distill skipped: {type(e).__name__}: {e})")
-    _replay_taught_line(session, start_state, plan, _goal_blurb(game_key, req or {}))
+    _replay_taught_line(session, start_state, plan, game.remix_goal(req or {}))
     return True
 
 
 def _anchor_is_level_entry(game_key: str, source: str) -> bool:
-    """Only the tape carrier's anchor gets restored AT LEVEL/SCREEN BEGIN — so it's valid only
-    when the demo started from a real entry. Zelda is screen-keyed and its drop-in IS the screen
-    entry. For SMB the drop-in must be the level-start checkpoint ("start of …"): a mid-level
-    approach capture would anchor a per-LEVEL tape mid-level, replaying from there every entry
-    (skipping the level's first half). The cache entry still carries those mid-level walls."""
-    return game_key == "zelda" or source.startswith("start of")
+    """Thin wrapper for tests — delegates to Game.remix_anchor_ok."""
+    return _game(game_key).remix_anchor_ok(source)
 
 
-def _bank_tape(game_key: str, start_obs, entry_state: bytes, plan, result, source: str) -> bool:
+def _bank_tape(game, start_obs, entry_state: bytes, plan, result, source: str) -> bool:
     """Bank the crossing as an entry-state-anchored tape when the anchor is a legitimate
     level/screen entry. This is the carrier that reproduces MOVING hazards deterministically — a
     position-keyed cache entry re-searches them each pass; the tape restores the exact state and
     replays the exact stream. Safe either way: the Director clone-VERIFIES a tape before ever
     replaying it, so a bad anchor just fails verify and self-drops. Returns True if banked."""
-    if not _anchor_is_level_entry(game_key, source):
+    if not game.remix_anchor_ok(source):
         return False
     try:
         from billy.knowledge.tape import TapeLibrary
@@ -779,6 +820,9 @@ def _replay_taught_line(session, entry_state: bytes, plan, goal: str) -> None:
         return
     try:
         session.restore(entry_state)
+        # verify_demo runs invisibly (search_mode); refresh the SAME teach window before replay.
+        if hasattr(session, "ensure_viewer"):
+            session.ensure_viewer()
         session.set_overlay(["🎬 WATCH BILLY RUN YOUR LINE", goal, "(the line you just taught him)"])
         for step in plan:
             for _ in range(step.frames):
@@ -794,7 +838,8 @@ def _replay_taught_line(session, entry_state: bytes, plan, goal: str) -> None:
 _BC_GAMES = {"smb", "smb_lost"}
 
 
-def _write_bc_seed(game_key: str, start_obs, start_state: bytes, plan, result) -> str | None:
+def _write_bc_seed(game_key: str, start_obs, start_state: bytes, plan, result,
+                   game=None) -> str | None:
     """The 4th demo carrier: persist the crossing as a behavior-cloning warm start — the exact
     start savestate + its input stream (.demo.json), the two artifacts `train_section.py --demo`
     clones into a hazard sub-policy (one human crossing turns PPO-from-scratch into fine-tuning).
@@ -810,7 +855,8 @@ def _write_bc_seed(game_key: str, start_obs, start_state: bytes, plan, result) -
         demo_path = demos / f"{stem}.demo.json"
         state_path.write_bytes(start_state)
         demo_path.write_text(json.dumps({"steps": [[s.frames, s.buttons] for s in plan]}))
-        goal_x = max(int(result.end_progress), int(start_obs.progress) + PAST_MARGIN)
+        margin = game.remix_past_margin() if game else PAST_MARGIN
+        goal_x = max(int(result.end_progress), int(start_obs.progress) + margin)
         print(f"     ⇒ 🤖 BC seed saved ({demo_path.name}). Fine-tune a sub-policy offline:")
         print(f"        .venv/bin/python train_section.py --state {state_path} "
               f"--demo {demo_path} --goal-x {goal_x}")
@@ -823,26 +869,56 @@ def _write_bc_seed(game_key: str, start_obs, start_state: bytes, plan, result) -
 # ---------------------------------------------------------------------------------------------
 def _teach_game(game: str, *, scout_attempts: int, rescout: bool,
                 teach=_teach_wall, scout=_scout, open_walls=_open_walls,
-                resolve=_resolve_request) -> int:
+                resolve=_resolve_request, reuse_window: bool | None = None) -> int:
     """Teach this game's walls one after another — the compounding march in one sitting. After
     each taught line, re-scout so Billy (now owning that line) surfaces his NEXT wall; teach that
     too. Stops when he has no open wall left, when a wall can't be taught, or at the per-game cap.
+
+    Emulator exclusivity (stable-retro: one instance per process):
+      • One teach WINDOW is reused across consecutive walls in this game.
+      • Approach capture and re-scout need their own headless session — the teach window is
+        CLOSED first, then reopened for the next wall. Learning is already banked to disk, so
+        releasing the window never drops a taught line.
     Deps are injectable so the loop is unit-testable without an emulator. Returns lines taught."""
     taught = 0
-    for _ in range(MAX_WALLS_PER_GAME):
-        walls = [w for w in open_walls([game]) if w.get("game") == game]
-        if not walls:
-            break
-        req = min(walls, key=lambda r: r.get("death_x", 0))
-        if not teach(req):
-            break                       # skipped / couldn't cross — leave it open for next time
-        resolve(req)
-        taught += 1
-        if not rescout:
-            break                       # --no-scout: teach what's on file, don't hunt the next
-        reached = scout(game, scout_attempts)
-        print(f"    · after your line, Billy now reaches {reached} in {game} — "
-              f"finding his next wall…")
+    session = None
+    if reuse_window is None:
+        reuse_window = teach is _teach_wall
+    try:
+        for _ in range(MAX_WALLS_PER_GAME):
+            walls = [w for w in open_walls([game]) if w.get("game") == game]
+            if not walls:
+                break
+            req = min(walls, key=lambda r: r.get("death_x", 0))
+            if reuse_window:
+                # Approach capture may open a headless Director — release the teach window first.
+                if session is not None and _approach_needs_live_drive(req):
+                    _close_session(session)
+                    session = None
+                prepared = _attach_approach_state(req)
+                if prepared is None:
+                    break
+                req = prepared
+                if session is None:
+                    session = _open_teach_session(game)
+                banked = teach(req, session=session)
+            else:
+                banked = teach(req)
+            if not banked:
+                break                   # skipped / couldn't cross — leave it open for next time
+            resolve(req)
+            taught += 1
+            if not rescout:
+                # --no-scout: keep teaching walls already on file in the SAME window; don't hunt.
+                continue
+            # One emulator per process: release the teach window before headless re-scout.
+            _close_session(session)
+            session = None
+            reached = scout(game, scout_attempts)
+            print(f"    · after your line, Billy now reaches {reached} in {game} — "
+                  f"finding his next wall…")
+    finally:
+        _close_session(session)
     return taught
 
 

@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from billy.abstractions import Step
-from billy.rl.bc import demo_to_actions, load_demo
+from billy.rl.bc import demo_to_actions, load_demo, trim_demo_start
 from billy.rl.section_env import SECTION_ACTIONS
 from billy.systems.nes import controller as C
 
@@ -63,9 +63,11 @@ def test_load_demo_reads_teleop_format(tmp_path):
     assert plan == [Step(90, 130), Step(16, 3)]
 
 
-def test_request_demo_writes_once_and_dedups(tmp_path):
+def test_request_demo_writes_once_and_dedups(tmp_path, monkeypatch):
+    from billy import config
     from billy.stuck_trainer import StuckRecord, StuckRemedy, request_demo
 
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     remedy = StuckRemedy(kind="frame_search", level_label="1-3", death_x=760, goal_x=900)
     record = StuckRecord(level_label="1-3", death_bucket=47, deaths=6, last_death_x=760)
     states = [str(tmp_path / "1_3_d47_x700.state"), str(tmp_path / "1_3_d47_x741.state")]
@@ -77,11 +79,52 @@ def test_request_demo_writes_once_and_dedups(tmp_path):
     assert got == states[1], "should pick the FURTHEST approach state"
     lines = [l for l in req.read_text().splitlines() if l.strip()]
     assert len(lines) == 1
+    inbox = tmp_path / "remix_inbox.txt"
+    assert inbox.is_file()
+    assert "smb 1-3" in inbox.read_text()
 
     # Second call: deduped, no new line.
     request_demo("smb", remedy, record, states, requests_file=req)
     lines = [l for l in req.read_text().splitlines() if l.strip()]
     assert len(lines) == 1
+
+
+def test_trim_demo_start_drops_take_control_wiggles():
+    plan = [Step(2, C.mask_from_names(["left", "B"])),
+            Step(10, C.mask_from_names(["right", "B"]))]
+    trimmed = trim_demo_start(plan)
+    assert trimmed == [plan[1]]
+
+
+def test_trim_demo_start_skips_bare_right_runup_before_jump():
+    """A long right-only cruise before right+B jump is dropped at pit-lip savestates."""
+    plan = [Step(19, C.mask_from_names(["right"])),
+            Step(15, C.mask_from_names(["right", "A", "B"]))]
+    trimmed = trim_demo_start(plan)
+    assert trimmed == [plan[1]]
+
+
+def test_collect_bc_pairs_needs_matching_game_rom():
+    """BC collection dies immediately when the savestate ROM ≠ SectionEnv's game adapter."""
+    from billy.rl.bc import collect_bc_pairs
+    from billy.rl.section_env import SectionEnv
+    from billy.games.smb_lost import SmbLostGame
+
+    demo = "data/rl/demos/smb_lost/1_1_x1040.demo.json"
+    state = "data/rl/demos/smb_lost/1_1_x1040.state"
+    if not os.path.isfile(demo) or not os.path.isfile(state):
+        return
+    from billy.rl.bc import collect_bc_pairs_from_plan
+    plan = load_demo(demo)
+    wrong = SectionEnv(state, level_label="1-1", goal_x=1081, start_x=1030, back_x=950,
+                       randomize_frames=0, landing_waits=2)
+    assert len(collect_bc_pairs_from_plan(wrong, plan)) == 0
+    wrong.close()
+    right = SectionEnv(state, level_label="1-1", goal_x=1081, start_x=1030, back_x=950,
+                       randomize_frames=0, landing_waits=2, game=SmbLostGame)
+    pairs = collect_bc_pairs_from_plan(right, plan)
+    right.close()
+    assert len(pairs) > 0, "smb_lost state must replay on SmbLostGame"
 
 
 def test_request_demo_no_states_is_noop(tmp_path):

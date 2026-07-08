@@ -80,8 +80,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.rl_sections:
         # Lazy import (torch/SB3 only needed with RL). Sub-policies seed micro-search at their
         # registered hazards; the cache/search/reflex loop is otherwise untouched.
-        from billy.rl.section_policy import SectionController, default_smb_sections
-        sections = SectionController(default_smb_sections())
+        from billy.rl.section_policy import SectionController, sections_for_game
+        sections = SectionController(sections_for_game(args.game), game_id=args.game)
     director = Director(game, KnowledgeBase(), use_llm=use_llm, skills=skills,
                         sections=sections, guide=guide)
     if args.rl:

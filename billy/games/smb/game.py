@@ -50,6 +50,34 @@ class SmbGame(Game):
         from .hazard_hooks import SmbHazardHooks
         return SmbHazardHooks()
 
+    def remix_demo_end_ok(self, result, req: dict) -> bool:
+        want = req.get("level_label", "")
+        return not want or result.end_label == want
+
+    def remix_capture_ready(self, session, observe, req: dict):
+        from .capture_util import capture_ready, near_pit, settle_mario
+        label = req.get("level_label", "")
+        x_min, x_max = self.remix_approach_progress_window(req)
+        obs = observe()
+        if obs.dead or obs.level_label != label:
+            return False, obs
+        if not (self.remix_on_ground(obs) and x_min <= obs.progress <= x_max):
+            return False, obs
+        if near_pit(obs):
+            if (obs.level_label == label and obs.raw.on_ground
+                    and x_min <= obs.progress <= x_max and abs(obs.raw.x_speed) <= 40):
+                return True, obs
+            return False, obs
+        ok, _ = settle_mario(session, observe, allow_left=False)
+        obs2 = observe()
+        if ok and capture_ready(obs2, x_min=x_min, x_max=x_max, level_label=label):
+            return True, obs2
+        return False, obs2
+
+    def remix_director_sections(self):
+        from ...rl.section_policy import SectionController, default_smb_sections
+        return SectionController(default_smb_sections())
+
     def boot(self, session: Session) -> Observation:
         """Bring the game to a controllable in-play state and return the first observation.
 

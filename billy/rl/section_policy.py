@@ -39,12 +39,16 @@ class Section:
     model_path: str
     max_steps: int = 64  # cap the closed-loop rollout (each step = one held action)
     landing_waits: int = 0   # post-goal noop waits so airborne crossings land before commit
+    game: str = ""       # cli_name scope; "" = any game (smb_lost needs its own 1-1 band)
+    anchor_x: int = 0    # taught/demo lip — snap here before rollout if Billy arrived early
+    anchor_state: str = ""   # savestate at anchor_x (approach capture)
 
 
 class SectionController:
     """Registry of section sub-policies that seed micro-search with a learned crossing candidate."""
 
-    def __init__(self, sections: list[Section]) -> None:
+    def __init__(self, sections: list[Section], *, game_id: str = "") -> None:
+        self.game_id = game_id
         self.sections: list[tuple[Section, object]] = []
         for sec in sections:
             model = self._load(sec.model_path)
@@ -70,6 +74,8 @@ class SectionController:
         if not on_ground:
             return None
         for sec, model in self.sections:
+            if sec.game and sec.game != self.game_id:
+                continue
             if obs.level_label == sec.label and sec.x_lo <= obs.progress <= sec.x_hi:
                 return sec, model
         return None
@@ -81,10 +87,15 @@ class SectionController:
         from ..knowledge.cache import SolutionCache
 
         plans: list[Plan] = []
-        cache = SolutionCache()
+        cache = SolutionCache(game_id=self.game_id or "smb")
         entry = cache.get(obs.level_key, obs.progress, obs.elevation)
         if entry and entry.reach_after > obs.progress + self._MIN_GAIN:
             plans.append(entry.plan)
+        if sec.anchor_x:
+            taught = cache.get(obs.level_key, sec.anchor_x, obs.elevation)
+            if (taught and taught.reach_after >= sec.goal_x
+                    and taught.plan not in plans):
+                plans.insert(0, taught.plan)
         if _LIFT_CACHE_PLAN.is_file() and "lift" in sec.model_path:
             try:
                 raw = json.loads(_LIFT_CACHE_PLAN.read_text())
@@ -99,6 +110,13 @@ class SectionController:
             for plan in plans:
                 session.restore(snap)
                 cur = obs
+                if (sec.anchor_state and sec.anchor_x
+                        and cur.progress < sec.goal_x
+                        and abs(cur.progress - sec.anchor_x) > 12):
+                    ap = Path(sec.anchor_state)
+                    if ap.is_file():
+                        session.restore(ap.read_bytes())
+                        cur = observe()
                 for step in plan:
                     if cur.dead or cur.progress >= sec.goal_x:
                         break
@@ -145,6 +163,13 @@ class SectionController:
         dying = False
         with session.search_mode():            # rollout frames stay invisible
             cur = obs
+            if (sec.anchor_state and sec.anchor_x
+                    and cur.progress < sec.goal_x
+                    and abs(cur.progress - sec.anchor_x) > 12):
+                ap = Path(sec.anchor_state)
+                if ap.is_file():
+                    session.restore(ap.read_bytes())
+                    cur = observe()
             for _ in range(sec.max_steps):
                 dying = getattr(cur.raw, "is_dying", False)
                 if dying or cur.progress >= sec.goal_x:
@@ -225,3 +250,22 @@ def default_smb_sections() -> list[Section]:
     if os.path.isfile(f"{lift.model_path}.zip") or os.path.isfile(lift.model_path):
         sections.append(lift)
     return sections
+
+
+def default_smb_lost_sections() -> list[Section]:
+    """Lost Levels hazard sub-policies — game-scoped so they don't fire on SMB 1-1."""
+    path = "data/rl/section_smb_lost_1_1"
+    if not (os.path.isfile(f"{path}.zip") or os.path.isfile(path)):
+        return []
+    anchor = "data/rl/states/auto/1_1_d66_x1039.state"
+    if not os.path.isfile(anchor):
+        anchor = "data/rl/demos/smb_lost/1_1_x1039.state"
+    return [Section(label="1-1", x_lo=1000, x_hi=1060, goal_x=1081,
+                      model_path=path, max_steps=120, landing_waits=0, game="smb_lost",
+                      anchor_x=1039, anchor_state=anchor)]
+
+
+def sections_for_game(game_id: str) -> list[Section]:
+    if game_id == "smb_lost":
+        return default_smb_lost_sections()
+    return default_smb_sections()

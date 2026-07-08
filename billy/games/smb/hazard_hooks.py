@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from ...abstractions import Observation, Plan, Step
 from ...hazard_hooks import HazardHooks
@@ -34,6 +35,21 @@ PIT_22_DEATH_HI = 1180
 PIT_22_GOAL_X = 1170      # verified landing must reach past the lip
 PIT_COAST_FRAMES = 150
 PIT_CLEAR_MARGIN = 16
+_GENERIC_PAST_MARGIN = 24
+# Jump-over-pit lines often have no on-ground frames in the last 100px before the lip
+# (Mario takes off early and stays airborne into the pit). 200px captures the last
+# grounded takeoff so stuck/remix can still file a teachable drop-in.
+_GENERIC_APPROACH_LOOKBACK = 200
+
+
+def _platformer_level(level_label: str) -> bool:
+    return bool(re.fullmatch(r"\d+-\d+", level_label))
+
+
+def _generic_approach_band(death_x: int) -> tuple[int, int]:
+    x_lo = max(32, death_x - _GENERIC_APPROACH_LOOKBACK)
+    x_hi = max(x_lo + 16, death_x - 4)
+    return x_lo, x_hi
 
 
 def pit_approach_zone(obs: Observation) -> bool:
@@ -215,6 +231,8 @@ class SmbHazardHooks:
             return LIFT_APPROACH_LO, LIFT_X_HI
         if is_pit_death(level_label, death_x):
             return PIT_22_LO, PIT_22_HI - 32
+        if _platformer_level(level_label):
+            return _generic_approach_band(death_x)
         return None
 
     def approach_snapshot_band(self, obs: Observation) -> tuple[int, int] | None:
@@ -222,6 +240,11 @@ class SmbHazardHooks:
             return LIFT_APPROACH_LO, LIFT_X_HI
         if pit_approach_zone(obs):
             return PIT_22_LO, PIT_22_HI
+        if _platformer_level(obs.level_label):
+            gap = obs.raw.gap_info() if hasattr(obs.raw, "gap_info") else None
+            if gap is not None and gap[0] <= 128:
+                lip_x = obs.progress + gap[0]
+                return _generic_approach_band(lip_x)
         return None
 
     def stuck_remedy(self, level_label: str, death_x: int) -> StuckRemedy | None:
@@ -252,5 +275,16 @@ class SmbHazardHooks:
                 savestate_paths=("data/rl/states/smb_2_2_pit.state",),
                 bank_x_lo=PIT_22_LO,
                 bank_x_hi=PIT_22_HI,
+            )
+        if _platformer_level(level_label):
+            x_lo, x_hi = _generic_approach_band(death_x)
+            return StuckRemedy(
+                kind="frame_search",
+                level_label=level_label,
+                death_x=death_x,
+                goal_x=death_x + _GENERIC_PAST_MARGIN,
+                savestate_paths=(),
+                bank_x_lo=x_lo,
+                bank_x_hi=x_hi,
             )
         return None

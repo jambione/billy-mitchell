@@ -75,6 +75,25 @@ def test_solved_frontier_is_per_level(tmp_path):
     assert c.solved_frontier((1, 1)) == 0             # different level: nothing solved
 
 
+def test_game_scoped_entries_do_not_collide(tmp_path):
+    """smb and smb_lost share level_key (0,0,0) at 1-1 — cache must not cross-pollute."""
+    p = tmp_path / "solutions.jsonl"
+    smb = SolutionCache(path=p, game_id="smb")
+    lost = SolutionCache(path=p, game_id="smb_lost")
+    lk = (0, 0, 0)
+    smb.put(lk, 700, _plan(), reach_after=780)
+    lost.put(lk, 1039, _plan(), reach_after=1082)
+    assert smb.get(lk, 700).reach_after == 780
+    assert smb.get(lk, 1039) is None
+    assert lost.get(lk, 1039).reach_after == 1082
+    assert lost.get(lk, 700) is None
+    # both persist in one file
+    smb3 = SolutionCache(path=p, game_id="smb")
+    lost3 = SolutionCache(path=p, game_id="smb_lost")
+    assert smb3.get(lk, 700).reach_after == 780
+    assert lost3.get(lk, 1039).reach_after == 1082
+
+
 def test_nearby_reaching_finds_high_reach_entry_behind(tmp_path):
     """The demo-rot case: a 2510px demo at bucket 47 must be findable from bucket 51."""
     from billy.knowledge.cache import SolutionCache

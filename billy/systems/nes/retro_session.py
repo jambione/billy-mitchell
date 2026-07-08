@@ -498,6 +498,10 @@ class RetroSession:
         self._refresh_ram()
 
     def close(self) -> None:
+        if self._viewer is not None:
+            with contextlib.suppress(Exception):
+                self._viewer.close()
+            self._viewer = None
         try:
             self.env.close()
         except Exception:

@@ -91,7 +91,8 @@ class Director:
         self.controller = game.system.controller
         self.reflex = game.make_reflex()
         self.kb = kb
-        self.cache = cache if cache is not None else SolutionCache()  # the compounding policy
+        gid = str(getattr(game, "cli_name", "") or "smb")
+        self.cache = cache if cache is not None else SolutionCache(game_id=gid)
         self.tapes = tapes if tapes is not None else TapeLibrary()
         self.routes = RouteGraph()   # discovered level topology (clears/warps/screens)
         # Reads the route graph to plan toward game completion (prefers discovered warps). The
@@ -339,11 +340,16 @@ class Director:
         if cached is not None and self.hooks.stale_cache(obs, cached):
             return None
         if on_ground:
-            # Reachback fires on a MISS and also on a WEAK hit: a 79-frame local hop keyed
-            # right here must not shadow a 2500px demo keyed four tiles back.
-            better = self._reachback(obs, floor=cached.reach_after if cached else 0)
-            if better is not None:
-                cached = better
+            # Inside a hazard section band, keep local keys — reachback would skip a taught
+            # crossing keyed at x≈1040 while replaying a long chain from x≈640.
+            in_section = (self.sections is not None
+                          and self.sections._match(obs) is not None)
+            if not in_section:
+                # Reachback fires on a MISS and also on a WEAK hit: a 79-frame local hop keyed
+                # right here must not shadow a 2500px demo keyed four tiles back.
+                better = self._reachback(obs, floor=cached.reach_after if cached else 0)
+                if better is not None:
+                    cached = better
         return cached
 
     def _reachback(self, obs: Observation, floor: int = 0):
@@ -742,6 +748,10 @@ class Director:
                   "CONTROLLER — your segment banks if it advances (ENTER hands back, "
                   "ESC discards).")
         print(f'  🎤 Billy: "{self.commentator.event_line("start")}"')
+        from .knowledge.demo_seed import seed_demos
+        n = seed_demos(self._game_id(), self.cache, self.game, session=self.session)
+        if n:
+            print(f"[director] seeded {n} verified demo(s) into {self._game_id()} cache")
         return start
 
     # --- cross-session frontier: persist the furthest level-start checkpoint -------------
@@ -896,9 +906,16 @@ class Director:
                         frames += 2
                         continue
 
+            sec_match = (self.sections._match(obs)
+                         if (self.sections is not None and on_ground) else None)
+            plan = None
             if cached is not None and on_ground:
-                plan = cached.plan
-            elif cached is not None or danger or in_special:
+                stale = (sec_match is not None
+                         and cached.reach_after < sec_match[0].goal_x)
+                if not stale:
+                    plan = cached.plan
+            if plan is None and (cached is not None or danger or in_special
+                                 or sec_match is not None):
                 seg = (self.sections.cross(obs, self.session, self._observe)
                        if (self.sections is not None and (on_ground or in_special))
                        else None)
@@ -913,7 +930,7 @@ class Director:
                             expand(obs), obs.progress, early_exit=True,
                             settle=config.SEARCH_HORIZON_FRAMES * 3, level_key=lk)
                     plan = best_plan
-            else:
+            if plan is None:
                 plan = decision.plan
 
             self.session.send_plan(plan)
@@ -1058,7 +1075,7 @@ class Director:
                 if self.hooks.pit_death(obs.level_label, death_at):
                     self._last_pit_death_x = death_at
                 frontier = self.cache.solved_frontier(obs.level_key)
-                self.stuck.note_death(obs.level_label, death_at, frontier)
+                self.stuck.note_death(self._game_id(), obs.level_label, death_at, frontier)
                 self._capture_death_approach(safe_history, obs.level_label, death_at,
                                              self._approach_trail, level_key=obs.level_key)
                 # The key to advancing the frontier: search from a recent safe spot (with runway)
@@ -1268,11 +1285,29 @@ class Director:
             # different-duration plan, shifting everything downstream and snowballing). If a replay
             # genuinely dies, record_fail (below) drops it and it re-searches once: self-healing.
             # Set BILLY_VERIFY_REPLAY=1 to gate replays on a clone-check instead.
+            sec_match = (self.sections._match(obs)
+                         if (self.sections is not None and on_ground) else None)
             do_replay = (cached is not None and on_ground
                          and (not config.VERIFY_REPLAY
                               or self._verify(cached.plan,
                                               max(plan_frames(cached.plan) + 24,
                                                   config.SEARCH_HORIZON_FRAMES))))
+            # A registered section band (e.g. smb_lost 1-1@1040) outranks replaying a cache that
+            # never clears the section goal — otherwise the RL sub-policy never fires.
+            if sec_match is not None and cached is not None:
+                sec, _model = sec_match
+                if cached.reach_after < sec.goal_x:
+                    do_replay = False
+                elif do_replay:
+                    # Stale high-reach entries (learned from a death, wrong ROM era) claim
+                    # reach≈1123 but die at 1062 — verify before replay in the hazard band.
+                    horizon = max(plan_frames(cached.plan) + 24,
+                                  config.SEARCH_HORIZON_FRAMES)
+                    if not self._verify(cached.plan, horizon):
+                        self._drop_solution(lk, obs.progress, y=ey, reason="section_stale")
+                        do_replay = False
+                        cached = self._cached_at(obs, on_ground=on_ground,
+                                                 in_special=in_special)
             routine = False   # True for reflex plans only — safe to cut at a cached bucket
             if do_replay:
                 plan = cached.plan
@@ -1280,7 +1315,7 @@ class Director:
                 self.cache.record_hit(lk, obs.progress, ey)
                 self.ledger.replay()
                 action_note = f"replay {self._label(plan)}"
-            elif cached is not None or danger:
+            elif cached is not None or danger or sec_match is not None:
                 # HAZARD-SCOPED RL: if Billy is at a registered section, let its verified sub-policy
                 # own the crossing — roll it out on a clone and, if it gets through alive, commit and
                 # bank THAT directly (no death-watch scorer, which would penalize the crossing for a
@@ -1416,8 +1451,10 @@ class Director:
             # DURING a long jump — so learn-from-death always has a runway snapshot before a death,
             # even when a single ballistic plan skips many tiles at once.
             replay_x, replay_y = obs.progress, obs.elevation
+            # Replays stop at intermediate cache buckets (e.g. a taught pit crossing at x≈1039)
+            # so a long reachback behind doesn't blow past a hazard-specific demo.
             obs, last_snap_x = self._commit(plan, safe_history, last_snap_x,
-                                            interruptible=routine)
+                                            interruptible=routine or do_replay)
             if obs.dead:
                 if "replay" in action_note:
                     self._drop_solution(lk, replay_x, y=replay_y, reason="replay_fail")
@@ -1504,18 +1541,23 @@ class Director:
         approach_x, snap = best
         out = auto_state_path(level_label, death_x, approach_x)
         if os.path.isfile(out):
-            self.stuck.note_capture(level_label, death_x, out)
+            self.stuck.note_capture(self._game_id(), level_label, death_x, out)
             return
         if write_trail_snapshot(snap, out, level_label=level_label, approach_x=approach_x):
-            self.stuck.note_capture(level_label, death_x, out)
+            self.stuck.note_capture(self._game_id(), level_label, death_x, out)
 
     def _maybe_auto_train(self, after_attempt: int) -> None:
         """Between attempts: extended offline search when deaths cluster at a hazard."""
         if not config.AUTO_TRAIN:
             return
         pending: list[tuple] = []
-        for (_label, _bucket), rec in self.stuck.records.items():
-            stuck = self.stuck.stuck_at(rec.level_label, rec.last_death_x)
+        game_id = self._game_id()
+        for rec in self.stuck.records.values():
+            if rec.game != game_id:
+                continue
+            stuck = self.stuck.stuck_at(
+                game_id, rec.level_label, rec.last_death_x,
+                threshold=self.game.stuck_death_threshold())
             if stuck is not None:
                 remedy = self.hooks.stuck_remedy(rec.level_label, rec.last_death_x)
                 if remedy is not None:
@@ -1535,10 +1577,11 @@ class Director:
             self.session, self._observe, self.cache, self.hooks,
             remedy, record, bank_fn=_bank)
         if result.success:
-            self.stuck.mark_remediated(remedy.level_label, remedy.death_x)
+            self.stuck.mark_remediated(game_id, remedy.level_label, remedy.death_x)
             if result.trained and self.sections is not None:
-                from .rl.section_policy import SectionController, default_smb_sections
-                self.sections = SectionController(default_smb_sections())
+                from .rl.section_policy import SectionController, sections_for_game
+                self.sections = SectionController(sections_for_game(self._game_id()),
+                                                   game_id=self._game_id())
                 print("  [auto-train] reloaded section sub-policies")
         else:
             print("  [auto-train] no verified crossing yet — will retry after more deaths")

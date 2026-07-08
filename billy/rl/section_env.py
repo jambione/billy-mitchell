@@ -26,7 +26,9 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from ..abstractions import Step
+from typing import Callable
+
+from ..abstractions import Game, Step
 from ..games.smb import SmbGame
 from ..systems.nes import controller as C
 from . import features
@@ -59,7 +61,8 @@ class SectionEnv(gym.Env):
                  cross_bonus: float = 150.0, time_penalty: float = 0.01,
                  back_x: int = 80, randomize_frames: int = 36,
                  landing_waits: int = 0,
-                 milestones: tuple[tuple[int, float], ...] = ((300, 20.0), (500, 50.0))) -> None:
+                 milestones: tuple[tuple[int, float], ...] = ((300, 20.0), (500, 50.0)),
+                 game: Game | Callable[[], Game] | None = None) -> None:
         super().__init__()
         os.environ.setdefault("BILLY_HEADLESS", "1")
         paths = [state_path] if isinstance(state_path, str) else list(state_path)
@@ -81,7 +84,12 @@ class SectionEnv(gym.Env):
         self.w = dict(progress=progress_w, death=death_penalty,
                       cross=cross_bonus, time=time_penalty)
 
-        self.game = SmbGame()
+        if game is None:
+            self.game = SmbGame()
+        elif isinstance(game, Game):
+            self.game = game
+        else:
+            self.game = game()
         self.session = self.game.system.connect()
         self._snapshots = []
         for p in paths:
@@ -117,9 +125,15 @@ class SectionEnv(gym.Env):
             n = int(self.np_random.integers(0, self.randomize_frames + 1))
             if n:
                 self.session.send_plan([Step(n, C.mask_from_names(["right", "B"]))])
-        for _ in range(self.landing_waits):
-            self.session.send_plan([Step(4, C.mask_from_names([]))])
         obs = self._observe()
+        # landing_waits are for airborne savestates — idle frames on a ground lip can time out
+        # hazards (e.g. smb_lost 1-1@1040 dies after ~8 noop frames).
+        if self.landing_waits and not getattr(obs.raw, "on_ground", True):
+            for _ in range(self.landing_waits):
+                self.session.send_plan([Step(4, C.mask_from_names([]))])
+                obs = self._observe()
+                if obs.dead or getattr(obs.raw, "on_ground", False):
+                    break
         self._steps = 0
         self._best_x = obs.progress
         self._hit = set()                       # milestone thresholds already paid this episode

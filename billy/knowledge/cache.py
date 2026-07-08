@@ -52,6 +52,7 @@ class CacheEntry:
 class SolutionCache:
     """Position-keyed store of verified surviving action sequences. Persisted to solutions.jsonl."""
     path: Path = field(default_factory=lambda: config.SOLUTIONS_FILE)
+    game_id: str = "smb"   # scope entries per title (smb vs smb_lost share level_key (0,0,0))
     entries: dict[tuple, CacheEntry] = field(default_factory=dict)
     dead_ends: set = field(default_factory=set)   # route nodes proven to lead nowhere (in-memory)
 
@@ -59,9 +60,12 @@ class SolutionCache:
         self.path = Path(self.path)
         self._load()
 
+    def _key(self, level_key: LevelKey, x: int, y: int = 0) -> tuple:
+        return (self.game_id, *bucket_of(level_key, x, y))
+
     # --- lookup / update ----------------------------------------------------------------
     def get(self, level_key: LevelKey, x: int, y: int = 0) -> CacheEntry | None:
-        return self.entries.get(bucket_of(level_key, x, y))
+        return self.entries.get(self._key(level_key, x, y))
 
     def put(self, level_key: LevelKey, x: int, plan: Plan, reach_after: int,
             y: int = 0, force: bool = False) -> CacheEntry:
@@ -70,7 +74,7 @@ class SolutionCache:
         a FRESH survivor was found: the fresh one works from the current state and must replace the
         stale one even at equal reach, otherwise the stale plan is re-searched on every pass and the
         learning never stabilises."""
-        key = bucket_of(level_key, x, y)
+        key = self._key(level_key, x, y)
         steps = [Step(s.frames, s.buttons) for s in plan]
         existing = self.entries.get(key)
         if existing is None or force or reach_after > existing.reach_after:
@@ -88,7 +92,7 @@ class SolutionCache:
 
     def record_fail(self, level_key: LevelKey, x: int, y: int = 0) -> None:
         """A replayed solution didn't survive (context drifted). Drop it so search refreshes it."""
-        key = bucket_of(level_key, x, y)
+        key = self._key(level_key, x, y)
         e = self.entries.get(key)
         if e:
             e.fails += 1
@@ -97,10 +101,10 @@ class SolutionCache:
 
     # --- dead-end memory (route-awareness): a node the stall-breaker proved leads nowhere ------
     def mark_dead(self, level_key: LevelKey, x: int, y: int = 0) -> None:
-        self.dead_ends.add(bucket_of(level_key, x, y))
+        self.dead_ends.add(self._key(level_key, x, y))
 
     def is_dead(self, level_key: LevelKey, x: int, y: int = 0) -> bool:
-        return bucket_of(level_key, x, y) in self.dead_ends
+        return self._key(level_key, x, y) in self.dead_ends
 
     def nearby_reaching(self, level_key: LevelKey, x: int, *, min_gain: int,
                         back_buckets: int = 5) -> CacheEntry | None:
@@ -113,8 +117,11 @@ class SolutionCache:
         lk = tuple(level_key)
         b = x // config.CACHE_BUCKET_PX
         best: CacheEntry | None = None
-        for (k, xb, _yb), e in self.entries.items():
-            if k != lk or not (b - back_buckets <= xb <= b):
+        for key, e in self.entries.items():
+            if key[0] != self.game_id or key[1] != lk:
+                continue
+            xb = key[2]
+            if not (b - back_buckets <= xb <= b):
                 continue
             if e.reach_after < x + min_gain:
                 continue
@@ -125,7 +132,8 @@ class SolutionCache:
     def solved_frontier(self, level_key: LevelKey) -> int:
         """Highest solved progress-bucket (in px) on this level — how far the policy reaches."""
         lk = tuple(level_key)
-        xs = [xb * config.CACHE_BUCKET_PX for (k, xb, yb) in self.entries if k == lk]
+        xs = [key[2] * config.CACHE_BUCKET_PX
+              for key in self.entries if key[0] == self.game_id and key[1] == lk]
         return max(xs) if xs else 0
 
     def __len__(self) -> int:
@@ -140,18 +148,33 @@ class SolutionCache:
             if not line:
                 continue
             d = json.loads(line)
-            key = (tuple(d["level"]), d["bucket"], d.get("yband", 0))
+            game = d.get("game", "smb")   # legacy entries are SMB 1-1
+            if game != self.game_id:
+                continue
+            key = (game, tuple(d["level"]), d["bucket"], d.get("yband", 0))
             plan = [Step(f, b) for f, b in d["plan"]]
             self.entries[key] = CacheEntry(plan=plan, reach_after=d["reach_after"],
                                            hits=d.get("hits", 0), fails=d.get("fails", 0))
 
     def _save(self) -> None:
         config.ensure_dirs()
+        # Shared solutions.jsonl holds every game — keep other titles when one saves.
+        other_lines: list[str] = []
+        if self.path.exists():
+            for line in self.path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                d = json.loads(line)
+                if d.get("game", "smb") != self.game_id:
+                    other_lines.append(line)
         with self.path.open("w") as f:
-            for (level_key, bucket, yband), e in sorted(
-                    self.entries.items(), key=lambda kv: (str(kv[0][0]), kv[0][1], kv[0][2])):
+            for line in other_lines:
+                f.write(line + "\n")
+            for key, e in sorted(self.entries.items(),
+                                 key=lambda kv: (kv[0][0], str(kv[0][1]), kv[0][2], kv[0][3])):
+                _game, level_key, bucket, yband = key
                 f.write(json.dumps({
-                    "level": list(level_key), "bucket": bucket, "yband": yband,
+                    "game": _game, "level": list(level_key), "bucket": bucket, "yband": yband,
                     "plan": [[s.frames, s.buttons] for s in e.plan],
                     "reach_after": e.reach_after, "hits": e.hits, "fails": e.fails,
                 }) + "\n")

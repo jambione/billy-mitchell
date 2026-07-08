@@ -183,7 +183,7 @@ def cmd_play(args: argparse.Namespace) -> int:
         return 1
 
     if args.bank:
-        cache = SolutionCache(path=SOLUTIONS_FILE)
+        cache = SolutionCache(path=SOLUTIONS_FILE, game_id=args.game)
         key = bank_demo(cache, start_obs, plan, result.end_progress)
         print(f"[teleop] BANKED to {SOLUTIONS_FILE} at key {key} (reach {result.end_progress}). "
               f"Next autonomous run will replay it.")
