@@ -108,3 +108,29 @@ def test_nearby_reaching_finds_high_reach_entry_behind(tmp_path):
     # …but not from too far past it, and not when only low-gain entries are near.
     assert cache.nearby_reaching(lk, 950, min_gain=200) is None
     assert cache.nearby_reaching(lk, 816, min_gain=3000) is None
+
+
+def test_nearby_reaching_finds_demo_slightly_ahead(tmp_path):
+    """Remix demos keyed mid-approach (e.g. x≈361) must be visible from a bit earlier."""
+    from billy.knowledge.cache import SolutionCache
+    from billy.abstractions import Step
+    cache = SolutionCache(path=tmp_path / "s.jsonl")
+    lk = (2, 3, 3)
+    cache.put(lk, 361, [Step(10, 0x80)], reach_after=550, y=144)
+    # From x=294 (search thrash spot): demo is ~4 buckets ahead — still in window.
+    e = cache.nearby_reaching(lk, 294, min_gain=8)
+    assert e is not None and e.reach_after == 550
+    plans = cache.nearby_plans(lk, 294, min_gain=8)
+    assert plans and plans[0][0].frames == 10
+
+
+def test_best_in_bucket_any_yband(tmp_path):
+    from billy.knowledge.cache import SolutionCache
+    from billy.abstractions import Step
+    cache = SolutionCache(path=tmp_path / "s.jsonl")
+    lk = (2, 3, 3)
+    cache.put(lk, 361, [Step(4, 1)], reach_after=400, y=100)   # yband lower
+    cache.put(lk, 361, [Step(10, 2)], reach_after=550, y=144)  # yband of the demo
+    # Live land on a different y than the demo — still surface the best plan at this tile.
+    assert cache.get(lk, 361, y=100).reach_after == 400
+    assert cache.best_in_bucket(lk, 361).reach_after == 550

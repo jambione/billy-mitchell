@@ -107,13 +107,14 @@ class SolutionCache:
         return self._key(level_key, x, y) in self.dead_ends
 
     def nearby_reaching(self, level_key: LevelKey, x: int, *, min_gain: int,
-                        back_buckets: int = 5) -> CacheEntry | None:
-        """Best HIGH-REACH entry keyed within a few buckets BEHIND x (any elevation band).
+                        back_buckets: int = 5, ahead_buckets: int = 8) -> CacheEntry | None:
+        """Best HIGH-REACH entry keyed near x (any elevation band).
 
-        Exact keys miss when the player never stands on-ground in the exact 16px tile where a
-        long solution (typically a human demo) was banked. This finds such an entry so the
-        Director can CLONE-VERIFY it from the live state before replaying — the verify is the
-        gate, so this never blind-replays (the exact-replay invariant holds)."""
+        Looks a few buckets behind AND a short distance ahead. Human Remix demos are often
+        keyed mid-approach (e.g. x≈361) while Billy's on-ground decisions land earlier or a
+        tile later — without a small ahead window the demo never enters reachback/search.
+        The Director always clone-VERIFIES before replay, so a wrong-phase ahead entry just
+        fails verify and is blacklisted (exact-replay invariant holds)."""
         lk = tuple(level_key)
         b = x // config.CACHE_BUCKET_PX
         best: CacheEntry | None = None
@@ -121,13 +122,46 @@ class SolutionCache:
             if key[0] != self.game_id or key[1] != lk:
                 continue
             xb = key[2]
-            if not (b - back_buckets <= xb <= b):
+            if not (b - back_buckets <= xb <= b + ahead_buckets):
                 continue
             if e.reach_after < x + min_gain:
                 continue
             if best is None or e.reach_after > best.reach_after:
                 best = e
         return best
+
+    def best_in_bucket(self, level_key: LevelKey, x: int) -> CacheEntry | None:
+        """Highest-reach entry at this progress bucket (any y-band).
+
+        Demos banked at yband 6 are invisible to exact get() when Mario lands on yband 5;
+        this surfaces them so reachback/interrupt can verify from the live state."""
+        lk = tuple(level_key)
+        b = x // config.CACHE_BUCKET_PX
+        best: CacheEntry | None = None
+        for key, e in self.entries.items():
+            if key[0] != self.game_id or key[1] != lk or key[2] != b:
+                continue
+            if best is None or e.reach_after > best.reach_after:
+                best = e
+        return best
+
+    def nearby_plans(self, level_key: LevelKey, x: int, *, min_gain: int,
+                     back_buckets: int = 5, ahead_buckets: int = 8) -> list:
+        """Plans from high-reach nearby entries — search candidates (never blind-replayed)."""
+        lk = tuple(level_key)
+        b = x // config.CACHE_BUCKET_PX
+        scored: list[tuple[int, list]] = []
+        for key, e in self.entries.items():
+            if key[0] != self.game_id or key[1] != lk:
+                continue
+            xb = key[2]
+            if not (b - back_buckets <= xb <= b + ahead_buckets):
+                continue
+            if e.reach_after < x + min_gain:
+                continue
+            scored.append((e.reach_after, list(e.plan)))
+        scored.sort(key=lambda t: -t[0])
+        return [plan for _, plan in scored[:6]]
 
     def solved_frontier(self, level_key: LevelKey) -> int:
         """Highest solved progress-bucket (in px) on this level — how far the policy reaches."""

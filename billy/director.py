@@ -112,6 +112,7 @@ class Director:
         self._learned_buckets: set = set()
         self._reachback_miss: set = set()   # per-attempt: buckets where reachback verify failed
         self._reachback_reported: set = set()   # per-session: spots already reported (quiet logs)
+        self._taught_demo_used: set = set()  # per-attempt: BC demo start-x already warped to
         self._last_pit_death_x: int = 0
         # Optional hazard-scoped RL sub-policies: at a registered section they SEED micro-search with
         # a learned crossing candidate (verified+banked like any solution). None = pure reflex/search.
@@ -257,15 +258,15 @@ class Director:
         mask is identical input frame-for-frame, so behaviour is unchanged — but the dense trail
         guarantees learn-from-death has a runway snapshot before the next death, even mid-jump.
 
-        `interruptible` (ROUTINE reflex plans only — never a replay or a verified search plan,
-        whose banked trajectory must run to its end): stop early when an on-ground chunk crosses
-        a bucket holding a cached solution, so the decision loop can replay it from its exact
-        keyed state. Banks are keyed at on-ground snapshot spots INSIDE commits, which plan-
-        boundary decisions never revisit on a deterministic pass — without this cut a survivor
-        learned from a death sits one bucket off the decision cadence and never fires."""
+        `interruptible` (routine + search; never a verified REPLAY whose banked trajectory must
+        run to its end): stop early when an on-ground chunk crosses a bucket holding a cached
+        solution that reaches further than we already are, so the decision loop can pick up a
+        human Remix demo mid-approach. Without this cut, a weak search plan flies through the
+        demo's key airborne and the taught line never fires."""
         obs = self._observe()
         start_key = obs.level_key
         start_bucket = bucket_of(obs.level_key, obs.progress, obs.elevation)
+        start_progress = obs.progress
         executed: list[Step] = []
         for step in plan:
             remaining = step.frames
@@ -287,12 +288,13 @@ class Director:
                         append_plan(self._tape_record, executed)
                     return obs, last_snap_x
                 if (interruptible and getattr(obs.raw, "on_ground", True)
-                        and bucket_of(obs.level_key, obs.progress, obs.elevation) != start_bucket
-                        and self.cache.get(obs.level_key, obs.progress,
-                                           obs.elevation) is not None):
-                    if record_tape and executed:
-                        append_plan(self._tape_record, executed)
-                    return obs, last_snap_x
+                        and bucket_of(obs.level_key, obs.progress, obs.elevation) != start_bucket):
+                    hit = (self.cache.get(obs.level_key, obs.progress, obs.elevation)
+                           or self.cache.best_in_bucket(obs.level_key, obs.progress))
+                    if hit is not None and hit.reach_after > max(start_progress, obs.progress) + self._MIN_PROGRESS_PX:
+                        if record_tape and executed:
+                            append_plan(self._tape_record, executed)
+                        return obs, last_snap_x
                 # Only snapshot ON-GROUND states: a cached solution keyed here is then replayed
                 # from the SAME reproducible state next pass (an airborne snapshot wouldn't match
                 # Mario's exact mid-jump state on the next approach, so its replay would drift).
@@ -337,6 +339,10 @@ class Director:
         if not (on_ground or in_special):
             return None
         cached = self.cache.get(obs.level_key, obs.progress, obs.elevation)
+        # Exact y-band miss: a Remix demo banked at yband 6 is invisible when Mario lands on
+        # yband 5 at the same tile — surface the best entry in this progress bucket.
+        if cached is None:
+            cached = self.cache.best_in_bucket(obs.level_key, obs.progress)
         if cached is not None and self.hooks.stale_cache(obs, cached):
             return None
         if on_ground:
@@ -345,32 +351,42 @@ class Director:
             in_section = (self.sections is not None
                           and self.sections._match(obs) is not None)
             if not in_section:
-                # Reachback fires on a MISS and also on a WEAK hit: a 79-frame local hop keyed
-                # right here must not shadow a 2500px demo keyed four tiles back.
+                # Reachback fires on a MISS and also on a WEAK hit: a local hop to 518 must not
+                # shadow a human demo to 550 keyed a few tiles ahead/behind.
                 better = self._reachback(obs, floor=cached.reach_after if cached else 0)
                 if better is not None:
                     cached = better
         return cached
 
     def _reachback(self, obs: Observation, floor: int = 0):
-        """Clone-verify a HIGH-reach entry banked a few tiles behind (or shadowed here).
+        """Clone-verify a HIGH-reach entry banked near here (behind, same tile, or slightly ahead).
 
-        The killer case: a human demo reaching thousands of px sits at bucket 47, but the
-        live run's on-ground moments land at bucket 51 — the exact key never hits and the
-        demo rots. Reachback finds it and VERIFIES it from the live state (one invisible
-        rollout); only a proven survive+advance gets replayed, so the exact-replay invariant
-        holds. Failed verifies are blacklisted per attempt (no re-verify spam)."""
+        The killer case: a human demo reaching past a wall sits at x≈361, but Billy's decision
+        cadence lands at 294 with a weak search hop to 518 — the demo never fires because
+        exact-key miss + REACHBACK_MIN_GAIN over the local floor rejects a +32 improvement.
+        Reachback finds nearby high-reach entries and VERIFIES from the live state; only a
+        proven survive+advance is replayed. Failed verifies are blacklisted per attempt."""
         if obs.progress < 16:
             return None
         bkey = bucket_of(obs.level_key, obs.progress, obs.elevation)
         if bkey in self._reachback_miss:
             return None
-        cand = self.cache.nearby_reaching(obs.level_key, obs.progress,
-                                          min_gain=config.REACHBACK_MIN_GAIN)
-        if cand is None or cand.reach_after < floor + config.REACHBACK_MIN_GAIN:
-            return None   # nothing meaningfully beyond what the exact hit already reaches
+        # When we already have a local hit, any strictly better reach is worth verifying
+        # (human demos often only beat a thrashing search by tens of px, not 200+).
+        # On a pure miss, require the usual min-gain from current progress.
+        if floor > obs.progress:
+            min_gain = self._MIN_PROGRESS_PX
+            cand = self.cache.nearby_reaching(obs.level_key, obs.progress, min_gain=min_gain)
+            if cand is None or cand.reach_after <= floor:
+                return None
+        else:
+            cand = self.cache.nearby_reaching(obs.level_key, obs.progress,
+                                              min_gain=config.REACHBACK_MIN_GAIN)
+            if cand is None:
+                return None
         survived, reach = self._evaluate(cand.plan, settle=config.SEARCH_HORIZON_FRAMES)
-        if survived and reach > obs.progress + config.REACHBACK_MIN_GAIN // 2:
+        need = obs.progress + max(self._MIN_PROGRESS_PX, config.REACHBACK_MIN_GAIN // 4)
+        if survived and reach > max(need, floor):
             print(f'  🎯 reachback: verified a banked long solution from '
                   f'{obs.level_label}@{obs.progress} (reach {reach}) — replaying')
             return cand
@@ -383,12 +399,14 @@ class Director:
         return None
 
     def _candidates(self, obs: Observation) -> list[Plan]:
-        """Search candidate set on a cache MISS: the reflex's hand-picked spread, PLUS the
-        instantiated plans of the situationally-relevant transferable Skills. Skills only widen the
-        *search* set (never blind-replay), so on a new game with an empty cache Billy starts from
-        sensible carried-forward tactics instead of a cold search. Requires a PhysicsProfile-bearing
-        reflex (the shared platformer policy); otherwise just the reflex spread."""
-        cands = list(self.reflex.danger_candidates(obs))
+        """Search candidate set on a cache MISS: banked nearby plans FIRST (Remix demos), then
+        the reflex spread + transferable Skills. Skills/demos only widen the *search* set
+        (never blind-replay) — micro-search still verifies on a clone before banking."""
+        cands: list[Plan] = []
+        # Prefer human/taught lines near this progress — try before cold reflex candidates.
+        cands.extend(self.cache.nearby_plans(
+            obs.level_key, obs.progress, min_gain=self._MIN_PROGRESS_PX))
+        cands.extend(self.reflex.danger_candidates(obs))
         cands.extend(self.hooks.extra_candidates(obs))
         profile = getattr(self.reflex, "p", None)
         if profile is not None and len(self.skills):
@@ -720,6 +738,65 @@ class Director:
             else:
                 self._tape_replay[0] = Step(step.frames - take, step.buttons)
         return chunk or None
+
+    def _try_taught_demo(self, obs: Observation) -> Plan | None:
+        """Handoff a Remix/teleop BC demo: warp to its entry savestate and return its plan.
+
+        Mid-level human demos cannot be position-cache replayed when moving hazards have
+        drifted phase — the plan only reproduces from the exact taught state (same carrier
+        as entry-anchored tapes). When Billy is on-ground near a banked demo's start x, we
+        restore that state (one deterministic warp) and commit the verified plan. One use
+        per demo start-x per attempt so a failure cannot loop."""
+        if not getattr(obs.raw, "on_ground", True) or obs.progress < 16:
+            return None
+        game_id = self._game_id()
+        demo_dir = config.DATA_DIR / "rl" / "demos" / game_id
+        if not demo_dir.is_dir():
+            return None
+        slug = str(obs.level_label).replace("-", "_")
+        # Prefer the nearest demo whose start is within approach range of live progress.
+        best: tuple[int, Path, Path, int] | None = None  # (|dx|, demo, state, demo_x)
+        for demo_path in demo_dir.glob(f"{slug}_x*.demo.json"):
+            stem = demo_path.name.replace(".demo.json", "")
+            try:
+                demo_x = int(stem.rsplit("_x", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            state_path = demo_path.with_name(stem + ".state")
+            if not state_path.is_file():
+                continue
+            if demo_x in self._taught_demo_used:
+                continue
+            # Window: a bit before the teach point through slightly past it.
+            if not (demo_x - 100 <= obs.progress <= demo_x + 32):
+                continue
+            dx = abs(obs.progress - demo_x)
+            if best is None or dx < best[0]:
+                best = (dx, demo_path, state_path, demo_x)
+        if best is None:
+            return None
+        _, demo_path, state_path, demo_x = best
+        try:
+            import json as _json
+            plan = [Step(int(f), int(b)) for f, b in _json.loads(demo_path.read_text())["steps"]]
+            start_state = state_path.read_bytes()
+        except (OSError, KeyError, TypeError, ValueError):
+            return None
+        if not plan:
+            return None
+        from .teleop import verify_demo
+        # Verify from the taught state (not live) — phase-accurate gate.
+        result = verify_demo(self.session, self.game, start_state, plan,
+                             min_progress=self._MIN_PROGRESS_PX)
+        if not result.bankable:
+            self._taught_demo_used.add(demo_x)  # don't thrash a broken seed
+            return None
+        # LIVE warp to the taught moment, then the main loop commits the plan.
+        self.session.restore(start_state)
+        self._taught_demo_used.add(demo_x)
+        print(f'  🎬 taught-demo: {obs.level_label}@x{demo_x} — warping to your line '
+              f'and replaying (reach {result.end_progress})')
+        return plan
 
     def _tape_finish_level(self, frontier: int, *, cleared: bool,
                            anchor: bool = False) -> None:
@@ -1064,6 +1141,7 @@ class Director:
         last_snap_x = obs.progress
         self._learned_buckets.clear()
         self._reachback_miss.clear()
+        self._taught_demo_used.clear()
         obs = self._tape_begin_level(obs)
         tape_frontier = obs.progress
         self._log_objective(obs)
@@ -1116,6 +1194,7 @@ class Director:
                 safe_history.append((obs.progress, obs.elevation, obs.level_key,
                                      self.session.clone_state()))
                 self._learned_buckets.clear()
+                self._taught_demo_used.clear()
                 self._last_pit_death_x = 0
                 obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
@@ -1287,6 +1366,9 @@ class Director:
             # Set BILLY_VERIFY_REPLAY=1 to gate replays on a clone-check instead.
             sec_match = (self.sections._match(obs)
                          if (self.sections is not None and on_ground) else None)
+            # Remix BC demos (mid-level teaches) win over position-cache: moving hazards only
+            # reproduce from the taught entry savestate, so we warp then replay.
+            taught_plan = self._try_taught_demo(obs) if on_ground else None
             do_replay = (cached is not None and on_ground
                          and (not config.VERIFY_REPLAY
                               or self._verify(cached.plan,
@@ -1294,7 +1376,7 @@ class Director:
                                                   config.SEARCH_HORIZON_FRAMES))))
             # A registered section band (e.g. smb_lost 1-1@1040) outranks replaying a cache that
             # never clears the section goal — otherwise the RL sub-policy never fires.
-            if sec_match is not None and cached is not None:
+            if taught_plan is None and sec_match is not None and cached is not None:
                 sec, _model = sec_match
                 if cached.reach_after < sec.goal_x:
                     do_replay = False
@@ -1309,7 +1391,15 @@ class Director:
                         cached = self._cached_at(obs, on_ground=on_ground,
                                                  in_special=in_special)
             routine = False   # True for reflex plans only — safe to cut at a cached bucket
-            if do_replay:
+            if taught_plan is not None:
+                plan = taught_plan
+                do_replay = True          # non-interruptible commit of the taught line
+                replay_calls += 1
+                self.ledger.replay()
+                action_note = f"taught-demo {self._label(plan)}"
+                obs = self._observe()     # after warp to demo entry state
+                lk, ey = obs.level_key, obs.elevation
+            elif do_replay:
                 plan = cached.plan
                 replay_calls += 1
                 self.cache.record_hit(lk, obs.progress, ey)
@@ -1453,8 +1543,10 @@ class Director:
             replay_x, replay_y = obs.progress, obs.elevation
             # Replays stop at intermediate cache buckets (e.g. a taught pit crossing at x≈1039)
             # so a long reachback behind doesn't blow past a hazard-specific demo.
+            # Search is interruptible too: a weak hop must not fly through a Remix demo key.
+            # Replays stay non-cut so a verified banked trajectory runs to completion.
             obs, last_snap_x = self._commit(plan, safe_history, last_snap_x,
-                                            interruptible=routine or do_replay)
+                                            interruptible=(not do_replay))
             if obs.dead:
                 if "replay" in action_note:
                     self._drop_solution(lk, replay_x, y=replay_y, reason="replay_fail")
