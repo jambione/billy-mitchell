@@ -249,10 +249,14 @@ class Game(ABC):
         return True
 
     def remix_approach_progress_window(self, req: dict) -> tuple[int, int]:
-        """Progress band [lo, hi] to snapshot for a teachable drop-in just before the wall."""
+        """Progress band [lo, hi] for a teachable drop-in just before the wall.
+
+        Leave runway before the death (not on the cliff lip) so the human is not dropped
+        into certain death or full-sprint into a pit."""
         death_x = int(req.get("death_x", 0))
-        x_min = max(32, death_x - 100)
-        x_max = max(x_min + 16, death_x - 4)   # right up to the lip (settle stops coast auto-win)
+        x_min = max(32, death_x - 120)
+        # Stop ~2 tiles short of the death — lip snapshots coast/fall into the hazard.
+        x_max = max(x_min + 16, death_x - 32)
         return x_min, x_max
 
     def remix_on_ground(self, obs: "Observation") -> bool:
@@ -262,6 +266,28 @@ class Game(ABC):
     def remix_dropin_level_ok(self, obs: "Observation", req: dict) -> bool:
         """Drop-in must be on the taught level/screen."""
         return obs.level_label == req.get("level_label", "")
+
+    def remix_dropin_is_safe(self, obs: "Observation", req: dict) -> bool:
+        """Human teach drop-in: solid ground, controlled speed, not already past/at the wall."""
+        if obs.dead or not self.remix_on_ground(obs):
+            return False
+        if not self.remix_dropin_level_ok(obs, req):
+            return False
+        death_x = int(req.get("death_x", 0))
+        if death_x and obs.progress >= death_x - 16:
+            return False  # too close — certain death / auto-coast past the teach
+        vx = abs(int(getattr(obs.raw, "x_speed", 0) or 0))
+        if vx > 6:
+            return False  # sprinting into the hazard
+        return True
+
+    def remix_stabilize_dropin(self, session: "Session", observe, req: dict
+                               ) -> tuple[bool, "Observation"]:
+        """After restore: bleed momentum so the human is not launched into a cliff.
+
+        Default: require already-safe on-ground. Platformers override with settle + back off."""
+        obs = observe()
+        return self.remix_dropin_is_safe(obs, req), obs
 
     def remix_capture_ready(self, session: "Session", observe, req: dict
                             ) -> tuple[bool, "Observation"]:
@@ -273,6 +299,8 @@ class Game(ABC):
             return False, obs
         x_min, x_max = self.remix_approach_progress_window(req)
         if not (x_min <= obs.progress <= x_max):
+            return False, obs
+        if not self.remix_dropin_is_safe(obs, req):
             return False, obs
         return True, obs
 

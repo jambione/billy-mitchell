@@ -212,6 +212,7 @@ def _auto_states_for_level(level_label: str) -> list[str]:
 
 def _state_for_wall(game: str, level_label: str, record: dict) -> str | None:
     """Best drop-in savestate for teaching a stuck wall (auto-capture → teleop → checkpoint)."""
+    death_x = int(record.get("last_death_x") or record.get("death_x") or 0)
     paths = _auto_states_for_level(level_label)
     if not paths:
         from billy.stuck_trainer import StuckRecord, collect_auto_states
@@ -219,8 +220,9 @@ def _state_for_wall(game: str, level_label: str, record: dict) -> str | None:
                            death_bucket=int(record.get("death_bucket", 0)),
                            captured_states=list(record.get("captured_states") or []))
         paths = collect_auto_states(level_label, stub)
-    if paths:
-        return max(paths, key=_approach_x_from_path)
+    safe = _pick_safe_approach_path(level_label, death_x, paths)
+    if safe:
+        return safe
 
     if game == "zelda":
         m = re.search(r"#(\d+)", level_label)
@@ -400,27 +402,95 @@ def _stuck_threshold(game_key: str) -> int:
     return _game(game_key).stuck_death_threshold()
 
 
+def _pick_safe_approach_path(level_label: str, death_x: int,
+                             paths: list[str] | None = None) -> str | None:
+    """Choose an auto-state BEFORE the wall with runway — never the furthest past/at the lip.
+
+    Ideal: ~4 tiles before death_x (solid ground, not mid-air approach into the pit).
+    Rejects states at/past the wall (certain death drop-ins)."""
+    paths = paths if paths is not None else _auto_states_for_level(level_label)
+    if not paths or death_x <= 0:
+        return max(paths, key=_approach_x_from_path) if paths else None
+    # Prefer further back than the lip — mid-approach snaps are often airborne into the pit.
+    ideal = max(32, death_x - 80)
+    hard_max = death_x - 56  # never closer than ~3.5 tiles (x275 was still a death dive @331)
+    scored: list[tuple[int, str]] = []
+    for p in paths:
+        x = _approach_x_from_path(p)
+        if x <= 0:
+            continue
+        if x >= hard_max:
+            continue
+        if x < death_x - 200:
+            continue
+        scored.append((abs(x - ideal), p))
+    if scored:
+        scored.sort(key=lambda t: t[0])
+        return scored[0][1]
+    # Fallback: any state still well before the wall
+    before = [(x, p) for p in paths
+              if (x := _approach_x_from_path(p)) > 0 and x < hard_max]
+    if before:
+        return min(before, key=lambda t: abs(t[0] - ideal))[1]
+    return None
+
+
+def _safe_approach_candidates(level_label: str, death_x: int,
+                              preferred: str | None = None) -> list[str]:
+    """Ordered list of approach paths to try (preferred first, then safer auto-states)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    hard_max = death_x - 56 if death_x > 0 else 10**9
+
+    def add(p: str | None) -> None:
+        if not p or p in seen:
+            return
+        path = Path(p)
+        if not path.is_file():
+            return
+        x = _approach_x_from_path(p)
+        if x > 0 and death_x > 0 and x >= hard_max:
+            return
+        seen.add(p)
+        out.append(p)
+    add(preferred)
+    # All safe auto-states, nearest ideal first (further-back solid ground first)
+    paths = _auto_states_for_level(level_label)
+    ideal = max(32, death_x - 80) if death_x else 0
+    ranked = sorted(
+        [(abs(_approach_x_from_path(p) - ideal), p) for p in paths
+         if _approach_x_from_path(p) > 0 and (
+             death_x <= 0 or _approach_x_from_path(p) < hard_max)],
+        key=lambda t: t[0])
+    for _, p in ranked:
+        add(p)
+    return out
+
+
 def _prepare_approach(req: dict, game) -> str | None:
     """Headless capture just-before-the-wall using Billy's cache from his frontier."""
     label = req.get("level_label", "")
     death_x = int(req.get("death_x", 0))
     slug = label.replace("-", "_")
     auto_dir = config.DATA_DIR / "rl" / "states" / "auto"
-    matches = _auto_states_for_level(label)
-    if matches:
-        return max(matches, key=_approach_x_from_path)
+    safe = _pick_safe_approach_path(label, death_x)
+    if safe:
+        return safe
 
     bucket = death_x // config.CACHE_BUCKET_PX
     capture_out = str(auto_dir / f"{slug}_d{bucket}_remix.state")
     if Path(capture_out).is_file():
-        return capture_out
+        # Only reuse if filename x is safely before the wall
+        cx = _approach_x_from_path(capture_out)
+        if cx <= 0 or cx < death_x - 16:
+            return capture_out
 
     if not game.remix_needs_approach_capture(req):
         return None
 
     x_min, x_max = game.remix_approach_progress_window(req)
-    print(f"     … driving Billy to {label} for a proper drop-in "
-          f"(headless from his frontier — may take 1–2 min)…")
+    print(f"     … driving Billy to {label} for a safe drop-in "
+          f"(solid ground before x≈{death_x}, not the cliff)…")
     os.environ["BILLY_HEADLESS"] = "1"
     os.environ.setdefault("BILLY_TURBO", "1")
     from billy.director import Director
@@ -570,41 +640,57 @@ def _open_teach_session(game_key: str):
 
 
 def _approach_needs_live_drive(req: dict) -> bool:
-    """True only when approach capture would open a headless Director (no cache hit)."""
+    """True only when approach capture would open a headless Director (no safe cache hit)."""
     game = _game(req["game"])
     if not game.remix_needs_approach_capture(req):
         return False
+    death_x = int(req.get("death_x", 0))
+    label = req.get("level_label", "")
     state = Path(str(req.get("state", "")))
     if state.is_file() and _is_captured_approach(state):
+        x = _approach_x_from_path(str(state))
+        if x <= 0 or x < death_x - 16:
+            return False  # usable (or unknown x on remix snap)
+    if _pick_safe_approach_path(label, death_x):
         return False
-    label = req.get("level_label", "")
-    if _auto_states_for_level(label):
-        return False
-    death_x = int(req.get("death_x", 0))
     slug = label.replace("-", "_")
     bucket = death_x // config.CACHE_BUCKET_PX
     capture_out = config.DATA_DIR / "rl" / "states" / "auto" / f"{slug}_d{bucket}_remix.state"
-    return not capture_out.is_file()
+    if capture_out.is_file():
+        cx = _approach_x_from_path(str(capture_out))
+        if cx <= 0 or cx < death_x - 16:
+            return False
+    return True
 
 
 def _attach_approach_state(req: dict) -> dict | None:
-    """Return a copy of `req` with approach drop-in attached when the game needs one.
+    """Return a copy of `req` with a SAFE approach drop-in attached when the game needs one.
 
-    Runs headless Director capture if no cached approach exists — MUST be called with no other
-    emulator open (stable-retro: one instance per process). Returns None if capture is required
-    and fails."""
+    Rejects states at/past the wall. Runs headless capture if nothing safe is on disk.
+    MUST be called with no other emulator open. Returns None if capture is required and fails."""
     out = dict(req)
     game_key = out["game"]
     game = _game(game_key)
     game.cli_name = game_key
     if not game.remix_needs_approach_capture(out):
         return out
-    if Path(str(out.get("state", ""))).is_file() and _is_captured_approach(Path(out["state"])):
+    death_x = int(out.get("death_x", 0))
+    label = out.get("level_label", "")
+    state = Path(str(out.get("state", "")))
+    if state.is_file() and _is_captured_approach(state):
+        x = _approach_x_from_path(str(state))
+        # Keep only if safely before the wall (or unparseable x on a dedicated remix snap).
+        if x <= 0 or x < death_x - 16:
+            return out
+        # State points past/at the wall — fall through to pick a safe one.
+    safe = _pick_safe_approach_path(label, death_x)
+    if safe:
+        out["state"] = safe
         return out
     approach = _prepare_approach(out, game)
     if not approach:
-        print(f"\n  ⚠  {game_key} {out.get('level_label')}: no approach state at the "
-              f"real wall — skipping (won't drop you in the wrong level).")
+        print(f"\n  ⚠  {game_key} {label}: no SAFE approach before x≈{death_x} — "
+              f"skipping (won't drop you on the cliff).")
         return None
     out["state"] = approach
     return out
@@ -642,13 +728,17 @@ def _teach_wall(req: dict, *, session=None) -> bool:
             req["state"] = approach
     death_x = int(req.get("death_x", 0))
     label = req.get("level_label", "?")
-    dropin, source = _dropin_state(req)
     goal = game.remix_goal(req)
     wall_at = game.remix_wall_at(req)
     print(f"\n{'═' * 64}\n  ▶  {game_key} · {label}  —  Billy's wall at {wall_at} "
           f"({req.get('deaths', '?')} deaths)\n     GOAL: {goal} — "
-          f"clear it and Billy learns the line.  (drop-in: {source})\n{'═' * 64}")
-    if dropin is None:
+          f"clear it and Billy learns the line.\n{'═' * 64}")
+    # Try preferred req state, then other safe auto-states, then level-start checkpoint.
+    candidates = _safe_approach_candidates(label, death_x, str(req.get("state", "") or ""))
+    ck = config.CHECKPOINTS_DIR / game_key / (label.replace("-", "_") + ".state")
+    if ck.is_file():
+        candidates.append(str(ck))
+    if not candidates:
         print("     ⚠  no drop-in state available — skipping.")
         return False
     if owns_session:
@@ -656,13 +746,33 @@ def _teach_wall(req: dict, *, session=None) -> bool:
     try:
         if owns_session:
             session.wait_until_live()
-        session.restore(dropin)
-        drop_obs = _observe(session, game)
-        if not game.remix_dropin_level_ok(drop_obs, req):
-            print(f"     ⚠  drop-in is {drop_obs.level_label}, not {label} — skipping.")
+        dropin: bytes | None = None
+        source = ""
+        drop_obs = None
+        for cand in candidates:
+            raw = Path(cand).read_bytes()
+            session.restore(raw)
+            obs0 = _observe(session, game)
+            if not game.remix_dropin_level_ok(obs0, req):
+                continue
+            ok_safe, obs1 = game.remix_stabilize_dropin(
+                session, lambda: _observe(session, game), req)
+            if not ok_safe:
+                print(f"     · skip drop-in {Path(cand).name} "
+                      f"(x={obs1.progress}, ground={game.remix_on_ground(obs1)} — unsafe)")
+                continue
+            if not game.remix_dropin_ok(obs1, req):
+                continue
+            dropin = session.clone_state()  # post-stabilize snap (settled, not raw file)
+            source = ("start of " + label if "checkpoints" in cand
+                      else f"safe approach x={obs1.progress}")
+            drop_obs = obs1
+            print(f"     📍 drop-in ready: {obs1.level_label} x={obs1.progress} "
+                  f"({source}) — settled on solid ground")
+            break
+        if dropin is None or drop_obs is None:
+            print("     ⚠  no SAFE drop-in (all candidates mid-air / cliff) — skipping.")
             return False
-        print(f"     📍 drop-in confirmed: {drop_obs.level_label} "
-              f"progress={drop_obs.progress}")
         if not session.ensure_viewer():
             print("     ⚠  no game window (headless?). The remix needs a window to play in.")
             return False
@@ -670,9 +780,8 @@ def _teach_wall(req: dict, *, session=None) -> bool:
         print("     🎮 controller ready." if pad
               else "     ⌨  keyboard (arrows / Z / X / Tab).")
         print("     👉 Click the GAME window, then press an arrow (or Z) to take control.")
-        if not game.remix_dropin_ok(drop_obs, req):
-            print("     ⚠  drop-in already past the wall — skipping.")
-            return False
+        print("     💡 You should be STOPPED on solid ground with runway — not mid-air or "
+              "sprinting into a pit.")
 
         # Bank EVERY clean crossing in the try budget, not just the first. A second, faster or
         # further line replaces the banked one (cache force=True / tape frontier) — Billy keeps
@@ -683,6 +792,7 @@ def _teach_wall(req: dict, *, session=None) -> bool:
             if t > 1:
                 print(f"     try {t}/3 — land a cleaner line (Billy keeps the best), "
                       f"or step away to move on." if banked else f"     try {t}/3…")
+            # Every try: restore the stabilized snap (already safe).
             session.restore(dropin)
             outcome, secs, plan, start_state, start_obs = _play_wall(session, game, req)
             if outcome == "win":

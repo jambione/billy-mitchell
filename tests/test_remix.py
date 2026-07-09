@@ -80,6 +80,35 @@ def test_dropin_prefers_the_level_checkpoint(tmp_path, monkeypatch):
     assert data == b"LEVELSTART" and "start of 1-3" in source
 
 
+def test_pick_safe_approach_rejects_states_past_the_wall():
+    """Furthest auto-state is often past the death — never drop the human there."""
+    paths = [
+        "/data/auto/4_2_d18_x148.state",
+        "/data/auto/4_2_d18_x232.state",
+        "/data/auto/4_2_d59_x875.state",  # past wall @331
+    ]
+    picked = remix._pick_safe_approach_path("4-2", death_x=331, paths=paths)
+    assert picked is not None and "x232" in picked
+    assert "x875" not in picked
+
+
+def test_pick_safe_approach_prefers_runway_not_lip():
+    paths = [
+        "/data/auto/4_2_d20_x320.state",  # too close to 331
+        "/data/auto/4_2_d18_x232.state",  # good runway
+        "/data/auto/4_2_d18_x148.state",
+    ]
+    picked = remix._pick_safe_approach_path("4-2", death_x=331, paths=paths)
+    assert picked is not None and "x232" in picked
+    # Near-lip / mid-approach snaps (x275+) rejected when further-back solid exists
+    paths2 = [
+        "/data/auto/4_2_d20_x275.state",
+        "/data/auto/4_2_d18_x232.state",
+    ]
+    picked2 = remix._pick_safe_approach_path("4-2", death_x=331, paths=paths2)
+    assert picked2 is not None and "x232" in picked2
+
+
 def test_dropin_prefers_remix_approach_over_level_checkpoint(tmp_path, monkeypatch):
     ck = tmp_path / "checkpoints" / "smb"
     ck.mkdir(parents=True)
@@ -452,11 +481,12 @@ def test_anchor_is_level_entry_gates_by_game_and_source():
 def test_prepare_approach_reuses_existing_auto_state(tmp_path, monkeypatch):
     auto = tmp_path / "rl" / "states" / "auto"
     auto.mkdir(parents=True)
-    (auto / "3_4_d21_x500.state").write_bytes(b"APPROACH")
+    # Must be well before death_x (hard_max = death - 56) so it's a safe teach drop-in
+    (auto / "3_4_d21_x420.state").write_bytes(b"APPROACH")
     monkeypatch.setattr(remix.config, "DATA_DIR", tmp_path)
     from billy.games.smb.game import SmbGame
     req = {"level_label": "3-4", "death_x": 525}
-    assert remix._prepare_approach(req, SmbGame()) == str(auto / "3_4_d21_x500.state")
+    assert remix._prepare_approach(req, SmbGame()) == str(auto / "3_4_d21_x420.state")
 
 
 def test_fake_game_joins_remix_via_game_hooks_only():

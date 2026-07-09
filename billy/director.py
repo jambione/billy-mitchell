@@ -744,9 +744,11 @@ class Director:
 
         Mid-level human demos cannot be position-cache replayed when moving hazards have
         drifted phase — the plan only reproduces from the exact taught state (same carrier
-        as entry-anchored tapes). When Billy is on-ground near a banked demo's start x, we
-        restore that state (one deterministic warp) and commit the verified plan. One use
-        per demo start-x per attempt so a failure cannot loop."""
+        as entry-anchored tapes). When Billy is on-ground and a banked demo still reaches
+        PAST him, restore that state and commit the verified plan.
+
+        Prefer the demo that reaches FURTHEST (not merely the nearest start-x): a short
+        235→315 line must not shadow a longer 40→355 teach that clears the next pit."""
         if not getattr(obs.raw, "on_ground", True) or obs.progress < 16:
             return None
         game_id = self._game_id()
@@ -754,8 +756,11 @@ class Director:
         if not demo_dir.is_dir():
             return None
         slug = str(obs.level_label).replace("-", "_")
-        # Prefer the nearest demo whose start is within approach range of live progress.
-        best: tuple[int, Path, Path, int] | None = None  # (|dx|, demo, state, demo_x)
+        from .teleop import verify_demo
+        import json as _json
+
+        # (end_progress, -start_x, plan, state, demo_x) — max reach wins; earlier start ties break
+        best: tuple[int, int, list, bytes, int] | None = None
         for demo_path in demo_dir.glob(f"{slug}_x*.demo.json"):
             stem = demo_path.name.replace(".demo.json", "")
             try:
@@ -763,39 +768,39 @@ class Director:
             except (IndexError, ValueError):
                 continue
             state_path = demo_path.with_name(stem + ".state")
-            if not state_path.is_file():
+            if not state_path.is_file() or demo_x in self._taught_demo_used:
                 continue
-            if demo_x in self._taught_demo_used:
+            # Too early to care about this teach, or already past where it helps.
+            if obs.progress < demo_x - 120:
                 continue
-            # Window: a bit before the teach point through slightly past it.
-            if not (demo_x - 100 <= obs.progress <= demo_x + 32):
+            try:
+                plan = [Step(int(f), int(b))
+                        for f, b in _json.loads(demo_path.read_text())["steps"]]
+                start_state = state_path.read_bytes()
+            except (OSError, KeyError, TypeError, ValueError):
                 continue
-            dx = abs(obs.progress - demo_x)
-            if best is None or dx < best[0]:
-                best = (dx, demo_path, state_path, demo_x)
+            if not plan:
+                continue
+            result = verify_demo(self.session, self.game, start_state, plan,
+                                 min_progress=self._MIN_PROGRESS_PX)
+            if not result.bankable:
+                self._taught_demo_used.add(demo_x)
+                continue
+            # Only useful if it gets meaningfully past where we already are.
+            if result.end_progress < obs.progress + self._MIN_PROGRESS_PX:
+                continue
+            if obs.progress > result.end_progress - 16:
+                continue
+            cand = (result.end_progress, -demo_x, plan, start_state, demo_x)
+            if best is None or cand[:2] > best[:2]:
+                best = cand
         if best is None:
             return None
-        _, demo_path, state_path, demo_x = best
-        try:
-            import json as _json
-            plan = [Step(int(f), int(b)) for f, b in _json.loads(demo_path.read_text())["steps"]]
-            start_state = state_path.read_bytes()
-        except (OSError, KeyError, TypeError, ValueError):
-            return None
-        if not plan:
-            return None
-        from .teleop import verify_demo
-        # Verify from the taught state (not live) — phase-accurate gate.
-        result = verify_demo(self.session, self.game, start_state, plan,
-                             min_progress=self._MIN_PROGRESS_PX)
-        if not result.bankable:
-            self._taught_demo_used.add(demo_x)  # don't thrash a broken seed
-            return None
-        # LIVE warp to the taught moment, then the main loop commits the plan.
+        end_progress, _, plan, start_state, demo_x = best
         self.session.restore(start_state)
         self._taught_demo_used.add(demo_x)
         print(f'  🎬 taught-demo: {obs.level_label}@x{demo_x} — warping to your line '
-              f'and replaying (reach {result.end_progress})')
+              f'and replaying (reach {end_progress})')
         return plan
 
     def _tape_finish_level(self, frontier: int, *, cleared: bool,
