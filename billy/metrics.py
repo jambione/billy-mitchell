@@ -30,6 +30,7 @@ class AttemptResult:
     drops: int = 0
     learns: int = 0
     level_frontier: int = 0     # solved px frontier on the furthest level reached
+    game: str = ""              # game_id (e.g. "smb", "zelda") — empty for pre-tagging records
 
 
 def record(result: AttemptResult) -> None:

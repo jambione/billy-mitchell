@@ -1102,7 +1102,7 @@ class Director:
             search_calls=evals, replay_calls=1 if replayed_prior else 0, tape_frames=committed,
             frontier_x=best_fit, frames_to_frontier=0,
             banks=1 if improved else 0, drops=0, learns=1 if gained > 0 else 0,
-            level_frontier=best_fit)
+            level_frontier=best_fit, game=self._game_id())
         metrics.record(result)
         print(f"  [attempt {n}] {outcome.upper()} — reached {obs.level_label}, "
               f"survived {best_fit}, score {obs.score}")
@@ -1603,7 +1603,7 @@ class Director:
             search_calls=search_calls, replay_calls=replay_calls, tape_frames=tape_frames,
             frontier_x=self.cache.solved_frontier(start_level), frames_to_frontier=frames_to_frontier,
             banks=learn.banks, drops=learn.drops, learns=learn.learns,
-            level_frontier=learn.level_frontier)
+            level_frontier=learn.level_frontier, game=self._game_id())
         metrics.record(result)
         print(f"  [attempt {n}] {outcome.upper()} — reached {furthest}, "
               f"cleared {levels_cleared} level(s), score {final_score}{hi}")

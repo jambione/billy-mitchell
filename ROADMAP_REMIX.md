@@ -36,7 +36,11 @@ banked trajectory) so thoroughly it stops needing a teacher.**
 
 ---
 
-## 2. Current state (honest, as of 2026-07-07, `main` @ 5193319)
+## 2. Current state (honest, as of 2026-07-12, `main` @ 0754da2)
+
+> **Update 2026-07-12:** Phase 1 and Phase 2 below shipped in the four commits after this doc
+> was first written (19d7f9d, 522a88e, e74e07b, 0754da2). Left the phase writeups intact as
+> reference for *how* they were built; new work should start at Phase 3.
 
 ### What works
 - **Game-agnostic engine**: talks only to `billy/abstractions.py` contracts (`Session`, `Game`,
@@ -45,11 +49,23 @@ banked trajectory) so thoroughly it stops needing a teacher.**
   a SNES scaffold (SMW, awaiting ROM).
 - **The compounding loop**: cache-hit → clone-verify → replay; else micro-search on a clone;
   else LLM. Death → learn-from-death. Tapes (whole-trajectory, entry-state-anchored) reproduce
-  moving hazards deterministically. Cleared SMB 1-1 → 3-4 this way.
-- **Remix v2** (`remix.py`, 284 tests green): dynamic wall discovery from Billy's real stuck
-  state, hands-on teach with a take-control gate, banks all four demo carriers, replays your
-  line back on-screen, banks your best across retries, and marches teach → re-scout → next wall
-  in one sitting. Desktop shortcuts: `Billy-Remix.command`, `Billy-Remix (no scout).command`.
+  moving hazards deterministically.
+- **Remix v2 — universal teach contract (Phase 1, ✅ shipped)**: `remix_goal` / `remix_win` /
+  `remix_min_progress` / `remix_anchor_ok` plus approach-capture hooks
+  (`remix_needs_approach_capture`, `remix_approach_progress_window`, `remix_on_ground`,
+  `remix_capture_ready`, `remix_dropin_is_safe`, `remix_stabilize_dropin`,
+  `remix_director_sections`) all live on `Game` with progress-keyed-platformer defaults in
+  `billy/abstractions.py`. SMB, Zelda, PSII, smb_lost all join the gauntlet on hooks alone —
+  `remix.py` itself is generic (`_prepare_approach` in `remix.py:470` takes any `game`). 42 remix
+  tests green.
+- **Fail-fast + ask-for-help (Phase 2, ✅ shipped)**: approach capture is game-agnostic (no more
+  SMB-only `_prepare_smb_approach`); safe drop-in selection rejects cliff-lip/mid-air captures
+  and backs off to earlier candidates or the level checkpoint (0754da2); a taught wall stops
+  re-surfacing until a fresh death streak reopens it (`StuckTracker` remediation, 522a88e); the
+  Director hands off Remix-taught BC demos by warping to the taught state and replaying the
+  verified plan, so one human crossing keeps paying off every attempt (e74e07b); Billy tells the
+  human what he needs via `data/remix_inbox.txt` + a macOS notification
+  (`billy/stuck_trainer.py:412`).
 - **Routes + strategist**: transition graph persisted (`data/routes.jsonl`), warp-preferring
   route planning for SMB, furthest-checkpoint resume.
 - **Pixel perception exists**: `--game pixel` (SMB from pixels) and `--game shmup` (Airstriker,
@@ -58,23 +74,25 @@ banked trajectory) so thoroughly it stops needing a teacher.**
 ### Where Billy actually is
 | Game | Frontier | Goal | Open wall |
 |---|---|---|---|
-| smb | 3-4 | 8-4 | 3-4 @ x=525 (16 deaths) |
-| smb_lost | start | 8-4 | never scouted seriously |
+| smb | **4-2** (was 3-4) | 8-4 | 4-2 @ x≈322 (8 deaths) — queued in `remix_inbox.txt` now |
+| smb_lost | 1-1, barely probed | 8-4 | never scouted seriously |
 | zelda | start | level-9 | old wall: overworld #121 combat |
-| psii | start | end | town exit + battle RAM unmapped |
+| psii | start | end | menu walls have `remix_win`; battle RAM still unmapped (town has no encounter perception yet) |
 | smw | scaffold only | — | needs ROM (`billy/games/smw/STATUS.md`) |
 
 ### Honest limits
 - Position-keyed cache entries re-search moving hazards each pass; only entry-anchored tapes
   fully solve that, and tapes need a valid level/screen-entry anchor.
-- Remix's teach goals are **hardcoded per game** (SMB x-progress, Zelda screen-crossing) — a new
-  game means editing `remix.py` internals. This is the #1 blocker to "build out the Remix with
-  each new game."
-- Approach-state capture (driving Billy to the wall for a good drop-in) is **SMB-only**
-  (`_prepare_smb_approach`).
-- BC seeds are written but nothing trains them automatically; `train_section.py` is a manual,
-  SMB-shaped offline job.
-- No metric proves "exponential" yet — we eyeball the search↓/replay↑ curve.
+- Phase 3's bring-up kit is half-done: `docs/BRINGUP.md` exists and PSII got menu-shaped Remix
+  hooks, but PSII battle RAM is still unmapped and smb_lost hasn't been scouted seriously (it
+  should mostly ride SMB's reflex + skills — untested claim).
+- BC seeds are written (`billy/knowledge/demo_seed.py`) but nothing trains them automatically;
+  `train_section.py` is a manual, SMB-shaped offline job — Phase 4's auto BC→PPO queue doesn't
+  exist yet.
+- `report.py` (Phase 6 v1, 2026-07-12) reads `data/metrics.jsonl` back into search↓/replay↑,
+  frontier, and demos-per-world curves — but every attempt logged before this lands in an
+  untagged "legacy" bucket, and cross-game A/B (curve 4) still needs a real comparative run.
+- No fail-reel/medals/session-recap — Phase 5 not started.
 
 ---
 
@@ -103,6 +121,7 @@ Run/test (always the venv):
 BILLY_HEADLESS=1 .venv/bin/python -m pytest -q tests/
 BILLY_HEADLESS=1 BILLY_REPEAT_LEVEL=1 BILLY_MAX_FRAMES=8000 .venv/bin/python -u run.py --attempts 10 --no-llm
 .venv/bin/python remix.py --list        # frontier + open walls, read-only
+.venv/bin/python report.py --open       # data/report.html: search/replay + frontier + demos-per-world curves
 ```
 
 ---
@@ -111,7 +130,7 @@ BILLY_HEADLESS=1 BILLY_REPEAT_LEVEL=1 BILLY_MAX_FRAMES=8000 .venv/bin/python -u 
 
 Phases are ordered by leverage. Each has acceptance criteria — build to those, not to vibes.
 
-### Phase 1 — Universalize the Remix teach contract (unblocks every new game)
+### Phase 1 — Universalize the Remix teach contract (unblocks every new game) ✅ SHIPPED (19d7f9d)
 The Remix currently special-cases SMB and Zelda inside `remix.py` (`_goal_blurb`,
 `_teach_params`, `_wall_cleared`, `_prepare_smb_approach`, `_anchor_is_level_entry` gating).
 Move the per-game knowledge behind the `Game` contract so a new title plugs into the gauntlet
@@ -129,7 +148,7 @@ with zero `remix.py` edits.
 - **Acceptance:** adding a hypothetical game to `CAMPAIGN` + implementing the 4 hooks is the
   ONLY work needed to teach its walls.
 
-### Phase 2 — Fail-fast + ask-for-help, everywhere
+### Phase 2 — Fail-fast + ask-for-help, everywhere ✅ SHIPPED (522a88e, e74e07b, 0754da2)
 Make "Billy notices he's stuck and files a *good* demo request" a universal, fast behavior.
 
 - **Universal approach capture.** Generalize `_prepare_smb_approach` (drive Billy headless to
@@ -196,7 +215,16 @@ Everything the human teaches should be leverage for Billy to teach himself more.
 - **Acceptance:** a Remix session has a visible arc — fail-reel → challenge → replay-payoff →
   medal → march — with zero extra setup by the human.
 
-### Phase 6 — Measure the exponent (prove it, don't vibe it)
+### Phase 6 — Measure the exponent (prove it, don't vibe it) 🟡 STARTED (2026-07-12)
+`report.py` renders `data/metrics.jsonl` (now `game`-tagged, `billy/metrics.py` +
+`director.py` `run_attempt`/`_run_attempt_evolve`) into `data/report.html`: search-vs-replay
+and solved-frontier line charts per game + per top-attempted level, plus a demos-per-world
+bar chart sourced straight from `data/rl/demos/<game>/` (so it's correct even for games with
+no tagged attempts yet). Curves 1–3 below are covered; curve 4 (cross-game A/B) is not — it
+needs an explicit comparative run, not just a report over existing logs. All 1,007
+pre-existing metrics rows predate the `game` field and render under a "legacy (untagged)"
+bucket rather than being guessed at.
+
 - **Per-attempt telemetry** (`data/metrics.jsonl`): frames spent in search vs replay vs teleop,
   walls passed by tier (reflex/tape/cache/search/demo), frontier progress, demos requested.
   (Foundation exists: `billy/metrics.py` prints the per-attempt compounding table — persist it.)
@@ -214,18 +242,19 @@ Everything the human teaches should be leverage for Billy to teach himself more.
 
 ## 5. Campaign board (near-term concrete moves)
 
-| Priority | Task | Where | Phase |
-|---|---|---|---|
-| 1 | Teach SMB 3-4 @ x=525 (wall is queued NOW — run the Remix shortcut) | human + `remix.py` | — |
-| 2 | Extract Remix per-game hooks into `Game` contract | `remix.py`, `billy/abstractions.py`, `billy/games/*` | 1 |
-| 3 | Generalize approach capture beyond SMB | `remix.py` `_prepare_smb_approach` → game-agnostic | 2 |
-| 4 | Auto-train queued BC seeds offline | new worker + `train_section.py` | 4 |
-| 5 | Scout smb_lost from scratch; measure reflex/skill transfer | `run.py --game smb_lost`, metrics | 3/6 |
-| 6 | Zelda: Remix hooks + tape-evolution on combat screens | `billy/games/zelda`, Phase 1 hooks | 1/4 |
-| 7 | PSII: battle/menu RAM + non-spatial `remix_win` | `billy/games/psii` | 3 |
-| 8 | Fail-reel + medals + recap | `remix.py` | 5 |
-| 9 | metrics.jsonl + curves report | `billy/director.py`, new `report.py` | 6 |
-| 10 | SMW bring-up when ROM lands | `billy/games/smw/STATUS.md` | 3 |
+| Priority | Task | Where | Phase | Status |
+|---|---|---|---|---|
+| ~~1~~ | ~~Teach SMB 3-4 @ x=525~~ | `remix.py` | — | ✅ done — frontier now 4-2 |
+| ~~2~~ | ~~Extract Remix per-game hooks into `Game` contract~~ | `remix.py`, `billy/abstractions.py` | 1 | ✅ done (19d7f9d) |
+| ~~3~~ | ~~Generalize approach capture beyond SMB~~ | `remix.py:_prepare_approach` | 2 | ✅ done (0754da2) |
+| 1 | Teach SMB 4-2 @ x≈322 (wall is queued NOW — run the Remix shortcut) | human + `remix.py` | — | open |
+| 2 | PSII: map battle RAM, wire non-spatial `remix_win` for fights | `billy/games/psii` | 3 | menu half done; battle RAM unmapped |
+| 3 | Scout smb_lost from scratch; measure reflex/skill transfer | `run.py --game smb_lost`, metrics | 3/6 | barely started |
+| 4 | Auto-train queued BC seeds offline | new worker + `train_section.py` | 4 | not started |
+| 5 | Zelda: tape-evolution on combat screens (hooks already exist) | `billy/games/zelda` | 1/4 | not started |
+| 6 | Fail-reel + medals + recap | `remix.py` | 5 | not started |
+| 7 | metrics.jsonl + curves report | `billy/director.py`, `report.py` | 6 | 🟡 v1 shipped (2026-07-12) — curve 4 (cross-game A/B) still open |
+| 8 | SMW bring-up when ROM lands | `billy/games/smw/STATUS.md` | 3 | blocked on ROM |
 
 ---
 
