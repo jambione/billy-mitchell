@@ -76,6 +76,15 @@ class Scene:
         return self.health == 0
 
     @property
+    def full_health(self) -> bool:
+        """Every heart full — the state in which Link's stab fires a screen-length sword beam.
+
+        The heart byte (0x066F) stores the filled-heart count 0-indexed (3/3 hearts → health 2,
+        max_hearts 3), and 0x0670 the current heart's partial fill (0xFF = full). So 'completely
+        full' is the top heart count AND a full partial."""
+        return self.health >= self.max_hearts - 1 and self.partial_heart >= 0xFF
+
+    @property
     def in_dungeon(self) -> bool:
         return self.current_level > 0 or self.game_mode in DUNGEON_MODES
 

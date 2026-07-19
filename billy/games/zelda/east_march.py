@@ -32,7 +32,7 @@ def is_east_march_plan(plan) -> bool:
 
 
 def is_east_march_cross_plan(plan) -> bool:
-    """Alternating RIGHT / RIGHT+B screen-cross macros banked for replay."""
+    """Alternating RIGHT / RIGHT+A (walk + sword) screen-cross macros banked for replay."""
     if not plan or is_east_march_plan(plan):
         return False
     if len(plan) < 4:
@@ -49,9 +49,9 @@ def is_east_march_combat_plan(plan) -> bool:
     """Walk+sword sequences seeded for row-8 combat screens."""
     if not plan or is_east_march_plan(plan) or is_east_march_cross_plan(plan):
         return False
-    has_b = any(step.buttons & c.B for step in plan)
+    has_a = any(step.buttons & c.A for step in plan)
     has_vert = any(step.buttons & (c.UP | c.DOWN) for step in plan)
-    return has_b and not has_vert
+    return has_a and not has_vert
 
 
 def east_march_active(scene, *, visited: set[int]) -> bool:
@@ -100,23 +100,23 @@ def east_march_combat_plan(dx: int, dy: int, *, low_health: bool = False) -> Pla
     if low_health:
         return [
             Step(14, c.NEUTRAL),
-            Step(16, c.mask(c.RIGHT, c.B)),
-            Step(12, c.mask(c.RIGHT, c.B)),
+            Step(16, c.mask(c.RIGHT, c.A)),
+            Step(12, c.mask(c.RIGHT, c.A)),
         ]
     if dy < -8:
         return [
-            Step(14, c.mask(c.RIGHT, c.B)),
+            Step(14, c.mask(c.RIGHT, c.A)),
             Step(10, c.RIGHT),
-            Step(16, c.mask(c.RIGHT, c.B)),
+            Step(16, c.mask(c.RIGHT, c.A)),
             Step(10, c.RIGHT),
-            Step(14, c.mask(c.RIGHT, c.B)),
+            Step(14, c.mask(c.RIGHT, c.A)),
         ]
     return [
         Step(8, c.RIGHT),
-        Step(16, c.mask(c.RIGHT, c.B)),
+        Step(16, c.mask(c.RIGHT, c.A)),
         Step(8, c.RIGHT),
-        Step(14, c.mask(c.RIGHT, c.B)),
-        Step(10, c.mask(c.RIGHT, c.B)),
+        Step(14, c.mask(c.RIGHT, c.A)),
+        Step(10, c.mask(c.RIGHT, c.A)),
     ]
 
 
@@ -210,7 +210,7 @@ def east_march_screen_cross_plan(reps: int | None = None, *, map_location: int =
         if i % 2:
             plan.append(Step(12, c.RIGHT))
         else:
-            plan.append(Step(16, c.mask(c.RIGHT, c.B)))
+            plan.append(Step(16, c.mask(c.RIGHT, c.A)))
     return plan
 
 
@@ -222,15 +222,15 @@ def east_march_screen_transition_macro(reps: int | None = None, *, map_location:
 
 def east_march_cross_step(tick: int, *, map_location: int = 0) -> Step:
     if map_location >= START_SCREEN + 4:
-        # Walk-heavy on #123+ — frequent RIGHT+B lifts Link into north octorok shots.
+        # Walk-heavy on #123+ — frequent RIGHT+A lifts Link into north octorok shots.
         if tick % 4 == 0:
-            return Step(16, c.mask(c.RIGHT, c.B))
+            return Step(16, c.mask(c.RIGHT, c.A))
         return Step(14, c.RIGHT)
-    return Step(16, c.mask(c.RIGHT, c.B)) if tick % 2 else Step(12, c.RIGHT)
+    return Step(16, c.mask(c.RIGHT, c.A)) if tick % 2 else Step(12, c.RIGHT)
 
 
 def east_march_cross_decision(scene, *, tick: int, screen_frames: int = 999) -> Decision | None:
-    """Alternate RIGHT / RIGHT+B while holding row 8 — crosses octorok screens."""
+    """Alternate RIGHT / RIGHT+A (walk + sword) while holding row 8 — crosses octorok screens."""
     if east_march_at_lip(scene, screen_frames=screen_frames):
         return None
     lane = east_march_lane_decision(scene, c.RIGHT)
@@ -406,9 +406,9 @@ def east_march_combat_candidates(scene) -> list[Plan]:
     btn = _fight_button(dx, dy, row_lock=True)
     out.extend([
         east_march_combat_plan(dx, dy),
-        [Step(12, btn), Step(18, c.mask(btn, c.B))],
-        [Step(16, c.mask(btn, c.B))],
-        [Step(12, c.RIGHT), Step(16, c.mask(c.RIGHT, c.B))],
+        [Step(12, btn), Step(18, c.mask(btn, c.A))],
+        [Step(16, c.mask(btn, c.A))],
+        [Step(12, c.RIGHT), Step(16, c.mask(c.RIGHT, c.A))],
     ])
     return out
 

@@ -266,7 +266,7 @@ def test_stale_cache_allows_short_combat_replay_on_screen_121():
         level_label=scene.room_label, level_key=("overworld", 121),
         dead=False, summary="", ascii_map="", raw=scene, elevation=scene.link_y)
     learned = CacheEntry(
-        plan=[Step(12, c.LEFT), Step(14, c.mask(c.LEFT, c.B))],
+        plan=[Step(12, c.LEFT), Step(14, c.mask(c.LEFT, c.A))],   # A = sword swing
         reach_after=obs.progress + 40,
     )
     assert not hooks.stale_cache(obs, learned)

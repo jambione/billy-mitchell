@@ -70,7 +70,7 @@ def dungeon_combat_decision(scene) -> Decision | None:
     else:
         btn = c.DOWN if dy >= 0 else c.UP
     return Decision(
-        [Step(REFLEX_FRAMES, btn), Step(REFLEX_FRAMES * 2, c.mask(btn, c.B))],
+        [Step(REFLEX_FRAMES, btn), Step(REFLEX_FRAMES * 2, c.mask(btn, c.A))],
         note=f"dungeon-fight ({dx},{dy})",
     )
 

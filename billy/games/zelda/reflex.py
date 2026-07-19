@@ -58,6 +58,7 @@ from .tuning import (
 
 ITEM_PICKUP_RANGE = 12
 CAVE_MACRO_STUCK_FRAMES = 180
+_BEAM_RANGE = 9999   # full-health sword beam reaches across the whole screen (engage any enemy)
 
 
 def _walk(button: int, frames: int = REFLEX_FRAMES) -> Plan:
@@ -65,7 +66,9 @@ def _walk(button: int, frames: int = REFLEX_FRAMES) -> Plan:
 
 
 def _sword(button: int, frames: int = REFLEX_FRAMES) -> Plan:
-    return [Step(frames, c.mask(button, c.B))]
+    # The sword is the A button on the NES pad; B is the (often empty) secondary-item slot.
+    # Earlier this pressed B, so every "swing" fired the item slot and no enemy ever took a hit.
+    return [Step(frames, c.mask(button, c.A))]
 
 
 def _retreat_from(dx: int, dy: int) -> Plan:
@@ -373,14 +376,20 @@ class ZeldaReflex(ReflexPolicy):
                     self._last_scene = scene
                     return dung_step
 
-        combat_range = ATTACK_RANGE
-        near = scene.nearest_enemy(within=combat_range)
+        # Sword beam: at FULL health Link's stab fires a projectile the length of the screen, so
+        # engage ANY on-screen enemy — stab toward it and the beam travels (holding the direction
+        # also closes toward alignment). Below full, the sword only reaches melee (its own length),
+        # so only the enemies already within reach are engaged; the rest are left to the march.
+        full_health = scene.full_health
+        near = scene.nearest_enemy(within=_BEAM_RANGE if full_health else ATTACK_RANGE)
         if near is not None and not marching_east:
             dx, dy = near
             self._last_scene = scene
-            if scene.health <= RETREAT_HEALTH and abs(dx) + abs(dy) < ATTACK_RANGE:
+            melee = abs(dx) + abs(dy) <= ATTACK_RANGE
+            if scene.health <= RETREAT_HEALTH and melee:
                 return Decision(_retreat_from(dx, dy), note=f"retreat enemy ({dx},{dy})")
-            return Decision(self._sword_toward(dx, dy), note=f"sword enemy ({dx},{dy})")
+            return Decision(self._sword_toward(dx, dy),
+                            note=f"sword enemy ({dx},{dy})" + ("" if melee else " [beam]"))
 
         if self._frames_stuck >= 48:
             self._commit_btn = None
