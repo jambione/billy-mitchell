@@ -331,9 +331,12 @@ class ZeldaReflex(ReflexPolicy):
         marching_east = east_march_active(scene, visited=visited)
 
         # Track high-slot objects every frame so we can spot an incoming shot by its velocity.
-        # East-march owns its own crossing macros; cave interiors are macro-driven — dodge neither.
+        # Dodge applies on the overworld (incl. the east-march sea route, where octoroks pepper
+        # Link) and in dungeons; only cave interiors are skipped (their macros own movement). A
+        # sidestep preempts the east-march crossing for that frame; the lane logic re-centers Link
+        # on row 8 next tick, so the shot is cleared without losing the march.
         cur_objects = scene.object_positions()
-        dodge = (None if (scene.in_cave or marching_east)
+        dodge = (None if scene.in_cave
                  else self._incoming_dodge(scene, cur_objects, self._prev_objects))
         self._prev_objects = cur_objects
 
