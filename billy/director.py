@@ -838,11 +838,13 @@ class Director:
 
     # --- cross-session frontier: persist the furthest level-start checkpoint -------------
     def _checkpoint_ready(self, obs: Observation) -> bool:
-        """On solid ground near the level start. The window is wide enough to catch a
-        PIPE-entered level (Mario emerges at x≈110+ and the first commit can land past 120 —
-        1-3 was never checkpointed, so every death respawned levels back) while staying near
-        the start so tapes still verify from the respawn state."""
-        return getattr(obs.raw, "on_ground", True) and 16 < obs.progress < 240
+        """Whether this spot is safe to bank as the attempt-start / cross-session checkpoint.
+
+        Delegates to the Game (SMB's default: on-ground and near the level start in x-pixels —
+        wide enough to catch a PIPE-entered level where Mario emerges at x≈110+, yet near the
+        start so tapes verify from the respawn state). Screen-progressing games like Zelda
+        override, since their `progress` is not an x-pixel."""
+        return self.game.checkpoint_ready(obs)
 
     def _checkpoint_now(self) -> Observation:
         """Save slot 0 (the respawn/attempt start) here and persist the cross-session copy."""
@@ -860,24 +862,34 @@ class Director:
     def _persist_checkpoint(self, obs: Observation) -> None:
         """Save the furthest level-start to disk so the NEXT SESSION can resume the march
         toward game completion instead of replaying every solved level from the top.
-        Only ordinal level keys ratchet (SMB world/stage); non-comparable keys are skipped."""
+
+        Ratchet: SMB's ordinal level key (`key > prev_key`) by default; games that supply a
+        `route_rank` (Zelda's guide-anchored screen frontier) ratchet by MAX rank instead, since
+        their `level_key` (screen grid) is not monotonic with progress."""
         import json
         base, meta_path = self._checkpoint_paths()
         try:
             key = list(obs.level_key)
-            if meta_path.exists():
-                prev = json.loads(meta_path.read_text())
-                try:
-                    if not key > list(prev.get("key", [])):
-                        return   # not beyond the recorded frontier
-                except TypeError:
-                    return       # mixed/non-ordinal keys — no meaningful "furthest"
+            rank = self.game.route_rank(obs)
+            prev = json.loads(meta_path.read_text()) if meta_path.exists() else None
+            if prev is not None:
+                if rank is not None:
+                    if rank <= prev.get("rank", float("-inf")):
+                        return   # not beyond the recorded route frontier
+                else:
+                    try:
+                        if not key > list(prev.get("key", [])):
+                            return   # not beyond the recorded frontier
+                    except TypeError:
+                        return       # mixed/non-ordinal keys — no meaningful "furthest"
             base.mkdir(parents=True, exist_ok=True)
             state_path = base / f"{obs.level_label.replace('-', '_').replace(' ', '_')}.state"
             state_path.write_bytes(self.session.clone_state())
-            meta_path.write_text(json.dumps({"key": key, "label": obs.level_label,
-                                             "state": str(state_path),
-                                             "progress": obs.progress}))
+            meta: dict = {"key": key, "label": obs.level_label,
+                          "state": str(state_path), "progress": obs.progress}
+            if rank is not None:
+                meta["rank"] = rank
+            meta_path.write_text(json.dumps(meta))
             print(f"  [director] 🚩 frontier checkpoint saved: {obs.level_label} "
                   f"(next session can --resume here)")
         except Exception as e:   # persistence must never kill the run
@@ -1262,6 +1274,13 @@ class Director:
                 obs = self._tape_begin_level(obs)
                 tape_frontier = obs.progress
                 last_snap_x = obs.progress   # x re-based in the new area — re-arm snapshots
+                # Screen-progressing games (route_rank != None) advance without ever CLEARING a
+                # level, so arm the checkpoint here too — otherwise their cross-session frontier
+                # never persists and every session restarts at screen 1 (the Zelda re-grind). Gated
+                # on route_rank so SMB, whose base screen_changed also fires on within-level area
+                # hops, keeps its checkpoint behavior byte-identical (regression guard).
+                if self.game.route_rank(obs) is not None:
+                    need_checkpoint = True
                 print(f'  [attempt {n}] 🗺️ screen → {obs.level_label} '
                       f'progress={obs.progress}')
 

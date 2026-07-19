@@ -177,6 +177,24 @@ class Game(ABC):
         """True on an in-run screen/area change that should not count as a level clear."""
         return prev_key != new_key and not self.level_cleared(prev_key, new_key)
 
+    def checkpoint_ready(self, obs: "Observation") -> bool:
+        """Whether `obs` is a safe spot to bank the attempt-start / cross-session checkpoint.
+
+        Default is SMB's model: on-ground and near the level start in x-pixels (so the respawn
+        state and any entry-anchored tape verify from a start-like position). Games whose
+        `progress` isn't an x-pixel (e.g. Zelda's objective score) override this."""
+        return getattr(obs.raw, "on_ground", True) and 16 < obs.progress < 240
+
+    def route_rank(self, obs: "Observation") -> int | None:
+        """A monotonic 'how far along the intended route' scalar, for games whose `level_key`
+        is NOT ordinal (Zelda's screen grid, etc.). Drives the cross-session checkpoint frontier:
+        the furthest is banked by MAX rank instead of by `level_key > prev_key`.
+
+        Default `None` = fall back to the ordinal-`level_key` ratchet (SMB world/stage/area).
+        Returning non-None also opts the game into checkpointing on `screen_changed`, not just
+        `level_cleared` — screen-progressing games advance without ever clearing a 'level'."""
+        return None
+
     def search_area_advance(self, start_key: tuple, end_key: tuple) -> bool:
         """Whether a micro-search rollout 'warped' to a new area (pipe, new Zelda screen, etc.).
 

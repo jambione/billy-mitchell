@@ -121,6 +121,42 @@ class ZeldaGame(Game):
     def search_area_advance(self, start_key: tuple, end_key: tuple) -> bool:
         return False   # room id jumps are not SMB-style pipe warps
 
+    # --- cross-session checkpoint frontier (guide-anchored) -----------------------------------
+    # Screen order in the overworld grid is NOT monotonic with progress, and Zelda's `progress`
+    # resets per screen, so neither can drive the "furthest" ratchet. Rank Billy by how far along
+    # the FAQ route he is: phase milestone (wooden sword → sea → Level 1) as the high digits, the
+    # per-scene objective score (dominated by distinct-screens-visited) as the within-phase depth.
+
+    _PHASE_ORDER = {
+        "wooden_sword": 0,
+        "east_to_sea": 1,
+        "pre_level1_hearts": 2,
+        "level_1_approach": 3,
+        "explore": 4,
+    }
+
+    def checkpoint_ready(self, obs: Observation) -> bool:
+        """Safe to bank on a fresh overworld screen. The director checks this right after a screen
+        change, so it fires at screen ENTRY (before Billy wanders) — keeping the saved state a true
+        screen entry, consistent with `remix_anchor_ok`. Cave/dungeon interiors are skipped: their
+        entries are handled by the reflex macros, not the cross-session march."""
+        s = obs.raw
+        return bool(getattr(s, "in_play", True)) and not getattr(s, "in_cave", False)
+
+    def route_rank(self, obs: Observation) -> int | None:
+        """How far along the FAQ guide Billy has gotten (see class note)."""
+        from .walkthrough import current_phase
+        s = obs.raw
+        phase = current_phase(
+            map_location=s.map_location,
+            sword_level=s.sword_level,
+            max_hearts=s.max_hearts,
+            visited=set(s.visited_screens),
+            in_cave=getattr(s, "in_cave", False),
+        )
+        phase_ord = self._PHASE_ORDER.get(phase, len(self._PHASE_ORDER))
+        return phase_ord * 1_000_000 + s.objective_score()
+
     def _remix_target_screen(self, req: dict, obs: Observation) -> int:
         m = re.search(r"#(\d+)", req.get("level_label", ""))
         if m:
