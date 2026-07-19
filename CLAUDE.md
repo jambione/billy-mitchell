@@ -101,3 +101,17 @@ distillation, parallel sessions, dashboards. In-memory cosine is fine — no vec
 ```
 End PR/commit messages with: Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ```
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `jambione/billy-mitchell` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default role labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
