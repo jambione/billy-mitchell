@@ -60,6 +60,13 @@ ITEM_PICKUP_RANGE = 12
 CAVE_MACRO_STUCK_FRAMES = 180
 _BEAM_RANGE = 9999   # full-health sword beam reaches across the whole screen (engage any enemy)
 
+# Incoming-projectile dodge: a high-slot object moving this fast (px/frame) is a shot, not a
+# walking enemy; dodge when it's on Link's row/column band and closing within this range.
+_SHOT_SPEED_MIN = 2
+_SHOT_SPEED_MAX = 12
+_SHOT_LANE = 12        # within this many px of Link's row/col => it will connect
+_SHOT_DODGE_RANGE = 56  # start sidestepping once the shot is this close
+
 
 def _walk(button: int, frames: int = REFLEX_FRAMES) -> Plan:
     return [Step(frames, button)]
@@ -129,6 +136,7 @@ class ZeldaReflex(ReflexPolicy):
         self._east_cross_tick = 0
         self._east_scroll_settle = 0
         self._east_screen_frames = 0
+        self._prev_objects: dict[int, tuple[int, int]] = {}   # last frame's high-slot objects
 
     def reset(self, obs: Observation) -> None:
         self._best = obs.progress
@@ -150,6 +158,40 @@ class ZeldaReflex(ReflexPolicy):
         self._east_cross_tick = 0
         self._east_scroll_settle = 0
         self._east_screen_frames = 0
+        self._prev_objects = {}
+
+    def _incoming_dodge(self, scene: Scene, cur: dict[int, tuple[int, int]],
+                        prev: dict[int, tuple[int, int]]) -> tuple[int, tuple[int, int]] | None:
+        """If a projectile is about to hit Link, return (perpendicular dodge button, shot pos).
+
+        A high-slot object that moved fast+straight last frame, sits on Link's row/column band,
+        and is closing in is an incoming shot — sidestep OUT of its lane. Enemies (slow) and
+        static objects fail the speed gate, so this only fires on real shots."""
+        lx, ly = scene.link_x, scene.link_y
+        best: tuple[int, tuple[int, int]] | None = None
+        best_dist = _SHOT_DODGE_RANGE + 1
+        for slot, (x, y) in cur.items():
+            if slot not in prev:
+                continue
+            px, py = prev[slot]
+            vx, vy = x - px, y - py
+            speed = abs(vx) + abs(vy)
+            if speed < _SHOT_SPEED_MIN or speed > _SHOT_SPEED_MAX:
+                continue
+            dist = abs(x - lx) + abs(y - ly)
+            if dist > _SHOT_DODGE_RANGE:
+                continue
+            if abs(vx) >= abs(vy):            # horizontal shot — threatens Link's ROW
+                if abs(y - ly) > _SHOT_LANE or (lx - x) * vx <= 0:
+                    continue
+                dodge = c.DOWN if y <= ly else c.UP
+            else:                             # vertical shot — threatens Link's COLUMN
+                if abs(x - lx) > _SHOT_LANE or (ly - y) * vy <= 0:
+                    continue
+                dodge = c.RIGHT if x <= lx else c.LEFT
+            if dist < best_dist:
+                best_dist, best = dist, (dodge, (x, y))
+        return best
 
     def note_level_advance(self, obs: Observation) -> None:
         self._best = obs.progress
@@ -288,6 +330,13 @@ class ZeldaReflex(ReflexPolicy):
         visited = set(scene.visited_screens)
         marching_east = east_march_active(scene, visited=visited)
 
+        # Track high-slot objects every frame so we can spot an incoming shot by its velocity.
+        # East-march owns its own crossing macros; cave interiors are macro-driven — dodge neither.
+        cur_objects = scene.object_positions()
+        dodge = (None if (scene.in_cave or marching_east)
+                 else self._incoming_dodge(scene, cur_objects, self._prev_objects))
+        self._prev_objects = cur_objects
+
         if obs.progress > self._best:
             self._frames_stuck = 0
             self._best = obs.progress
@@ -324,6 +373,12 @@ class ZeldaReflex(ReflexPolicy):
         if cave_step is not None:
             self._last_scene = scene
             return cave_step
+
+        # Dodge an incoming shot before anything else on-foot — don't walk to an item or an enemy
+        # into a rock. The sidestep clears the lane; next tick, with the shot past, combat resumes.
+        if dodge is not None:
+            self._last_scene = scene
+            return Decision(_walk(dodge[0], REFLEX_FRAMES), note=f"dodge shot @{dodge[1]}")
 
         item = scene.nearest_ground_item(within=64)
         if item is not None and scene.enemy_count() == 0:

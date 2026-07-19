@@ -54,6 +54,15 @@ class Scene:
     items: list[GroundItem] = field(default_factory=list)
     ram: bytes = b""
     dungeon: object = None   # DungeonState | None when in_dungeon
+    # High object slots (7..15) of the NES object table — where monster SHOTS (octorok rocks,
+    # arrows) live. Kept raw as (slot, x, y); the reflex tracks them frame-to-frame to find the
+    # ones moving fast+straight toward Link (an incoming projectile) and dodge. See
+    # probe_zelda_projectiles.py for the mapping.
+    objects: tuple[tuple[int, int, int], ...] = ()
+
+    def object_positions(self) -> dict[int, tuple[int, int]]:
+        """{slot: (x, y)} for the active high-slot objects (candidate projectiles)."""
+        return {slot: (x, y) for slot, x, y in self.objects}
 
     @property
     def realm(self) -> str:
@@ -225,6 +234,23 @@ def _read_enemies(ram: bytes, drops: list[GroundItem]) -> list[Enemy]:
     return out
 
 
+# NES object table: X at 0x70+slot, Y at 0x84+slot (slot 0 = Link, 1..6 = the enemies above).
+# Monster SHOTS occupy the HIGH slots (7..15) — see probe_zelda_projectiles.py.
+_OBJ_X_BASE, _OBJ_Y_BASE = 0x70, 0x84
+
+
+def _read_objects(ram: bytes) -> tuple[tuple[int, int, int], ...]:
+    """Active high-slot objects (slot, x, y) — candidate projectiles the reflex tracks by velocity."""
+    out: list[tuple[int, int, int]] = []
+    for slot in range(7, 16):
+        x = _u8(ram, _OBJ_X_BASE + slot)
+        y = _u8(ram, _OBJ_Y_BASE + slot)
+        if x == 0 and y == 0:
+            continue
+        out.append((slot, x, y))
+    return tuple(out)
+
+
 def _visited_screens(ram: bytes) -> tuple[int, ...]:
     hist = tuple(_u8(ram, 1569 + i) for i in range(5))
     return tuple(s for s in hist if s)
@@ -271,4 +297,5 @@ def build_scene(ram: bytes, frame: int = 0, rgb=None) -> Scene:
         items=items,
         ram=ram,
         dungeon=dungeon,
+        objects=_read_objects(ram),
     )
